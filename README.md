@@ -32,9 +32,10 @@ Sessions/Settings view.
   auth, no API key) — or set `LLM_PROVIDER=anthropic_api` +
   `ANTHROPIC_API_KEY` to use the Anthropic API instead
 - The ntfy app on your phone, subscribed to a secret topic
-- A Google account with the target calendar ("Laurent") and a Google
-  Cloud OAuth client (see garmin-coach's README for the one-time
-  Calendar API setup — same steps, new config path below)
+- A Google account with a target calendar (any name — set it per
+  user in Settings > "Calendrier Google") and a Google Cloud OAuth
+  client (see garmin-coach's README for the one-time Calendar API
+  setup — same steps, new config path below)
 
 ## Input and Expected Output
 
@@ -48,11 +49,17 @@ approximated, in favor of a resting-HR baseline computed from your
 own ingested history, a sleep-score approximation from sleep stages,
 and a new activity-load signal from recent exercise volume.
 
-**Output**: a daily ntfy push + Google Calendar event update (same
-shape as garmin-coach), plus a dashboard at `http://<host>:8080`
-with five views — Today, Progress (weight/calorie/protein trend +
-plateau detection), Trends (steps/RHR/sleep/level history), Sessions
-(exercise log), and Settings (goals + ingestion health check).
+**Output**: every morning, one concrete plan — tonight's session
+(level-adapted numbers) plus the day's calorie/macro/hydration
+budget — delivered as an ntfy push + Google Calendar event update,
+phrased by Claude from your full history (last 7 days of real
+sessions with HR/RPE/calories, planned-vs-done adherence, daily
+status streak, CTL/ATL/TSB training load, weight/nutrition trends).
+Plus a dashboard at `http://<host>:8080` with Today (targets card
+with live progress bars; tonight's level is editable inline and the
+edit is pushed straight to the calendar event), Progress, Trends,
+Sessions (with per-workout avg/max HR and kcal), Achievements, and
+Settings (goals, weekly plan editor, ingestion health check).
 
 ## Detailed Explanation
 
@@ -115,6 +122,29 @@ docker compose up -d --build
 ```
 
 Dashboard: `http://<host>:8080`.
+
+## Adding a user
+
+Every account gets its own data, settings, weekly plan, calendar
+and notifications — the deployment is shared, nothing else is.
+
+```bash
+# 1. Create the account
+docker compose run --rm -it smart_sport-worker python manage_users.py alice
+
+# 2. Point ingestion at their own Health Connect export
+docker compose run --rm -it smart_sport-worker rclone config   # new remote
+# then set rclone_remote for that user (Settings page, or sqlite3)
+
+# 3. Calendar consent for that account (host, not Docker):
+.venv/bin/python -c "import gcal; gcal.get_calendar_service('alice')"
+cp ~/.config/smart_sport/calendar_token_alice.json data/gcal-config/
+```
+
+Then the user logs in and fills in Settings: goals and macro ratios,
+Google Calendar name, ntfy topic, and the weekly plan (per-weekday
+session type, title, start time, duration — "libre" days sit outside
+the leveling system but still drive the calendar event).
 
 ## Testing
 
