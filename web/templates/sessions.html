@@ -21,6 +21,13 @@
           {{ "categorie" if s.is_corrected else "categorie Garmin" }} : {{ s.label }}
           {% if s.rpe %} - RPE {{ s.rpe }}{% endif %}
         </p>
+        {% if s.avg_hr or s.kcal %}
+        <p class="text-xs mt-0.5" style="color: var(--muted);">
+          {% if s.avg_hr %}&#10084; {{ s.avg_hr }} bpm moy / {{ s.max_hr }} max{% endif %}
+          {% if s.avg_hr and s.kcal %} - {% endif %}
+          {% if s.kcal %}{{ s.kcal }} kcal{% endif %}
+        </p>
+        {% endif %}
         {% if s.notes %}
         <p class="text-xs mt-1" style="color: var(--text-secondary);">{{ s.notes }}</p>
         {% endif %}

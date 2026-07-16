@@ -19,6 +19,8 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 import db
+import training_load
+from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
 
 # Tunable sleep-score weights/target, same "reasonable starting point,
 # retune against real mornings" posture as garmin-coach's constants.
@@ -394,6 +396,133 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     return {k: v for k, v in wellness.items() if v is not None}
 
 
+def _session_duration_min(row: sqlite3.Row) -> int:
+    """Whole minutes between a session row's start/end timestamps."""
+    start = dt.datetime.fromisoformat(row["start_utc"])
+    end = dt.datetime.fromisoformat(row["end_utc"])
+    return max(0, round((end - start).total_seconds() / 60))
+
+
+def history_snapshot(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict:
+    """Last-7-days context for the LLM payload.
+
+    Surfaces the per-activity Garmin detail (HR, effort, duration,
+    calories) that the daily aggregates flatten away, plus the
+    status history and fitness/fatigue trend the coach needs to
+    speak to consistency instead of just today's snapshot.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date (today).
+
+    Returns:
+        dict: ``activities_last_7_days`` (date, label, duration_min,
+        rpe, avg_hr, max_hr, kcal -- absent keys mean no data),
+        ``statuses_last_7_days`` (date, status),
+        ``adherence_last_7_days`` (date, planned, done, duration_min
+        -- ends yesterday: today's session hasn't happened yet), and
+        ``training_load`` ({date, ctl, atl, tsb} or ``{}``).
+    """
+    start = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=6)
+    ).isoformat()
+    yesterday = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    ).isoformat()
+
+    sessions = conn.execute(
+        "SELECT uuid, local_date, start_utc, end_utc, exercise_type, "
+        "label_override, rpe FROM exercise_sessions WHERE user_id = ? "
+        "AND local_date BETWEEN ? AND ? ORDER BY start_utc",
+        (user_id, start, date),
+    ).fetchall()
+
+    hr_by_uuid: dict[str, sqlite3.Row] = {}
+    if sessions:
+        marks = ",".join("?" * len(sessions))
+        hr_by_uuid = {
+            row["exercise_uuid"]: row
+            for row in conn.execute(
+                f"SELECT exercise_uuid, AVG(bpm) AS avg_hr, "
+                f"MAX(bpm) AS max_hr FROM exercise_hr_samples "
+                f"WHERE user_id = ? AND exercise_uuid IN ({marks}) "
+                f"GROUP BY exercise_uuid",
+                (user_id, *[s["uuid"] for s in sessions]),
+            ).fetchall()
+        }
+
+    activities = []
+    for row in sessions:
+        item: dict = {
+            "date": row["local_date"],
+            "label": row["label_override"] or EXERCISE_TYPE_LABELS.get(
+                row["exercise_type"], "other"
+            ),
+            "duration_min": _session_duration_min(row),
+        }
+        if row["rpe"] is not None:
+            item["rpe"] = row["rpe"]
+        hr = hr_by_uuid.get(row["uuid"])
+        if hr:
+            item["avg_hr"] = round(hr["avg_hr"])
+            item["max_hr"] = hr["max_hr"]
+        kcal = conn.execute(
+            "SELECT SUM(kcal) AS kcal FROM active_calories WHERE "
+            "user_id = ? AND start_utc < ? AND end_utc > ?",
+            (user_id, row["end_utc"], row["start_utc"]),
+        ).fetchone()["kcal"]
+        if kcal is not None:
+            item["kcal"] = round(kcal)
+        activities.append(item)
+
+    # Latest coach_log row per date wins (same dedup posture as
+    # achievements' streak logic -- not imported: achievements
+    # imports metrics, importing back would cycle).
+    planned = conn.execute(
+        "SELECT local_date, status, session_type FROM coach_log "
+        "WHERE id IN (SELECT MAX(id) FROM coach_log WHERE user_id = ? "
+        "AND local_date BETWEEN ? AND ? GROUP BY local_date) "
+        "ORDER BY local_date", (user_id, start, date),
+    ).fetchall()
+
+    statuses = [
+        {"date": row["local_date"], "status": row["status"]}
+        for row in planned if row["status"] is not None
+    ]
+
+    done_min: dict[str, int] = {}
+    for row in sessions:
+        done_min[row["local_date"]] = (
+            done_min.get(row["local_date"], 0)
+            + _session_duration_min(row)
+        )
+    adherence = [
+        {
+            "date": row["local_date"],
+            "planned": row["session_type"],
+            "done": row["local_date"] in done_min,
+            "duration_min": done_min.get(row["local_date"], 0),
+        }
+        for row in planned
+        if row["session_type"] is not None
+        and row["local_date"] <= yesterday
+    ]
+
+    load = training_load.latest_training_load(conn, user_id)
+    return {
+        "activities_last_7_days": activities,
+        "statuses_last_7_days": statuses,
+        "adherence_last_7_days": adherence,
+        "training_load": {
+            "date": load["local_date"], "ctl": round(load["ctl"], 1),
+            "atl": round(load["atl"], 1), "tsb": round(load["tsb"], 1),
+        } if load else {},
+    }
+
+
 if __name__ == "__main__":
     import tempfile
     from pathlib import Path
@@ -481,5 +610,82 @@ if __name__ == "__main__":
     other_wellness = daily_wellness(conn, other_uid, "2026-07-13")
     assert other_wellness.get("steps_today") == 99999
     assert "sleep_score" not in other_wellness
+
+    # --- history_snapshot ---
+    # HR samples + overlapping active-calories for e1 (07-12 18:00-30).
+    conn.executemany(
+        "INSERT INTO exercise_hr_samples VALUES (?, ?, ?, ?)",
+        [("e1", uid, "2026-07-12T18:05:00+00:00", 120),
+         ("e1", uid, "2026-07-12T18:15:00+00:00", 140),
+         ("e1", uid, "2026-07-12T18:25:00+00:00", 160)],
+    )
+    conn.execute(
+        "INSERT INTO active_calories VALUES ('ac1', ?, "
+        "'2026-07-12T18:00:00+00:00', '2026-07-12T18:30:00+00:00', "
+        "'2026-07-12', 250)", (uid,),
+    )
+    # Non-overlapping burn the same day must NOT count for e1.
+    conn.execute(
+        "INSERT INTO active_calories VALUES ('ac2', ?, "
+        "'2026-07-12T10:00:00+00:00', '2026-07-12T10:30:00+00:00', "
+        "'2026-07-12', 99)", (uid,),
+    )
+    # Session with a manual label, older than the 7-day window.
+    conn.execute(
+        "INSERT INTO exercise_sessions VALUES ('e-old', ?, "
+        "'2026-07-01T18:00:00+00:00', '2026-07-01T18:30:00+00:00', "
+        "'2026-07-01', 70, NULL, NULL, NULL, 'tapis')", (uid,),
+    )
+    # Other user's session in-window -- must never leak.
+    conn.execute(
+        "INSERT INTO exercise_sessions VALUES ('e-other', ?, "
+        "'2026-07-12T18:00:00+00:00', '2026-07-12T19:00:00+00:00', "
+        "'2026-07-12', 70, NULL, NULL, NULL, NULL)", (other_uid,),
+    )
+    # coach_log: planned+done (07-12, has e1), planned+skipped (07-11).
+    conn.executemany(
+        "INSERT INTO coach_log (user_id, created_at, local_date, "
+        "status, session_type, level, message) VALUES (?, ?, ?, ?, ?, "
+        "?, ?)",
+        [(uid, "2026-07-11T06:00:00+00:00", "2026-07-11", "green",
+          "treadmill", 4, "m"),
+         (uid, "2026-07-12T06:00:00+00:00", "2026-07-12", "yellow",
+          "upper_body", 3, "m")],
+    )
+    conn.execute(
+        "INSERT INTO training_load VALUES (?, '2026-07-12', 30.0, "
+        "10.123, 20.456, -10.333)", (uid,),
+    )
+    conn.commit()
+
+    snap = history_snapshot(conn, uid, "2026-07-13")
+    acts = snap["activities_last_7_days"]
+    assert len(acts) == 1, acts  # e-old out of window, e-other scoped
+    assert acts[0]["duration_min"] == 30 and acts[0]["rpe"] == 6.0
+    assert acts[0]["avg_hr"] == 140 and acts[0]["max_hr"] == 160
+    assert acts[0]["kcal"] == 250, acts  # ac2 doesn't overlap e1
+    assert snap["statuses_last_7_days"] == [
+        {"date": "2026-07-11", "status": "green"},
+        {"date": "2026-07-12", "status": "yellow"},
+    ]
+    adherence = snap["adherence_last_7_days"]
+    assert adherence == [
+        {"date": "2026-07-11", "planned": "treadmill", "done": False,
+         "duration_min": 0},
+        {"date": "2026-07-12", "planned": "upper_body", "done": True,
+         "duration_min": 30},
+    ], adherence
+    assert snap["training_load"] == {
+        "date": "2026-07-12", "ctl": 10.1, "atl": 20.5, "tsb": -10.3,
+    }
+    # label_override wins when the old session is in range.
+    old_snap = history_snapshot(conn, uid, "2026-07-02")
+    assert old_snap["activities_last_7_days"][0]["label"] == "tapis"
+    # Empty DB degrades to empty containers.
+    empty = history_snapshot(conn, other_uid, "2026-01-01")
+    assert empty == {
+        "activities_last_7_days": [], "statuses_last_7_days": [],
+        "adherence_last_7_days": [], "training_load": {},
+    }, empty
 
     print("metrics.py: all checks passed")

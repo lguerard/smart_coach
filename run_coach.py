@@ -109,6 +109,7 @@ def run_for_user(conn, user: dict) -> None:
         "nutrition_today": nutrition,
         "weekly_progress": weekly,
         "today_session": today_session,
+        **metrics.history_snapshot(conn, user_id, today),
     }
 
     message = llm.coach(payload)

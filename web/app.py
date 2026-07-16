@@ -237,6 +237,7 @@ def regenerate(request: Request) -> HTMLResponse:
         "wellness_today": wellness,
         "nutrition_today": nutrition, "weekly_progress": weekly,
         "today_session": today_session,
+        **metrics.history_snapshot(conn, user_id, date),
     })
     conn.execute(
         "UPDATE coach_log SET message = ?, created_at = ? WHERE id = ? "
@@ -376,6 +377,19 @@ def sessions(request: Request) -> HTMLResponse:
         "SELECT * FROM exercise_sessions WHERE user_id = ? ORDER BY "
         "start_utc DESC LIMIT 60", (user_id,),
     ).fetchall()
+    hr_by_uuid = {}
+    if rows:
+        marks = ",".join("?" * len(rows))
+        hr_by_uuid = {
+            r["exercise_uuid"]: r
+            for r in conn.execute(
+                f"SELECT exercise_uuid, AVG(bpm) AS avg_hr, "
+                f"MAX(bpm) AS max_hr FROM exercise_hr_samples "
+                f"WHERE user_id = ? AND exercise_uuid IN ({marks}) "
+                f"GROUP BY exercise_uuid",
+                (user_id, *[r["uuid"] for r in rows]),
+            ).fetchall()
+        }
     items = []
     for row in rows:
         start = dt.datetime.fromisoformat(row["start_utc"])
@@ -383,6 +397,12 @@ def sessions(request: Request) -> HTMLResponse:
         auto_label = EXERCISE_TYPE_LABELS.get(
             row["exercise_type"], "autre"
         ).replace("_", " ")
+        hr = hr_by_uuid.get(row["uuid"])
+        kcal = conn.execute(
+            "SELECT SUM(kcal) AS kcal FROM active_calories WHERE "
+            "user_id = ? AND start_utc < ? AND end_utc > ?",
+            (user_id, row["end_utc"], row["start_utc"]),
+        ).fetchone()["kcal"]
         items.append({
             "uuid": row["uuid"],
             "date": row["local_date"],
@@ -393,6 +413,9 @@ def sessions(request: Request) -> HTMLResponse:
             "title": row["title"] or "",
             "notes": row["notes"] or "",
             "rpe": row["rpe"],
+            "avg_hr": round(hr["avg_hr"]) if hr else None,
+            "max_hr": hr["max_hr"] if hr else None,
+            "kcal": round(kcal) if kcal is not None else None,
         })
     return templates.TemplateResponse(
         request, "sessions.html", {"sessions": items},

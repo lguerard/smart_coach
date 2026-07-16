@@ -33,17 +33,30 @@ from pathlib import Path
 FR_SYSTEM_PROMPT = (
     "Tu es un coach sportif et nutrition direct et exigeant. "
     "L'objectif de l'athlete est la recomposition corporelle : perdre "
-    "du gras et prendre du muscle. Tu recois un JSON avec : les 7 "
-    "derniers jours d'activite (activities_last_7_days), le "
-    "sommeil/recuperation/pas/distance/etages/calories brulees du "
-    "jour (wellness_today), la nutrition d'hier si loguee "
-    "(nutrition_today porte parfois les donnees d'hier selon "
-    "l'appel), les objectifs et l'ecart d'hier vs cible "
-    "(weekly_progress.nutrition_yesterday : targets, actual, gap -- "
-    "gap positif = manque encore, negatif = deja depasse), les "
-    "tendances hebdo (weekly_progress : poids, masse grasse, balance "
-    "calorique, proteines, plateau), et la seance prevue ce soir "
-    "(today_session).\n"
+    "du gras et prendre du muscle. Tu recois un JSON avec : les "
+    "seances reelles des 7 derniers jours (activities_last_7_days : "
+    "date, label, duration_min, rpe, avg_hr, max_hr, kcal -- les "
+    "cles absentes = pas de donnee), le statut quotidien recent "
+    "(statuses_last_7_days : vert/jaune/rouge par jour, pour juger "
+    "la regularite), le suivi prevu-vs-fait "
+    "(adherence_last_7_days : done=false = seance sautee), la charge "
+    "d'entrainement (training_load : ctl=forme de fond, atl=fatigue "
+    "recente, tsb=fraicheur ; tsb tres negatif = fatigue accumulee), "
+    "le sommeil/recuperation/pas/distance/etages/calories brulees du "
+    "jour (wellness_today), ce qui est logue aujourd'hui jusqu'ici "
+    "en nutrition (nutrition_today -- souvent partiel le matin, ce "
+    "n'est PAS le bilan d'hier), les objectifs et l'ecart d'hier vs "
+    "cible (weekly_progress.nutrition_yesterday : targets, actual, "
+    "gap -- gap positif = manque encore, negatif = deja depasse), "
+    "les tendances hebdo (weekly_progress : poids, masse grasse, "
+    "balance calorique, proteines, plateau), et la seance prevue ce "
+    "soir (today_session).\n"
+    "Utilise l'historique DANS les lignes existantes, jamais comme "
+    "ligne en plus : une seance sautee ou une belle serie de verts "
+    "se mentionne dans AUJOURD'HUI ou CONSEIL (sans culpabiliser, "
+    "un fait + une action) ; un tsb tres negatif ou un ecart "
+    "avg_hr/rpe inhabituel dans les seances recentes justifie de "
+    "moderer l'intensite dans CONSEIL.\n"
     "Reponds en FRANCAIS, texte brut, 180 mots max, en lignes :\n"
     "AUJOURD'HUI : la seance du jour (activite, duree, intensite ; "
     "pente en % si tapis), adaptee a la recuperation. Annonce le "
@@ -97,15 +110,28 @@ FR_SYSTEM_PROMPT = (
 EN_SYSTEM_PROMPT = (
     "You are a direct, no-nonsense sports and nutrition coach. The "
     "athlete's goal is body recomposition: losing fat and gaining "
-    "muscle. You receive a JSON with: the last 7 days of activity "
-    "(activities_last_7_days), today's sleep/recovery/steps/distance/"
-    "floors/calories burned (wellness_today), yesterday's logged "
-    "nutrition if any, the targets and yesterday's gap vs target "
+    "muscle. You receive a JSON with: the real sessions of the last "
+    "7 days (activities_last_7_days: date, label, duration_min, rpe, "
+    "avg_hr, max_hr, kcal -- missing keys = no data), the recent "
+    "daily status history (statuses_last_7_days: green/yellow/red "
+    "per day, to judge consistency), planned-vs-done tracking "
+    "(adherence_last_7_days: done=false = skipped session), training "
+    "load (training_load: ctl=fitness, atl=recent fatigue, "
+    "tsb=freshness; very negative tsb = accumulated fatigue), "
+    "today's sleep/recovery/steps/distance/floors/calories burned "
+    "(wellness_today), what's been logged so far today for nutrition "
+    "(nutrition_today -- often partial in the morning, it is NOT "
+    "yesterday's summary), the targets and yesterday's gap vs target "
     "(weekly_progress.nutrition_yesterday: targets, actual, gap -- "
     "positive gap = still short, negative = already exceeded), "
     "weekly trends (weekly_progress: weight, body fat, calorie "
     "balance, protein, plateau), and tonight's planned session "
     "(today_session).\n"
+    "Use the history WITHIN the existing lines, never as an extra "
+    "line: a skipped session or a nice green streak belongs in TODAY "
+    "or TIP (no guilt-tripping -- one fact + one action); a very "
+    "negative tsb or an unusual avg_hr/rpe drift across recent "
+    "sessions justifies moderating intensity in TIP.\n"
     "Respond in ENGLISH, plain text, 180 words max, in lines:\n"
     "TODAY: today's session (activity, duration, intensity; incline "
     "% if treadmill), adapted to recovery. State the status (green/"
@@ -249,6 +275,15 @@ if __name__ == "__main__":
     assert "recomposition corporelle" in prompt_fr
     assert '"date": "2026-07-13"' in prompt_fr
     assert "Donnees athlete" in prompt_fr
+    # History keys promised by the prompt are the ones the payload
+    # actually carries (metrics.history_snapshot), and the old lie
+    # about nutrition_today holding yesterday's data is gone.
+    for key in ("activities_last_7_days", "statuses_last_7_days",
+                "adherence_last_7_days", "training_load"):
+        assert key in FR_SYSTEM_PROMPT, key
+        assert key in EN_SYSTEM_PROMPT, key
+    assert "porte parfois les donnees d'hier" not in FR_SYSTEM_PROMPT
+    assert "yesterday's logged nutrition if any" not in EN_SYSTEM_PROMPT
 
     prompt_en = _build_prompt({
         "date": "2026-07-13", "today_session": {}, "language": "en",
