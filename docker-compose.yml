@@ -20,11 +20,35 @@ services:
     environment:
       TZ: ${TZ:-Europe/Paris}
     ports:
-      - "8080:8080"
+      # LAN default. For a public deployment bind localhost only
+      # (WEB_BIND=127.0.0.1:8080 in .env) and let caddy be the sole
+      # entrypoint.
+      - "${WEB_BIND:-8080}:8080"
     volumes:
       - ./data/db:/app/data/db
       - ./data/rclone:/root/.config/rclone
       - ./data/gcal-config:/root/.config/smart_sport
+
+  # Public HTTPS front (optional):
+  #   docker compose --profile public up -d
+  # Needs DOMAIN in .env, DNS pointing here, ports 80/443 forwarded.
+  caddy:
+    image: caddy:2-alpine
+    container_name: smart_sport-caddy
+    profiles: ["public"]
+    restart: unless-stopped
+    depends_on:
+      - smart_sport-web
+    environment:
+      # Required for the public profile -- Caddy refuses to start on
+      # the localhost default, which is the failure mode we want.
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
 
   smart_sport-worker:
     build: .

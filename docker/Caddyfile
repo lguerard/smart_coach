@@ -1,0 +1,7 @@
+# Public HTTPS entrypoint (compose profile "public").
+# DOMAIN comes from .env; Caddy obtains and renews the Let's Encrypt
+# certificate automatically as long as ports 80/443 reach this host
+# and the DNS A/AAAA record points here.
+{$DOMAIN} {
+	reverse_proxy smart_sport-web:8080
+}

@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import sqlite3
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -64,8 +65,14 @@ async def require_login(request: Request, call_next):
 # ponytail: if SESSION_SECRET isn't set, sessions won't survive a
 # container restart (everyone gets logged out) -- fine for dev, but
 # set it explicitly in .env for a real deployment so logins persist.
+# COOKIE_SECURE=1 (set it whenever the app is served over HTTPS, e.g.
+# behind the compose file's caddy profile) marks the session cookie
+# Secure so it is never sent over plain HTTP.
 SESSION_SECRET = os.environ.get("SESSION_SECRET") or secrets.token_hex(32)
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax")
+app.add_middleware(
+    SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax",
+    https_only=os.environ.get("COOKIE_SECURE") == "1",
+)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -113,6 +120,43 @@ def last_ingest_status(conn: sqlite3.Connection, user_id: int) -> list[dict]:
 
 # --- Auth ---
 
+# Brute-force throttle for the public login form: after
+# LOGIN_MAX_FAILURES failed attempts from the same client IP within
+# LOGIN_WINDOW_SEC, further attempts are rejected until the window
+# slides past. In-memory on purpose.
+# ponytail: per-process state -- resets on restart and doesn't share
+# across workers. The web service runs a single uvicorn process; move
+# this to a db table if that ever changes.
+LOGIN_MAX_FAILURES = 5
+LOGIN_WINDOW_SEC = 900
+_login_failures: dict[str, list[float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP, proxy-aware.
+
+    Behind the caddy profile the first X-Forwarded-For entry is the
+    real client; without a proxy the header is absent and the socket
+    peer is authoritative. (A direct attacker could forge the header,
+    but then they control the source IP anyway -- per-key throttling
+    still holds.)
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _throttled(key: str, now: float) -> bool:
+    """True if this key has exhausted its failure budget."""
+    attempts = [
+        t for t in _login_failures.get(key, ())
+        if now - t < LOGIN_WINDOW_SEC
+    ]
+    _login_failures[key] = attempts
+    return len(attempts) >= LOGIN_MAX_FAILURES
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request) -> HTMLResponse:
     """Login form. Also redirects home if already logged in."""
@@ -125,16 +169,25 @@ def login_page(request: Request) -> HTMLResponse:
 
 @app.post("/login")
 async def login_submit(request: Request):
-    """Verify credentials and start a session."""
+    """Verify credentials and start a session (rate-limited)."""
+    key = _client_ip(request)
+    now = time.monotonic()
+    if _throttled(key, now):
+        return RedirectResponse(
+            "/login?error=Trop+de+tentatives+--+reessayez+dans+15+min",
+            status_code=303,
+        )
     form = await request.form()
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
     conn = get_conn()
     user_id = db.verify_login(conn, username, password)
     if user_id is None:
+        _login_failures.setdefault(key, []).append(now)
         return RedirectResponse(
             "/login?error=Identifiants+incorrects", status_code=303,
         )
+    _login_failures.pop(key, None)
     request.session["user_id"] = user_id
     request.session["username"] = username
     return RedirectResponse("/", status_code=303)

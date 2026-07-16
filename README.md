@@ -146,6 +146,27 @@ Google Calendar name, ntfy topic, and the weekly plan (per-weekday
 session type, title, start time, duration — "libre" days sit outside
 the leveling system but still drive the calendar event).
 
+## Exposing it on the internet
+
+The dashboard stays self-hosted; the login (per-user accounts,
+PBKDF2 passwords, rate-limited form) is the only gate — so the
+transport has to be HTTPS. The compose file ships an optional Caddy
+front that handles certificates automatically:
+
+```bash
+# .env: set these four
+#   DOMAIN=sport.example.com     # DNS A/AAAA record -> your host
+#   SESSION_SECRET=<python3 -c "import secrets; print(secrets.token_hex(32))">
+#   COOKIE_SECURE=1              # session cookie never sent over HTTP
+#   WEB_BIND=127.0.0.1:8080      # app port no longer reachable directly
+
+docker compose --profile public up -d --build
+```
+
+Forward ports 80 + 443 to the host (and nothing else). Caddy
+obtains/renews the Let's Encrypt certificate and proxies to the app;
+failed logins are throttled per client IP (5 tries / 15 min).
+
 ## Testing
 
 ```bash
