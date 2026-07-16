@@ -58,7 +58,14 @@ FR_SYSTEM_PROMPT = (
     "se mentionne dans AUJOURD'HUI ou CONSEIL (sans culpabiliser, "
     "un fait + une action) ; un tsb tres negatif ou un ecart "
     "avg_hr/rpe inhabituel dans les seances recentes justifie de "
-    "moderer l'intensite dans CONSEIL.\n"
+    "moderer l'intensite dans CONSEIL. Surcharge progressive : "
+    "compare la seance de ce soir a la DERNIERE seance du meme type "
+    "dans activities_last_7_days (avg_hr, rpe, duree) -- si elle "
+    "etait facile (rpe bas, avg_hr modere), dis dans CONSEIL que la "
+    "progression est justifiee ; si elle a coute cher, prudence. "
+    "Une grosse activite non planifiee la veille (longue sortie "
+    "velo, kcal eleves) compte comme une vraie seance : integre-la "
+    "dans la lecture de la recuperation d'aujourd'hui.\n"
     "Reponds en FRANCAIS, texte brut, 180 mots max, en lignes :\n"
     "AUJOURD'HUI : la seance du jour (activite, duree, intensite ; "
     "pente en % si tapis), adaptee a la recuperation. Annonce le "
@@ -81,6 +88,10 @@ FR_SYSTEM_PROMPT = (
     "PROGRES : si weekly_progress.weight_trend_14d ou "
     "calorie_balance_7d ont des donnees, UN point chiffre dessus "
     "(delta de poids, balance calorique) repris tel quel. Si "
+    "lean_mass_trend_28d a des donnees et que le poids baisse, dis "
+    "si la masse maigre tient (recomposition reussie : la perte est "
+    "du gras) ou baisse aussi (alerte : proteines/muscu a renforcer). "
+    "Si "
     "weekly_progress.plateau.plateau est vrai, dis-le et donne UN "
     "ajustement concret. Si weekly_progress.recalibration.flagged est "
     "vrai, dis que le rythme reel (actual_weekly_kg) s'ecarte de "
@@ -139,7 +150,13 @@ EN_SYSTEM_PROMPT = (
     "line: a skipped session or a nice green streak belongs in TODAY "
     "or TIP (no guilt-tripping -- one fact + one action); a very "
     "negative tsb or an unusual avg_hr/rpe drift across recent "
-    "sessions justifies moderating intensity in TIP.\n"
+    "sessions justifies moderating intensity in TIP. Progressive "
+    "overload: compare tonight's session to the LAST same-type entry "
+    "in activities_last_7_days (avg_hr, rpe, duration) -- if it came "
+    "easy (low rpe, moderate avg_hr), say in TIP that progression is "
+    "earned; if it cost a lot, urge caution. A big unplanned "
+    "activity yesterday (long ride, high kcal) counts as a real "
+    "session: fold it into today's recovery read.\n"
     "Respond in ENGLISH, plain text, 180 words max, in lines:\n"
     "TODAY: today's session (activity, duration, intensity; incline "
     "% if treadmill), adapted to recovery. State the status (green/"
@@ -160,7 +177,10 @@ EN_SYSTEM_PROMPT = (
     "no sized suggestion.\n"
     "PROGRESS: if weekly_progress.weight_trend_14d or "
     "calorie_balance_7d have data, ONE figure-based point (weight "
-    "delta, calorie balance), reused as-is. If "
+    "delta, calorie balance), reused as-is. If lean_mass_trend_28d "
+    "has data and weight is falling, say whether lean mass is "
+    "holding (recomposition working: the loss is fat) or falling "
+    "too (warning: protein/strength work needs reinforcing). If "
     "weekly_progress.plateau.plateau is true, say so and give ONE "
     "concrete adjustment. If weekly_progress.recalibration.flagged is "
     "true, say the actual rate (actual_weekly_kg) has drifted from "
@@ -296,6 +316,10 @@ if __name__ == "__main__":
         assert key in EN_SYSTEM_PROMPT, key
     assert "porte parfois les donnees d'hier" not in FR_SYSTEM_PROMPT
     assert "yesterday's logged nutrition if any" not in EN_SYSTEM_PROMPT
+    assert "lean_mass_trend_28d" in FR_SYSTEM_PROMPT
+    assert "lean_mass_trend_28d" in EN_SYSTEM_PROMPT
+    assert "Surcharge progressive" in FR_SYSTEM_PROMPT
+    assert "Progressive overload" in EN_SYSTEM_PROMPT
 
     prompt_en = _build_prompt({
         "date": "2026-07-13", "today_session": {}, "language": "en",

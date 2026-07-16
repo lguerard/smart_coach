@@ -62,7 +62,8 @@ def run_for_user(conn, user: dict) -> None:
         )
         level = deload["level"]
 
-        values = training.session_values(session_type, level)
+        cap_min = training.session_cap_min(conn, user_id)
+        values = training.session_values(session_type, level, cap_min)
         description = training.format_description_fr(
             session_type, level, values, status,
         )
@@ -99,6 +100,7 @@ def run_for_user(conn, user: dict) -> None:
                     username, calendar_name,
                     dt.date.fromisoformat(today), template,
                     calendar_description,
+                    duration_min=values.get("duration_min"),
                 )
             except Exception as error:
                 calendar_note = f"(Calendrier non mis a jour: {error})"
@@ -149,7 +151,12 @@ def run_for_user(conn, user: dict) -> None:
             topic=ntfy_topic,
         )
 
-    notify.notify(message, topic=ntfy_topic)
+    # The push always opens with the deterministic day budget, so the
+    # numbers reach the phone even if the LLM phrases around them.
+    header = progress.format_plan_header(payload["today_targets"], language)
+    notify.notify(
+        f"{header}\n{message}" if header else message, topic=ntfy_topic,
+    )
     print(f"{username}: {message}")
 
 

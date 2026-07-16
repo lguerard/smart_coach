@@ -92,6 +92,19 @@ def body_fat_trend(
     )
 
 
+def lean_mass_trend(
+    conn: sqlite3.Connection, user_id: int, end_date: str, days: int = 28,
+) -> dict:
+    """Rolling lean-body-mass trend (kg) over the last ``days`` days.
+
+    The recomposition truth signal: weight falling while lean mass
+    holds or rises means the loss is fat, not muscle.
+    """
+    return _weight_like_trend(
+        conn, user_id, "lean_body_mass", "kg", end_date, days
+    )
+
+
 def estimate_bmr(
     conn: sqlite3.Connection, user_id: int, weight_kg: float,
 ) -> Optional[float]:
@@ -382,6 +395,41 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     return result
 
 
+def format_plan_header(targets: dict, language: str) -> str:
+    """One-line day budget for the morning ntfy push.
+
+    Deterministic (no LLM): the numbers always reach the phone even
+    if the coaching message phrases around them.
+
+    Parameters:
+        targets (dict): ``macro_targets`` output.
+        language (str): "fr" or "en".
+
+    Returns:
+        str: e.g. "Plan du jour: 2100 kcal - P140g L72g G210g -
+        2.8L", or "" when nothing is computable.
+    """
+    parts = []
+    if targets.get("calorie_target_kcal"):
+        parts.append(f"{targets['calorie_target_kcal']} kcal")
+    fat_tag, carb_tag = ("L", "G") if language == "fr" else ("F", "C")
+    macros = " ".join(
+        f"{tag}{targets[key]}g"
+        for tag, key in (("P", "protein_target_g"),
+                         (fat_tag, "fat_target_g"),
+                         (carb_tag, "carb_target_g"))
+        if targets.get(key)
+    )
+    if macros:
+        parts.append(macros)
+    if targets.get("hydration_target_ml"):
+        parts.append(f"{targets['hydration_target_ml'] / 1000:.1f}L")
+    if not parts:
+        return ""
+    label = "Plan du jour" if language == "fr" else "Today's plan"
+    return f"{label}: " + " - ".join(parts)
+
+
 def yesterday_intake(
     conn: sqlite3.Connection, user_id: int, date: str,
 ) -> dict:
@@ -614,15 +662,16 @@ def weekly_progress(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
 
     Returns:
         dict: ``weight_trend_14d``, ``body_fat_trend_28d``,
-        ``calorie_balance_7d``, ``protein_7d``, ``plateau``,
-        ``recalibration`` -- empty sub-dicts where there isn't enough
-        data yet.
+        ``lean_mass_trend_28d``, ``calorie_balance_7d``,
+        ``protein_7d``, ``plateau``, ``recalibration`` -- empty
+        sub-dicts where there isn't enough data yet.
     """
     weight = weight_trend(conn, user_id, date)
     calories = calorie_balance_for_range(conn, user_id, date)
     return {
         "weight_trend_14d": weight,
         "body_fat_trend_28d": body_fat_trend(conn, user_id, date),
+        "lean_mass_trend_28d": lean_mass_trend(conn, user_id, date),
         "calorie_balance_7d": calories,
         "protein_7d": protein_trend(conn, user_id, date),
         "plateau": detect_plateau(weight, calories),
@@ -703,8 +752,33 @@ if __name__ == "__main__":
     plateau = detect_plateau(trend, calories)
     assert plateau["plateau"] is True
 
+    # Lean mass logged flat while weight fell -> recomposition signal.
+    for i in (0, 14, 27):
+        date = (base + dt.timedelta(days=i)).isoformat()
+        conn.execute(
+            "INSERT INTO lean_body_mass VALUES (?, ?, ?, ?, 61.0)",
+            (f"lm{i}", uid, f"{date}T07:00:00+00:00", date),
+        )
+    conn.commit()
+    lean = lean_mass_trend(conn, uid, end_date)
+    assert lean["delta"] == 0.0, lean
+
+    header = format_plan_header(
+        {"calorie_target_kcal": 2100, "protein_target_g": 140,
+         "fat_target_g": 72, "carb_target_g": 210,
+         "hydration_target_ml": 2800}, "fr",
+    )
+    assert header == (
+        "Plan du jour: 2100 kcal - P140g L72g G210g - 2.8L"
+    ), header
+    assert format_plan_header({}, "fr") == ""
+    assert format_plan_header(
+        {"protein_target_g": 140}, "en",
+    ) == "Today's plan: P140g"
+
     bundle = weekly_progress(conn, uid, end_date)
     assert bundle["weight_trend_14d"] == trend
+    assert bundle["lean_mass_trend_28d"] == lean
     # protein/fat/hydration targets need no BMR inputs (default ratio
     # settings are seeded by create_user), so they're already in the
     # gap computed above even before height/age/sex are set below.

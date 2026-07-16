@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Fitness/Fatigue/Form (CTL/ATL/TSB), intervals.icu/TrainingPeaks-style.
 
-Daily training stress has no power-meter or reliable-RPE data behind
-it (see training.py's docstring -- Health Connect carries neither for
-these bodyweight/treadmill sessions), so load is approximated as
-total exercise minutes that day weighted by smart_sport's own
-prescribed level for that date (0-10, from ``coach_log`` -- the same
-number already driving the workout itself, level 0 -> factor 1.0,
-level 10 -> factor 2.0). This is a deliberate proxy, not a physiological
-measurement; it is internally consistent (harder prescribed sessions
-count for more) which is what CTL/ATL/TSB need to be directionally
-useful.
+Daily training stress has no power-meter data behind it, so load is
+approximated per session: minutes weighted by smart_sport's own
+prescribed level for that date (0-10, from ``coach_log``, level 0 ->
+factor 1.0, level 10 -> 2.0), raised to rpe/5 when the session
+carries a cleaned RPE -- so unplanned efforts (weekend rides) count
+for what they actually cost. This is a deliberate proxy, not a
+physiological measurement; it is internally consistent (harder
+sessions count for more) which is what CTL/ATL/TSB need to be
+directionally useful.
 
 CTL (Fitness) is a 42-day exponentially-weighted moving average of
 daily load, ATL (Fatigue) the same over 7 days, TSB (Form) = yesterday's
@@ -33,7 +32,14 @@ _ATL_ALPHA = 1 - math.exp(-1 / ATL_DAYS)
 def _daily_load(
     conn: sqlite3.Connection, user_id: int, local_date: str,
 ) -> float:
-    """Training stress for one day: exercise minutes * level factor.
+    """Training stress for one day, summed per session.
+
+    Each session's minutes are weighted by the day's prescribed level
+    (level 0 -> 1.0, level 10 -> 2.0). When the session carries a
+    cleaned RPE, the weight is at least rpe/5 (RPE 5 -> 1.0, RPE 10
+    -> 2.0), so an unplanned hard effort -- a long weekend ride, say
+    -- counts for what it cost, not for the day's (absent or easy)
+    prescription.
 
     Parameters:
         conn (sqlite3.Connection): smart_sport db connection.
@@ -48,20 +54,23 @@ def _daily_load(
         "ORDER BY created_at DESC LIMIT 1", (user_id, local_date),
     ).fetchone()
     level = row["level"] if row and row["level"] is not None else 0
-    factor = 1 + level / 10
+    level_factor = 1 + level / 10
 
     rows = conn.execute(
-        "SELECT start_utc, end_utc FROM exercise_sessions WHERE "
+        "SELECT start_utc, end_utc, rpe FROM exercise_sessions WHERE "
         "user_id = ? AND local_date = ?", (user_id, local_date),
     ).fetchall()
-    total_minutes = sum(
-        (
+    load = 0.0
+    for r in rows:
+        minutes = (
             dt.datetime.fromisoformat(r["end_utc"])
             - dt.datetime.fromisoformat(r["start_utc"])
         ).total_seconds() / 60
-        for r in rows
-    )
-    return total_minutes * factor
+        factor = level_factor
+        if r["rpe"] is not None:
+            factor = max(factor, r["rpe"] / 5)
+        load += minutes * factor
+    return load
 
 
 def compute_training_load(
@@ -195,6 +204,20 @@ if __name__ == "__main__":
 
     latest = latest_training_load(conn, uid)
     assert latest["local_date"] == "2026-01-10"
+
+    # An unplanned hard effort (no coach_log level, RPE 9) counts at
+    # rpe/5 = 1.8, not at the day's absent prescription (1.0).
+    d = "2026-01-11"
+    conn.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, "
+        "end_utc, local_date, exercise_type, title, notes, rpe) "
+        "VALUES ('ride', ?, ?, ?, ?, 8, 'ride', NULL, 9.0)",
+        (uid, f"{d}T09:00:00+00:00", f"{d}T10:00:00+00:00", d),
+    )
+    conn.commit()
+    compute_training_load(conn, uid, d, window_days=30)
+    ride_day = latest_training_load(conn, uid)
+    assert abs(ride_day["daily_load"] - 60 * 1.8) < 0.01, ride_day
 
     # Isolation: other_uid has no sessions/coach_log at all.
     compute_training_load(conn, other_uid, "2026-01-10", window_days=30)
