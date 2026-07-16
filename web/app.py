@@ -161,7 +161,8 @@ def home(request: Request) -> HTMLResponse:
     description = None
     if entry and entry["session_type"]:
         session_values = training.session_values(
-            entry["session_type"], entry["level"]
+            entry["session_type"], entry["level"],
+            training.session_cap_min(conn, user_id),
         )
         description = training.format_description_fr(
             entry["session_type"], entry["level"], session_values,
@@ -257,7 +258,8 @@ def regenerate(request: Request) -> HTMLResponse:
         "type": entry["session_type"], "status": entry["status"],
         "level": entry["level"],
         "values": training.session_values(
-            entry["session_type"], entry["level"]
+            entry["session_type"], entry["level"],
+            training.session_cap_min(conn, user_id),
         ),
         "in_deload": bool(deload_until and deload_until >= date),
         "deload_triggered": False,  # regenerate never re-triggers one
@@ -314,7 +316,9 @@ async def edit_today_level(request: Request):
     )
     conn.commit()
 
-    values = training.session_values(session_type, level)
+    values = training.session_values(
+        session_type, level, training.session_cap_min(conn, user_id),
+    )
     description = training.format_description_fr(
         session_type, level, values, entry["status"],
     )
@@ -328,7 +332,7 @@ async def edit_today_level(request: Request):
             gcal.push_description(
                 request.session["username"], calendar_name, day,
                 training.schedule_for_user(conn, user_id)[day.weekday()],
-                description,
+                description, duration_min=values.get("duration_min"),
             )
         except Exception as error:
             note = f"Calendrier non mis a jour: {error}"

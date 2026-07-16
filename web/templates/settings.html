@@ -48,6 +48,18 @@
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
     <label class="block text-sm">
+      Rythme vise (kg / semaine, negatif = perte)
+      <input name="weekly_weight_change_kg" value="{{ settings.weekly_weight_change_kg }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
+      Duree max de seance (min) -- au-dela de la vitesse/reps max, la
+      seance s'allonge jusqu'a ce plafond
+      <input name="session_cap_min" type="number" min="10" max="240"
+        value="{{ settings.session_cap_min }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
       Calendrier Google (nom affiche)
       <input name="calendar_name" value="{{ settings.calendar_name }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">

@@ -251,9 +251,9 @@ CREATE TABLE IF NOT EXISTS total_calories_burned (
 CREATE INDEX IF NOT EXISTS idx_total_cal_user_date ON total_calories_burned(user_id, local_date);
 
 -- Daily training-load model (Fitness/Fatigue/Form, intervals.icu
--- style). load_today comes from training.py's own prescribed level
--- (duration * (1 + level/10)) -- deliberately not RPE (unreliable,
--- see parse_health_connect.py's _clean_rpe) or power (not available).
+-- style). Per-session duration * max(1 + level/10, rpe/5): the
+-- prescribed level drives planned sessions, a cleaned RPE (see
+-- parse_health_connect.py's _clean_rpe) raises unplanned efforts.
 CREATE TABLE IF NOT EXISTS training_load (
     user_id INTEGER NOT NULL REFERENCES users(id),
     local_date TEXT NOT NULL,
@@ -394,6 +394,9 @@ DEFAULT_SETTINGS = {
     "calendar_name": "",  # this user's target Google Calendar display name
     "ntfy_topic": "",  # this user's own ntfy topic (falls back to env NTFY_TOPIC)
     "schedule": json.dumps(DEFAULT_SCHEDULE),
+    # Max session duration: sessions stay dense and short by default;
+    # raise this to let high levels extend the session instead.
+    "session_cap_min": "30",
 }
 
 

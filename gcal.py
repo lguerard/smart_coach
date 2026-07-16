@@ -11,6 +11,7 @@ the migration period without clobbering each other's tokens.
 import datetime as dt
 import sys
 from pathlib import Path
+from typing import Optional
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -148,7 +149,7 @@ def find_matching_event(
 
 def upsert_session_event(
     service, calendar_id: str, day: dt.date, template: dict,
-    description: str,
+    description: str, duration_min: Optional[int] = None,
 ) -> str:
     """Update tonight's event description, or create it if missing.
 
@@ -159,15 +160,25 @@ def upsert_session_event(
         template (dict): The user's weekday template
             (``training.schedule_for_user``): title/start/duration.
         description (str): New event description (adapted workout).
+        duration_min (int | None): Today's computed session length;
+            when set, the event's end time is moved to start +
+            duration so a longer prescription shows as a longer
+            calendar block. ``None`` keeps the event's own times.
 
     Returns:
         str: The event id that was updated or created.
     """
     existing = find_matching_event(service, calendar_id, day, template)
     if existing:
+        body: dict = {"description": description}
+        event_start = existing.get("start", {}).get("dateTime")
+        if duration_min and event_start:
+            end = dt.datetime.fromisoformat(event_start) + dt.timedelta(
+                minutes=duration_min,
+            )
+            body["end"] = {"dateTime": end.isoformat()}
         service.events().patch(
-            calendarId=calendar_id, eventId=existing["id"],
-            body={"description": description},
+            calendarId=calendar_id, eventId=existing["id"], body=body,
         ).execute()
         return existing["id"]
 
@@ -175,7 +186,9 @@ def upsert_session_event(
     start = dt.datetime.combine(
         day, dt.time(hour, minute)
     ).astimezone()
-    end = start + dt.timedelta(minutes=template["duration_min"])
+    end = start + dt.timedelta(
+        minutes=duration_min or template["duration_min"],
+    )
     created = service.events().insert(
         calendarId=calendar_id,
         body={
@@ -189,7 +202,7 @@ def upsert_session_event(
 
 def push_description(
     username: str, calendar_name: str, day: dt.date, template: dict,
-    description: str,
+    description: str, duration_min: Optional[int] = None,
 ) -> str:
     """Authenticate, resolve the calendar, and upsert the day's event.
 
@@ -210,7 +223,7 @@ def push_description(
     service = get_calendar_service(username)
     calendar_id = resolve_calendar_id(service, calendar_name)
     return upsert_session_event(
-        service, calendar_id, day, template, description,
+        service, calendar_id, day, template, description, duration_min,
     )
 
 

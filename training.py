@@ -378,16 +378,54 @@ def session_type_for_weekday(
     return schedule_for_user(conn, user_id)[weekday].get("session_type")
 
 
-def treadmill_values(level: int) -> dict:
-    """Level -> treadmill workout values."""
+# Density-first philosophy: a higher level first packs more work into
+# the same slot (speed, reps, rounds); only once intensity is maxed
+# does the session get LONGER, and never past the user's cap.
+DEFAULT_SESSION_CAP_MIN = 30
+SESSION_CAP_FLOOR_MIN, SESSION_CAP_CEIL_MIN = 10, 240
+
+
+def session_cap_min(conn: sqlite3.Connection, user_id: int) -> int:
+    """The user's max session duration in minutes (Settings).
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+
+    Returns:
+        int: Cap clamped to a sane range; default 30.
+    """
+    raw = db.get_setting(conn, user_id, "session_cap_min")
+    try:
+        cap = int(raw)
+    except (TypeError, ValueError):
+        cap = DEFAULT_SESSION_CAP_MIN
+    return max(SESSION_CAP_FLOOR_MIN, min(SESSION_CAP_CEIL_MIN, cap))
+
+
+def treadmill_values(
+    level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+) -> dict:
+    """Level -> treadmill workout values.
+
+    Speed climbs until level 8 caps it at 7.0 km/h; levels above that
+    extend the walk instead (+4 min per level), up to ``cap_min``.
+    """
     return {
         "speed_kmh": min(round(5.5 + level * 0.2, 1), 7.0),
         "incline_pct": 12,
-        "duration_min": 20,
+        "duration_min": min(20 + 4 * max(0, level - 7), cap_min),
     }
 
 
-def lower_body_values(level: int) -> dict:
+def _circuit_duration_min(rounds: int, cap_min: int) -> int:
+    """Estimated circuit duration: ~6 min/round + warm-up, capped."""
+    return min(12 + 6 * rounds, cap_min)
+
+
+def lower_body_values(
+    level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+) -> dict:
     """Level -> lower-body bodyweight circuit values."""
     rounds = 3 if level <= 3 else 4 if level <= 7 else 5
     return {
@@ -397,10 +435,13 @@ def lower_body_values(level: int) -> dict:
         "calf_raises": 15 + level,
         "glute_bridge": 15 + level,
         "rounds": rounds,
+        "duration_min": _circuit_duration_min(rounds, cap_min),
     }
 
 
-def upper_body_values(level: int) -> dict:
+def upper_body_values(
+    level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+) -> dict:
     """Level -> upper-body + core circuit values."""
     rounds = 3 if level <= 3 else 4
     return {
@@ -409,10 +450,13 @@ def upper_body_values(level: int) -> dict:
         "superman": 12 + level,
         "plank_sec": 20 + level * 4,
         "rounds": rounds,
+        "duration_min": _circuit_duration_min(rounds, cap_min),
     }
 
 
-def calisthenics_values(level: int) -> dict:
+def calisthenics_values(
+    level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+) -> dict:
     """Level -> full-body calisthenics circuit values."""
     rounds = 3 if level <= 3 else 4 if level <= 7 else 5
     return {
@@ -423,6 +467,7 @@ def calisthenics_values(level: int) -> dict:
         "mountain_climbers": 20 + level * 2,
         "jumping_jacks": 20 + level * 2,
         "rounds": rounds,
+        "duration_min": _circuit_duration_min(rounds, cap_min),
     }
 
 
@@ -434,9 +479,12 @@ SESSION_VALUE_FUNCS = {
 }
 
 
-def session_values(session_type: str, level: int) -> dict:
+def session_values(
+    session_type: str, level: int,
+    cap_min: int = DEFAULT_SESSION_CAP_MIN,
+) -> dict:
     """Dispatch to the value-mapping function for a session type."""
-    return SESSION_VALUE_FUNCS[session_type](level)
+    return SESSION_VALUE_FUNCS[session_type](level, cap_min)
 
 
 def format_description_fr(
@@ -454,7 +502,8 @@ def format_description_fr(
         )
     elif session_type == "lower_body":
         body = (
-            f"{values['rounds']} tours - squats {values['squats']}, "
+            f"{values['rounds']} tours (~{values['duration_min']} "
+            f"min) - squats {values['squats']}, "
             f"fentes avant {values['lunges_per_leg']}/jambe, chaise "
             f"contre mur {values['wall_sit_sec']}s, mollets debout "
             f"{values['calf_raises']}, pont fessier "
@@ -462,13 +511,15 @@ def format_description_fr(
         )
     elif session_type == "upper_body":
         body = (
-            f"{values['rounds']} tours - pompes {values['pushups']}, "
+            f"{values['rounds']} tours (~{values['duration_min']} "
+            f"min) - pompes {values['pushups']}, "
             f"dips {values['dips']}, superman {values['superman']}, "
             f"planche {values['plank_sec']}s"
         )
     else:  # calisthenics
         body = (
-            f"{values['rounds']} tours - squats {values['squats']}, "
+            f"{values['rounds']} tours (~{values['duration_min']} "
+            f"min) - squats {values['squats']}, "
             f"pompes {values['pushups']}, fentes arriere "
             f"{values['reverse_lunges_per_leg']}/jambe, gainage "
             f"lateral {values['side_plank_sec']}s/cote, mountain "
@@ -518,6 +569,18 @@ if __name__ == "__main__":
     assert lower_body_values(8)["rounds"] == 5
     assert calisthenics_values(10)["squats"] == 25
 
+    # Density-first duration: fixed until speed caps (level 7), then
+    # +4 min per level, never past the cap.
+    assert treadmill_values(5)["duration_min"] == 20
+    assert treadmill_values(9, cap_min=45)["duration_min"] == 28
+    assert treadmill_values(10, cap_min=30)["duration_min"] == 30
+    assert lower_body_values(8, cap_min=60)["duration_min"] == 42
+    assert lower_body_values(8, cap_min=30)["duration_min"] == 30
+    assert upper_body_values(0)["duration_min"] == 30
+    assert "min)" in format_description_fr(
+        "lower_body", 4, lower_body_values(4), "green",
+    )
+
     tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
     conn = db_module.connect(tmp)
     db_module.init_db(conn)
@@ -549,6 +612,14 @@ if __name__ == "__main__":
     db_module.set_setting(
         conn, uid, "schedule", db_module.DEFAULT_SETTINGS["schedule"],
     )
+
+    assert session_cap_min(conn, uid) == 30  # default
+    db_module.set_setting(conn, uid, "session_cap_min", "60")
+    assert session_cap_min(conn, uid) == 60
+    db_module.set_setting(conn, uid, "session_cap_min", "9999")
+    assert session_cap_min(conn, uid) == SESSION_CAP_CEIL_MIN
+    db_module.set_setting(conn, uid, "session_cap_min", "garbage")
+    assert session_cap_min(conn, uid) == 30
 
     conn.executemany(
         "INSERT INTO resting_heart_rate VALUES (?, ?, ?, ?, ?)",
