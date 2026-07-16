@@ -1,0 +1,41 @@
+# =============================================================================
+#  smart_sport — dashboard + coach (replaces garmin-coach)
+#  Setup (interactive first run, see README.md #Deploiement) :
+#    1. docker compose run --rm -it smart_sport-worker rclone config
+#    2. docker compose run --rm -it smart_sport-worker claude setup-token
+#    3. docker compose run --rm -it smart_sport-worker python run_coach.py
+#       (grants Google Calendar access; drop calendar_client_secret.json
+#       into ./data/gcal-config/ first, see README)
+# =============================================================================
+
+name: smart_sport
+
+services:
+  smart_sport-web:
+    build: .
+    container_name: smart_sport-web
+    command: ["web"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: ${TZ:-Europe/Paris}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/db:/app/data/db
+      - ./data/rclone:/root/.config/rclone
+      - ./data/gcal-config:/root/.config/smart_sport
+
+  smart_sport-worker:
+    build: .
+    container_name: smart_sport-worker
+    command: ["cron-foreground"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: ${TZ:-Europe/Paris}
+    volumes:
+      - ./data/db:/app/data/db
+      - ./data/inbox:/app/data/inbox
+      - ./data/rclone:/root/.config/rclone
+      - ./data/gcal-config:/root/.config/smart_sport
