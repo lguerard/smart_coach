@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""smart_sport dashboard: FastAPI + Jinja2 + HTMX + Chart.js (CDN).
+
+Six pages -- Home (today), Progress (weight/calorie/protein +
+plateau), Trends (steps/RHR/sleep/level history), Sessions (exercise
+log), Achievements (Player Level/XP/Coach Score), Settings (goals +
+ingestion health) -- behind a login. No build step: Tailwind and
+Chart.js load from CDN, HTMX handles the one bit of interactivity
+(the Home page's regenerate button).
+
+Multi-user: a signed session cookie carries ``user_id``; every route
+scopes its queries to that person's rows only via the modules'
+user_id-aware functions. A lightweight ASGI middleware gates every
+path except /login and /static behind having a valid session.
+"""
+
+import datetime as dt
+import os
+import secrets
+import sqlite3
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
+
+import achievements
+import db
+import llm
+import metrics
+import progress
+import training
+import training_load
+from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
+
+APP_DIR = Path(__file__).parent
+app = FastAPI(title="smart_sport")
+app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=APP_DIR / "templates")
+
+_PUBLIC_PREFIXES = ("/login", "/static")
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    """Gate every path except /login and /static behind a session."""
+    if request.url.path.startswith(_PUBLIC_PREFIXES):
+        return await call_next(request)
+    if not request.session.get("user_id"):
+        return RedirectResponse("/login")
+    return await call_next(request)
+
+
+# Registered AFTER require_login: Starlette middlewares wrap in LIFO
+# order (last-added = outermost = runs first), so SessionMiddleware
+# must be added after the custom middleware to actually run before it
+# -- otherwise require_login sees a scope with no "session" key yet.
+# ponytail: if SESSION_SECRET isn't set, sessions won't survive a
+# container restart (everyone gets logged out) -- fine for dev, but
+# set it explicitly in .env for a real deployment so logins persist.
+SESSION_SECRET = os.environ.get("SESSION_SECRET") or secrets.token_hex(32)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax")
+
+
+def get_conn() -> sqlite3.Connection:
+    """Open a request-scoped db connection with the schema ensured.
+
+    Returns:
+        sqlite3.Connection: Ready-to-query connection.
+    """
+    conn = db.connect()
+    db.init_db(conn)
+    return conn
+
+
+def current_user_id(request: Request) -> int:
+    """The logged-in user's id (guaranteed present -- require_login
+    already redirected anyone without one).
+    """
+    return request.session["user_id"]
+
+
+def today_str(conn: sqlite3.Connection, user_id: int) -> str:
+    """Today's date in the user's configured local timezone."""
+    return dt.datetime.now(metrics.local_tz(conn, user_id)).date().isoformat()
+
+
+def latest_coach_entry(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> sqlite3.Row | None:
+    """Today's coach_log row, if the daily cron has already run."""
+    return conn.execute(
+        "SELECT * FROM coach_log WHERE user_id = ? AND local_date = ? "
+        "ORDER BY id DESC LIMIT 1", (user_id, date),
+    ).fetchone()
+
+
+def last_ingest_status(conn: sqlite3.Connection, user_id: int) -> list[dict]:
+    """Most recent ingestion row count per table, for the Settings page."""
+    rows = conn.execute(
+        "SELECT table_name, row_count, MAX(ran_at) AS ran_at "
+        "FROM ingest_runs WHERE user_id = ? GROUP BY table_name "
+        "ORDER BY table_name", (user_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# --- Auth ---
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request) -> HTMLResponse:
+    """Login form. Also redirects home if already logged in."""
+    if request.session.get("user_id"):
+        return RedirectResponse("/")
+    return templates.TemplateResponse(
+        request, "login.html", {"error": request.query_params.get("error")},
+    )
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    """Verify credentials and start a session."""
+    form = await request.form()
+    username = str(form.get("username", "")).strip()
+    password = str(form.get("password", ""))
+    conn = get_conn()
+    user_id = db.verify_login(conn, username, password)
+    if user_id is None:
+        return RedirectResponse(
+            "/login?error=Identifiants+incorrects", status_code=303,
+        )
+    request.session["user_id"] = user_id
+    request.session["username"] = username
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/logout")
+def logout(request: Request):
+    """End the session."""
+    request.session.clear()
+    return RedirectResponse("/login", status_code=303)
+
+
+# --- Home ---
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request) -> HTMLResponse:
+    """Today: readiness chip, tonight's session, the coaching message."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    entry = latest_coach_entry(conn, user_id, date)
+
+    session_values = None
+    description = None
+    if entry and entry["session_type"]:
+        session_values = training.session_values(
+            entry["session_type"], entry["level"]
+        )
+        description = training.format_description_fr(
+            entry["session_type"], entry["level"], session_values,
+            entry["status"],
+        )
+    last_sync = conn.execute(
+        "SELECT MAX(ran_at) AS ran_at FROM ingest_runs WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()["ran_at"]
+    wellness = metrics.daily_wellness(conn, user_id, date)
+    coach_score = achievements.score(conn, user_id)
+    player_level = achievements.player_level(conn, user_id)
+    new_today = [
+        {**achievements.ACHIEVEMENTS[row["key"]], "key": row["key"]}
+        for row in conn.execute(
+            "SELECT key FROM achievements WHERE user_id = ? AND "
+            "unlocked_at = ?", (user_id, date),
+        ).fetchall()
+    ]
+    deload_until = (
+        training.get_deload_until(conn, user_id, entry["session_type"])
+        if entry and entry["session_type"] else None
+    )
+    in_deload = bool(deload_until and deload_until >= date)
+
+    return templates.TemplateResponse(
+        request, "home.html", {
+            "date": date, "entry": entry, "values": session_values,
+            "description": description,
+            "session_label_fr": training.SESSION_LABEL_FR,
+            "status_label_fr": training.STATUS_LABEL_FR,
+            "last_sync": last_sync, "wellness": wellness,
+            "coach_score": coach_score, "player_level": player_level,
+            "new_achievements_today": new_today, "in_deload": in_deload,
+            "username": request.session.get("username"),
+        },
+    )
+
+
+@app.post("/regenerate", response_class=HTMLResponse)
+def regenerate(request: Request) -> HTMLResponse:
+    """Re-run only the LLM phrasing step against today's persisted
+    session/status (does not touch levels, calendar, or ntfy -- those
+    are the daily cron's job, not a dashboard click's).
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    entry = latest_coach_entry(conn, user_id, date)
+    if not entry:
+        return templates.TemplateResponse(
+            request, "_message.html", {
+                "entry": None,
+                "error": "Le coach n'a pas encore tourne aujourd'hui.",
+            },
+        )
+
+    wellness = metrics.daily_wellness(conn, user_id, date)
+    nutrition = metrics.nutrition_for_date(conn, user_id, date)
+    weekly = progress.weekly_progress(conn, user_id, date)
+    deload_until = (
+        training.get_deload_until(conn, user_id, entry["session_type"])
+        if entry["session_type"] else None
+    )
+    today_session = {"type": "bike"} if not entry["session_type"] else {
+        "type": entry["session_type"], "status": entry["status"],
+        "level": entry["level"],
+        "values": training.session_values(
+            entry["session_type"], entry["level"]
+        ),
+        "in_deload": bool(deload_until and deload_until >= date),
+        "deload_triggered": False,  # regenerate never re-triggers one
+    }
+    message = llm.coach({
+        "date": date,
+        "language": db.get_setting(conn, user_id, "language") or "fr",
+        "wellness_today": wellness,
+        "nutrition_today": nutrition, "weekly_progress": weekly,
+        "today_session": today_session,
+    })
+    conn.execute(
+        "UPDATE coach_log SET message = ?, created_at = ? WHERE id = ? "
+        "AND user_id = ?",
+        (message, dt.datetime.now(dt.timezone.utc).isoformat(),
+         entry["id"], user_id),
+    )
+    conn.commit()
+    entry = latest_coach_entry(conn, user_id, date)
+    return templates.TemplateResponse(
+        request, "_message.html", {"entry": entry, "error": None},
+    )
+
+
+# --- Progress ---
+
+@app.get("/progress", response_class=HTMLResponse)
+def progress_page(request: Request) -> HTMLResponse:
+    """Weight/body-comp/calorie/protein trends + plateau callout."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    bundle = progress.weekly_progress(conn, user_id, date)
+
+    start90 = (dt.date.fromisoformat(date) - dt.timedelta(days=90)).isoformat()
+    weight_series = conn.execute(
+        "SELECT local_date, AVG(kg) AS kg FROM weight WHERE user_id = ? "
+        "AND local_date >= ? GROUP BY local_date ORDER BY local_date",
+        (user_id, start90),
+    ).fetchall()
+    calorie_series = progress.daily_calorie_balance(conn, user_id, date, 30)
+    protein_series = conn.execute(
+        "SELECT local_date, SUM(protein_g) AS protein_g FROM nutrition "
+        "WHERE user_id = ? AND local_date >= ? GROUP BY local_date "
+        "ORDER BY local_date",
+        (user_id, (dt.date.fromisoformat(date) - dt.timedelta(days=30)).isoformat()),
+    ).fetchall()
+
+    return templates.TemplateResponse(
+        request, "progress.html", {
+            "bundle": bundle,
+            "weight_labels": [r["local_date"] for r in weight_series],
+            "weight_values": [round(r["kg"], 1) for r in weight_series],
+            "calorie_labels": [r["date"] for r in calorie_series],
+            "calorie_values": [r["balance_kcal"] for r in calorie_series],
+            "protein_labels": [r["local_date"] for r in protein_series],
+            "protein_values": [
+                round(r["protein_g"], 1) for r in protein_series
+            ],
+        },
+    )
+
+
+# --- Trends ---
+
+@app.get("/trends", response_class=HTMLResponse)
+def trends(request: Request) -> HTMLResponse:
+    """Steps, resting HR vs baseline, sleep score, level progression."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    days = 30
+    dates = [
+        (dt.date.fromisoformat(date) - dt.timedelta(days=n)).isoformat()
+        for n in range(days - 1, -1, -1)
+    ]
+    steps_by_date = metrics.steps_for_range(conn, user_id, date, days)
+    rhr_rows = conn.execute(
+        "SELECT local_date, bpm FROM resting_heart_rate WHERE "
+        "user_id = ? AND local_date >= ? ORDER BY local_date",
+        (user_id, dates[0]),
+    ).fetchall()
+    rhr_by_date = {r["local_date"]: r["bpm"] for r in rhr_rows}
+    baseline = training.rhr_baseline(conn, user_id, date)
+
+    sleep_scores = []
+    for d in dates:
+        sleep = metrics.sleep_for_date(conn, user_id, d)
+        sleep_scores.append(sleep.get("sleep_score"))
+
+    levels = conn.execute(
+        "SELECT local_date, session_type, level FROM coach_log WHERE "
+        "user_id = ? AND session_type IS NOT NULL ORDER BY local_date",
+        (user_id,),
+    ).fetchall()
+
+    load_history = training_load.training_load_history(
+        conn, user_id, days=days,
+    )
+    load_by_date = {r["local_date"]: r for r in load_history}
+    latest_load = training_load.latest_training_load(conn, user_id)
+
+    return templates.TemplateResponse(
+        request, "trends.html", {
+            "dates": dates,
+            "steps_values": [steps_by_date.get(d) for d in dates],
+            "step_goal": int(
+                db.get_setting(conn, user_id, "step_goal") or 0
+            ),
+            "rhr_values": [rhr_by_date.get(d) for d in dates],
+            "rhr_baseline": round(baseline, 1) if baseline else None,
+            "sleep_values": sleep_scores,
+            "level_labels": [r["local_date"] for r in levels],
+            "level_series": {
+                session_type: [
+                    r["level"] if r["session_type"] == session_type
+                    else None for r in levels
+                ]
+                for session_type in training.SESSION_LABEL_FR
+            },
+            "session_label_fr": training.SESSION_LABEL_FR,
+            "ctl_values": [
+                round(load_by_date[d]["ctl"], 1) if d in load_by_date
+                else None for d in dates
+            ],
+            "atl_values": [
+                round(load_by_date[d]["atl"], 1) if d in load_by_date
+                else None for d in dates
+            ],
+            "tsb_values": [
+                round(load_by_date[d]["tsb"], 1) if d in load_by_date
+                else None for d in dates
+            ],
+            "latest_load": latest_load,
+        },
+    )
+
+
+# --- Sessions ---
+
+@app.get("/sessions", response_class=HTMLResponse)
+def sessions(request: Request) -> HTMLResponse:
+    """Browsable table of recent exercise sessions."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    rows = conn.execute(
+        "SELECT * FROM exercise_sessions WHERE user_id = ? ORDER BY "
+        "start_utc DESC LIMIT 60", (user_id,),
+    ).fetchall()
+    items = []
+    for row in rows:
+        start = dt.datetime.fromisoformat(row["start_utc"])
+        end = dt.datetime.fromisoformat(row["end_utc"])
+        auto_label = EXERCISE_TYPE_LABELS.get(
+            row["exercise_type"], "autre"
+        ).replace("_", " ")
+        items.append({
+            "uuid": row["uuid"],
+            "date": row["local_date"],
+            "label": row["label_override"] or auto_label,
+            "auto_label": auto_label,
+            "is_corrected": bool(row["label_override"]),
+            "duration_min": round((end - start).total_seconds() / 60),
+            "title": row["title"] or "",
+            "notes": row["notes"] or "",
+            "rpe": row["rpe"],
+        })
+    return templates.TemplateResponse(
+        request, "sessions.html", {"sessions": items},
+    )
+
+
+@app.post("/sessions/{uuid}/label")
+async def correct_session_label(uuid: str, request: Request):
+    """Save a manual correction for Garmin's often-wrong HC category.
+
+    Scoped to ``user_id`` in the WHERE clause -- not just for
+    correctness, but so one account can never edit another's session
+    by guessing/reusing a uuid seen in their own page source.
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    label = str(form.get("label", "")).strip() or None
+    conn.execute(
+        "UPDATE exercise_sessions SET label_override = ? WHERE uuid = ? "
+        "AND user_id = ?", (label, uuid, user_id),
+    )
+    conn.commit()
+    return RedirectResponse(url="/sessions", status_code=303)
+
+
+# --- Achievements ---
+
+@app.get("/achievements", response_class=HTMLResponse)
+def achievements_page(request: Request) -> HTMLResponse:
+    """Xbox-style achievement grid: unlocked first, then locked (with
+    live progress bars), plus the full XP ledger for auditability.
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    items = achievements.all_achievements_with_status(conn, user_id, date)
+    return templates.TemplateResponse(
+        request, "achievements.html", {
+            "items": items, "score": achievements.score(conn, user_id),
+            "player_level": achievements.player_level(conn, user_id),
+            "xp_ledger": achievements.xp_ledger_entries(
+                conn, user_id, limit=100,
+            ),
+        },
+    )
+
+
+# --- Settings ---
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request) -> HTMLResponse:
+    """Goal parameters, level overrides, ingestion health check."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    settings = {
+        key: db.get_setting(conn, user_id, key) for key in db.DEFAULT_SETTINGS
+    }
+    levels = {
+        session_type: training.get_level(conn, user_id, session_type)
+        for session_type in training.SESSION_LABEL_FR
+    }
+    return templates.TemplateResponse(
+        request, "settings.html", {
+            "settings": settings, "levels": levels,
+            "session_label_fr": training.SESSION_LABEL_FR,
+            "ingest_status": last_ingest_status(conn, user_id),
+            "saved": request.query_params.get("saved") is not None,
+            "username": request.session.get("username"),
+        },
+    )
+
+
+@app.post("/settings")
+async def save_settings(request: Request):
+    """Persist edited settings and level overrides, then redirect back."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    for key in db.DEFAULT_SETTINGS:
+        if key in form:
+            db.set_setting(conn, user_id, key, str(form[key]).strip())
+    for session_type in training.SESSION_LABEL_FR:
+        field = f"level_{session_type}"
+        if field in form and str(form[field]).strip():
+            training.set_level(conn, user_id, session_type, int(form[field]))
+    return RedirectResponse(url="/settings?saved=1", status_code=303)

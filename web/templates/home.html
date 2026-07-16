@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Aujourd'hui - Smart Sport{% endblock %}
+{% block content %}
+
+{% if new_achievements_today %}
+<div class="card p-4" style="border-color: var(--yellow);">
+  {% for a in new_achievements_today %}
+  <div class="flex items-center gap-3 {{ 'mt-2' if not loop.first }}">
+    <span class="text-2xl">{{ a.icon }}</span>
+    <div>
+      <p class="text-xs uppercase tracking-wide" style="color: var(--yellow);">Succes debloque</p>
+      <p class="text-sm font-semibold">{{ a.name_fr }}</p>
+      <p class="text-xs" style="color: var(--muted);">{{ a.desc_fr }}</p>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<a href="/achievements" class="card p-4 block">
+  <div class="flex items-center justify-between">
+    <span class="text-sm font-semibold flex items-center gap-2">
+      <span class="text-lg">⚡</span> Niveau {{ player_level.level }}
+    </span>
+    <span class="text-xs" style="color: var(--muted);">
+      {{ player_level.xp_into_level }} / {{ player_level.xp_for_next_level }} XP
+    </span>
+  </div>
+  <div class="mt-2 rounded-full overflow-hidden" style="height: 6px; background: var(--grid);">
+    <div class="h-full rounded-full" style="width: {{ (100 * player_level.xp_into_level / player_level.xp_for_next_level) | round }}%; background: var(--blue);"></div>
+  </div>
+  <div class="flex items-center justify-between mt-2 text-xs" style="color: var(--muted);">
+    <span>🏆 Coach Score {{ coach_score.unlocked_points }}/{{ coach_score.total_points }}</span>
+    <span>{{ coach_score.unlocked_count }}/{{ coach_score.total_count }} succes</span>
+  </div>
+</a>
+
+{% set steps = wellness.get("steps_today") %}
+{% set rhr = wellness.get("resting_hr") %}
+{% set sleep_score = wellness.get("sleep_score") %}
+{% set hydration = wellness.get("hydration_ml_today") %}
+<div class="grid grid-cols-4 gap-2">
+  <div class="stat-tile">
+    <div class="stat-value">{{ steps if steps is not none else "-" }}</div>
+    <div class="stat-label">Pas</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-value">{{ rhr if rhr is not none else "-" }}</div>
+    <div class="stat-label">FC repos</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-value">{{ sleep_score if sleep_score is not none else "-" }}</div>
+    <div class="stat-label">Sommeil</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-value">{{ (hydration / 1000) | round(1) ~ "L" if hydration is not none else "-" }}</div>
+    <div class="stat-label">Hydratation</div>
+  </div>
+</div>
+
+{% if not entry %}
+<div class="card p-5 text-center">
+  <p class="text-sm" style="color: var(--muted);">
+    Le coach n'a pas encore tourne aujourd'hui ({{ date }}). Revenez apres
+    le passage du cron du matin.
+  </p>
+</div>
+{% else %}
+
+<div class="card p-5">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="font-semibold flex items-center gap-2">
+      <span style="color: var(--blue);">●</span> Coach
+    </h2>
+    <div class="flex items-center gap-2">
+      {% if entry.status %}
+      <span class="chip-{{ entry.status }} text-xs font-medium px-3 py-1.5 rounded-full">
+        {{ status_label_fr[entry.status] }}
+      </span>
+      {% endif %}
+      <button
+        hx-post="/regenerate" hx-target="#coach-message" hx-swap="outerHTML"
+        hx-indicator="#regen-spinner"
+        class="text-xs font-medium px-3 py-1.5 rounded-full border"
+        style="border-color: var(--border); color: var(--blue);">
+        ↻
+      </button>
+    </div>
+  </div>
+  {% include "_message.html" %}
+  <p id="regen-spinner" class="htmx-indicator text-xs mt-2" style="color: var(--muted);">
+    Generation en cours...
+  </p>
+</div>
+
+<div class="card p-5">
+  <div class="flex items-center justify-between">
+    <div>
+      <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">{{ date }}</p>
+      <h1 class="text-lg font-semibold mt-0.5 flex items-center gap-2">
+        {{ session_label_fr.get(entry.session_type, "Sortie velo") }}
+        {% if in_deload %}
+        <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background: color-mix(in srgb, var(--violet) 20%, transparent); color: var(--violet);">
+          🛡 deload
+        </span>
+        {% endif %}
+      </h1>
+    </div>
+    {% if entry.level is not none %}
+    <p class="text-sm" style="color: var(--text-secondary);">
+      Niveau <span class="font-semibold" style="color: var(--text-primary);">{{ entry.level }}</span>/10
+    </p>
+    {% endif %}
+  </div>
+
+  {% if description %}
+  <p class="text-sm mt-3 p-3 rounded-xl" style="background: color-mix(in srgb, var(--surface-1-solid) 60%, transparent); color: var(--text-secondary);">
+    {{ description.split(': ', 1)[1].split(' (statut')[0] }}
+  </p>
+  {% endif %}
+</div>
+
+{% if last_sync %}
+<p class="text-xs text-center" style="color: var(--muted);">
+  Derniere synchro Health Connect : {{ last_sync[:16].replace('T', ' a ') }} UTC
+</p>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+
+{% block head %}
+<style>.htmx-indicator { opacity: 0; } .htmx-request.htmx-indicator, .htmx-request .htmx-indicator { opacity: 1; }</style>
+{% endblock %}

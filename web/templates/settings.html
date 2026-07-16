@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Reglages - Smart Sport{% endblock %}
+{% block content %}
+
+{% if saved %}
+<div class="card p-3 text-sm" style="border-color: var(--good); color: var(--good);">
+  Reglages enregistres.
+</div>
+{% endif %}
+
+<form method="post" action="/settings" class="space-y-4">
+
+  <div class="card p-4 space-y-3">
+    <h2 class="font-semibold text-sm">Objectifs</h2>
+    <label class="block text-sm">
+      Fuseau horaire
+      <input name="timezone" value="{{ settings.timezone }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
+      Objectif de pas quotidien
+      <input name="step_goal" type="number" value="{{ settings.step_goal }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
+      Langue du coach (fr / en)
+      <input name="language" value="{{ settings.language }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
+      Proteines cible (g / kg de poids de corps)
+      <input name="protein_target_g_per_kg" value="{{ settings.protein_target_g_per_kg }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
+      Lipides cible (g / kg de poids de corps)
+      <input name="fat_target_g_per_kg" value="{{ settings.fat_target_g_per_kg }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
+      Hydratation cible (ml / kg de poids de corps)
+      <input name="hydration_target_ml_per_kg" value="{{ settings.hydration_target_ml_per_kg }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
+      Poids cible (kg, optionnel)
+      <input name="target_weight_kg" value="{{ settings.target_weight_kg }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+  </div>
+
+  <div class="card p-4 space-y-3">
+    <h2 class="font-semibold text-sm">Metabolisme de base (BMR)</h2>
+    <p class="text-xs" style="color: var(--muted);">
+      Utilise en priorite une valeur mesuree par la montre si disponible,
+      sinon la valeur manuelle, sinon ces champs (formule Mifflin-St Jeor).
+    </p>
+    <label class="block text-sm">
+      BMR manuel (kcal/jour, optionnel)
+      <input name="bmr_manual_kcal" value="{{ settings.bmr_manual_kcal }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <div class="grid grid-cols-3 gap-2">
+      <label class="block text-sm">
+        Taille (cm)
+        <input name="height_cm" value="{{ settings.height_cm }}"
+          class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+      </label>
+      <label class="block text-sm">
+        Age
+        <input name="age_years" value="{{ settings.age_years }}"
+          class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+      </label>
+      <label class="block text-sm">
+        Sexe (M/F)
+        <input name="sex" value="{{ settings.sex }}"
+          class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+      </label>
+    </div>
+  </div>
+
+  <div class="card p-4 space-y-3">
+    <h2 class="font-semibold text-sm">Niveaux (surcharge manuelle)</h2>
+    {% for session_type, label in session_label_fr.items() %}
+    <label class="flex items-center justify-between text-sm">
+      {{ label }}
+      <input name="level_{{ session_type }}" type="number" min="0" max="10"
+        value="{{ levels[session_type] }}"
+        class="w-20 rounded-lg border px-3 py-1.5 text-sm bg-transparent text-right" style="border-color: var(--border);">
+    </label>
+    {% endfor %}
+  </div>
+
+  <button type="submit"
+    class="w-full rounded-xl py-3 text-sm font-medium text-white" style="background: var(--blue);">
+    Enregistrer
+  </button>
+</form>
+
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-3">Etat de l'ingestion</h2>
+  <div class="space-y-2">
+    {% for row in ingest_status %}
+    <div class="flex items-center justify-between text-sm">
+      <span style="color: var(--text-secondary);">{{ row.table_name }}</span>
+      <span class="flex items-center gap-2">
+        <span class="text-xs" style="color: var(--muted);">{{ row.ran_at[:16].replace('T', ' ') }}</span>
+        <span class="font-medium">{{ row.row_count }}</span>
+      </span>
+    </div>
+    {% else %}
+    <p class="text-sm" style="color: var(--muted);">Aucune synchronisation pour l'instant.</p>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}

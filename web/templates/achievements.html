@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Trophees - Smart Sport{% endblock %}
+{% block content %}
+
+<div class="card p-5 text-center">
+  <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">Niveau</p>
+  <p class="text-4xl font-bold mt-1">{{ player_level.level }}</p>
+  <div class="mt-3 rounded-full overflow-hidden mx-auto" style="height: 8px; max-width: 260px; background: var(--grid);">
+    <div class="h-full rounded-full" style="width: {{ (100 * player_level.xp_into_level / player_level.xp_for_next_level) | round }}%; background: var(--blue);"></div>
+  </div>
+  <p class="text-xs mt-2" style="color: var(--muted);">
+    {{ player_level.xp_into_level }} / {{ player_level.xp_for_next_level }} XP
+    -- {{ player_level.xp_to_next_level }} XP jusqu'au niveau {{ player_level.level + 1 }}
+    ({{ player_level.xp }} XP au total)
+  </p>
+</div>
+
+<div class="card p-4 text-center">
+  <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">Coach Score (points de succes)</p>
+  <p class="text-2xl font-bold mt-1">{{ score.unlocked_points }} <span style="color: var(--muted); font-size: 1rem;">/ {{ score.total_points }}</span></p>
+  <p class="text-xs mt-1" style="color: var(--muted);">{{ score.unlocked_count }} / {{ score.total_count }} succes debloques</p>
+</div>
+
+<div class="grid grid-cols-2 gap-3">
+  {% for a in items %}
+  <div class="card p-4 {{ '' if a.unlocked else 'opacity-70' }}">
+    <div class="flex items-start justify-between">
+      <span class="text-2xl">{{ a.icon }}</span>
+      <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full"
+        style="background: color-mix(in srgb, var({{ '--yellow' if a.tier == 'gold' else '--violet' if a.tier == 'platinum' else '--aqua' if a.tier == 'silver' else '--orange' }}) 20%, transparent);
+               color: var({{ '--yellow' if a.tier == 'gold' else '--violet' if a.tier == 'platinum' else '--aqua' if a.tier == 'silver' else '--orange' }});">
+        {{ a.tier }} - {{ a.points }}
+      </span>
+    </div>
+    <p class="text-sm font-semibold mt-2">{{ a.name_fr }}</p>
+    <p class="text-xs mt-1" style="color: var(--muted);">{{ a.desc_fr }}</p>
+    {% if a.unlocked %}
+    <p class="text-[10px] mt-2" style="color: var(--good);">Debloque le {{ a.unlocked_at }}</p>
+    {% elif a.progress %}
+    <div class="mt-2">
+      <div class="rounded-full overflow-hidden" style="height: 5px; background: var(--grid);">
+        <div class="h-full rounded-full" style="width: {{ a.progress.pct }}%; background: var(--muted);"></div>
+      </div>
+      <p class="text-[10px] mt-1" style="color: var(--muted);">
+        {{ a.progress.current }} / {{ a.progress.target }} {{ a.progress.unit }}
+      </p>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-3">Journal XP (verification)</h2>
+  <div class="max-h-96 overflow-y-auto divide-y" style="border-color: var(--border);">
+    {% for e in xp_ledger %}
+    <div class="flex items-center justify-between py-2 text-sm">
+      <div class="min-w-0 pr-2">
+        <p class="truncate">{{ e.detail }}</p>
+        <p class="text-[10px]" style="color: var(--muted);">{{ e.date }} - {{ e.source }}</p>
+      </div>
+      <span class="font-semibold shrink-0" style="color: var(--good);">+{{ e.amount }}</span>
+    </div>
+    {% else %}
+    <p class="text-sm text-center py-4" style="color: var(--muted);">Aucun XP encore.</p>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}

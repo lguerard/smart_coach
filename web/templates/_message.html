@@ -1,0 +1,10 @@
+<div id="coach-message">
+  {% if error %}
+    <p class="text-sm" style="color: var(--muted);">{{ error }}</p>
+  {% elif entry %}
+    <p class="whitespace-pre-line leading-relaxed">{{ entry.message }}</p>
+    <p class="text-xs mt-3" style="color: var(--muted);">
+      Genere {{ entry.created_at[:16].replace('T', ' a ') }} UTC
+    </p>
+  {% endif %}
+</div>

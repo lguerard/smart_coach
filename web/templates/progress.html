@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Progres - Smart Sport{% endblock %}
+{% block content %}
+
+{% if bundle.plateau.plateau %}
+<div class="card p-4" style="border-color: var(--warning);">
+  <p class="text-sm font-medium" style="color: var(--warning);">{{ bundle.plateau.note }}</p>
+</div>
+{% endif %}
+
+{% if bundle.recalibration.flagged %}
+<div class="card p-4" style="border-color: var(--blue);">
+  <p class="text-sm font-medium" style="color: var(--blue);">
+    Rythme reel {{ bundle.recalibration.actual_weekly_kg }} kg/sem vs objectif
+    {{ bundle.recalibration.target_weekly_kg }} kg/sem -- ajustement suggere :
+    {{ '%+d'|format(bundle.recalibration.suggested_daily_calorie_adjustment_kcal) }} kcal/jour.
+  </p>
+</div>
+{% endif %}
+
+{% set gap = bundle.nutrition_yesterday.gap %}
+{% if gap %}
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-2">Nutrition d'hier vs objectif</h2>
+  <div class="grid grid-cols-2 gap-2 text-sm">
+    {% if gap.calories_kcal is defined %}
+    <div class="flex justify-between"><span style="color: var(--muted);">Calories</span>
+      <span class="font-medium" style="color: {{ 'var(--critical)' if gap.calories_kcal < 0 else 'var(--text-primary)' }};">{{ '%+.0f'|format(-gap.calories_kcal) }} kcal</span></div>
+    {% endif %}
+    {% if gap.protein_g is defined %}
+    <div class="flex justify-between"><span style="color: var(--muted);">Proteines</span>
+      <span class="font-medium" style="color: {{ 'var(--critical)' if gap.protein_g > 15 else 'var(--good)' }};">{{ '%+.0f'|format(-gap.protein_g) }} g</span></div>
+    {% endif %}
+    {% if gap.hydration_ml is defined %}
+    <div class="flex justify-between"><span style="color: var(--muted);">Hydratation</span>
+      <span class="font-medium" style="color: {{ 'var(--critical)' if gap.hydration_ml > 300 else 'var(--good)' }};">{{ '%+.0f'|format(-gap.hydration_ml) }} ml</span></div>
+    {% endif %}
+    {% if gap.fat_g is defined %}
+    <div class="flex justify-between"><span style="color: var(--muted);">Lipides</span>
+      <span class="font-medium">{{ '%+.0f'|format(-gap.fat_g) }} g</span></div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="grid grid-cols-2 gap-3">
+  <div class="card p-4">
+    <p class="text-xs" style="color: var(--muted);">Poids (14j)</p>
+    {% if bundle.weight_trend_14d %}
+    <p class="text-2xl font-semibold mt-1">
+      {{ bundle.weight_trend_14d.current_avg }} kg
+    </p>
+    <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if bundle.weight_trend_14d.delta < 0 else 'var(--text-secondary)' }};">
+      {{ '%+.2f'|format(bundle.weight_trend_14d.delta) }} kg vs 14j precedents
+    </p>
+    {% else %}
+    <p class="text-sm mt-1" style="color: var(--muted);">Pas assez de donnees</p>
+    {% endif %}
+  </div>
+  <div class="card p-4">
+    <p class="text-xs" style="color: var(--muted);">Balance calorique (7j)</p>
+    {% if bundle.calorie_balance_7d %}
+    <p class="text-2xl font-semibold mt-1">
+      {{ '%+d'|format(bundle.calorie_balance_7d.avg_balance_kcal) }} kcal/j
+    </p>
+    <p class="text-xs mt-0.5" style="color: var(--muted);">
+      {{ bundle.calorie_balance_7d.days_logged }} jour{{ "s" if bundle.calorie_balance_7d.days_logged != 1 }} logue{{ "s" if bundle.calorie_balance_7d.days_logged != 1 }}
+    </p>
+    {% else %}
+    <p class="text-sm mt-1" style="color: var(--muted);">Pas encore de nutrition loguee</p>
+    {% endif %}
+  </div>
+  <div class="card p-4">
+    <p class="text-xs" style="color: var(--muted);">Proteines (7j)</p>
+    {% if bundle.protein_7d %}
+    <p class="text-2xl font-semibold mt-1">{{ bundle.protein_7d.avg_protein_g }} g/j</p>
+    {% if bundle.protein_7d.target_g %}
+    <p class="text-xs mt-0.5" style="color: var(--muted);">objectif {{ bundle.protein_7d.target_g }} g/j</p>
+    {% endif %}
+    {% else %}
+    <p class="text-sm mt-1" style="color: var(--muted);">Pas encore de nutrition loguee</p>
+    {% endif %}
+  </div>
+  <div class="card p-4">
+    <p class="text-xs" style="color: var(--muted);">Masse grasse (28j)</p>
+    {% if bundle.body_fat_trend_28d %}
+    <p class="text-2xl font-semibold mt-1">{{ bundle.body_fat_trend_28d.current_avg }} %</p>
+    <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if bundle.body_fat_trend_28d.delta < 0 else 'var(--text-secondary)' }};">
+      {{ '%+.2f'|format(bundle.body_fat_trend_28d.delta) }} pt vs periode precedente
+    </p>
+    {% else %}
+    <p class="text-sm mt-1" style="color: var(--muted);">Pas assez de donnees</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-3">Poids -- 90 jours</h2>
+  <div style="height: 220px;"><canvas id="weightChart"></canvas></div>
+</div>
+
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-3">Balance calorique -- 30 jours</h2>
+  <div style="height: 220px;"><canvas id="calorieChart"></canvas></div>
+</div>
+
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-3">Proteines -- 30 jours</h2>
+  <div style="height: 220px;"><canvas id="proteinChart"></canvas></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const css = getComputedStyle(document.documentElement);
+const blue = css.getPropertyValue('--blue'), grid = css.getPropertyValue('--grid');
+const good = css.getPropertyValue('--good'), critical = css.getPropertyValue('--critical');
+
+new Chart(document.getElementById('weightChart'), {
+  type: 'line',
+  data: { labels: {{ weight_labels|tojson }}, datasets: [{
+    data: {{ weight_values|tojson }}, borderColor: blue, borderWidth: 2,
+    pointRadius: 0, tension: 0.3, fill: false,
+  }]},
+  options: { plugins: { legend: { display: false } },
+    scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
+              y: { grid: { color: grid } } } },
+});
+
+const calorieValues = {{ calorie_values|tojson }};
+new Chart(document.getElementById('calorieChart'), {
+  type: 'bar',
+  data: { labels: {{ calorie_labels|tojson }}, datasets: [{
+    data: calorieValues,
+    backgroundColor: calorieValues.map(v => v <= 0 ? good : critical),
+    borderRadius: 4, maxBarThickness: 14,
+  }]},
+  options: { plugins: { legend: { display: false } },
+    scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
+              y: { grid: { color: grid } } } },
+});
+
+new Chart(document.getElementById('proteinChart'), {
+  type: 'bar',
+  data: { labels: {{ protein_labels|tojson }}, datasets: [{
+    data: {{ protein_values|tojson }}, backgroundColor: blue,
+    borderRadius: 4, maxBarThickness: 14,
+  }]},
+  options: { plugins: { legend: { display: false } },
+    scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
+              y: { grid: { color: grid } } } },
+});
+</script>
+{% endblock %}

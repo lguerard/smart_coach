@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block title %}Smart Sport{% endblock %}</title>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#0b0e14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Smart Sport">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  /* Dark-native glass theme, aurora-mesh backdrop -- inspired by the
+     gethomepage/homepage aesthetic (translucent widget cards floating
+     over a moody gradient) but fully self-contained CSS, no external
+     art asset. Light mode is a real override, not an afterthought. */
+  :root {
+    --bg-0: #0b0e14; --bg-1: #10141d;
+    --surface-1: rgba(255,255,255,0.045); --surface-1-solid: #161b26;
+    --text-primary: #f3f4f6; --text-secondary: #a8adb8; --muted: #6f7480;
+    --grid: rgba(255,255,255,0.08); --border: rgba(255,255,255,0.09);
+    --blue: #4a90e8; --aqua: #22c48f; --yellow: #eda100; --green: #22c48f;
+    --violet: #9085e9; --red: #e6675f; --magenta: #e87ba4; --orange: #eb8a4d;
+    --good: #22c48f; --warning: #fab219; --critical: #e6675f;
+    --shadow: 0 12px 40px rgba(0,0,0,0.45);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg-0: #f3f4f2; --bg-1: #eceee9;
+      --surface-1: rgba(255,255,255,0.72); --surface-1-solid: #fcfcfb;
+      --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
+      --grid: rgba(11,11,11,0.08); --border: rgba(11,11,11,0.08);
+      --blue: #2a78d6; --aqua: #1baf7a; --yellow: #eda100; --green: #008300;
+      --violet: #4a3aa7; --red: #e34948; --magenta: #e87ba4; --orange: #eb6834;
+      --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+      --shadow: 0 8px 24px rgba(11,11,11,0.08);
+    }
+  }
+  body {
+    color: var(--text-primary);
+    background-color: var(--bg-0);
+    background-image:
+      radial-gradient(60vw 60vw at 8% -10%, color-mix(in srgb, var(--blue) 22%, transparent), transparent 60%),
+      radial-gradient(55vw 55vw at 100% 0%, color-mix(in srgb, var(--violet) 16%, transparent), transparent 55%),
+      radial-gradient(70vw 70vw at 50% 110%, color-mix(in srgb, var(--aqua) 14%, transparent), transparent 60%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+  }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 20px; backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    box-shadow: var(--shadow);
+  }
+  .stat-tile {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 16px; backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    padding: 0.65rem 0.4rem; text-align: center;
+  }
+  .stat-value { font-size: clamp(1rem, 4vw, 1.25rem); font-weight: 600; color: var(--text-primary); line-height: 1.1; }
+  .stat-label {
+    font-size: 0.65rem; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; margin-top: 0.2rem;
+  }
+  .chip-green { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
+  .chip-yellow { background: color-mix(in srgb, var(--warning) 22%, transparent); color: #f0a80a; }
+  .chip-red { background: color-mix(in srgb, var(--critical) 20%, transparent); color: var(--critical); }
+  @media (prefers-color-scheme: light) {
+    .chip-yellow { color: #8a5a00; }
+  }
+  .navlink { color: var(--text-secondary); }
+  .navlink.active { color: var(--blue); font-weight: 600; }
+  ::selection { background: color-mix(in srgb, var(--blue) 35%, transparent); }
+</style>
+{% block head %}{% endblock %}
+</head>
+<body class="min-h-screen font-sans" style="font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;">
+  <div class="max-w-3xl mx-auto pb-24 md:pb-8">
+    <header class="sticky top-0 z-10" style="background: color-mix(in srgb, var(--bg-0) 78%, transparent); backdrop-filter: blur(16px);">
+      <div class="flex items-center justify-between px-4 py-3">
+        <span class="font-semibold text-lg flex items-center gap-2">
+          <svg width="22" height="22" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="var(--blue)"/><path d="M30 65 Q30 50 45 50 Q60 50 60 38 Q60 30 50 30" stroke="#fff" stroke-width="9" fill="none" stroke-linecap="round"/><circle cx="50" cy="30" r="5" fill="#fff"/></svg>
+          Smart Sport
+        </span>
+        <nav class="hidden md:flex gap-5 text-sm items-center">
+          <a href="/" class="navlink {{ 'active' if request.url.path == '/' }}">Aujourd'hui</a>
+          <a href="/progress" class="navlink {{ 'active' if request.url.path == '/progress' }}">Progres</a>
+          <a href="/trends" class="navlink {{ 'active' if request.url.path == '/trends' }}">Tendances</a>
+          <a href="/sessions" class="navlink {{ 'active' if request.url.path == '/sessions' }}">Seances</a>
+          <a href="/achievements" class="navlink {{ 'active' if request.url.path == '/achievements' }}">Trophees</a>
+          <a href="/settings" class="navlink {{ 'active' if request.url.path == '/settings' }}">Reglages</a>
+          {% if request.session.get("username") %}
+          <form method="post" action="/logout" class="inline">
+            <button type="submit" class="text-xs px-2 py-1 rounded-full border" style="border-color: var(--border); color: var(--muted);">
+              {{ request.session.get("username") }} &middot; sortir
+            </button>
+          </form>
+          {% endif %}
+        </nav>
+      </div>
+    </header>
+
+    <main class="px-4 py-4 space-y-4">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <nav class="md:hidden fixed bottom-0 inset-x-0 flex justify-around py-2 z-10"
+       style="background: color-mix(in srgb, var(--bg-0) 82%, transparent); backdrop-filter: blur(20px); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom);">
+    <a href="/" class="navlink {{ 'active' if request.url.path == '/' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
+      <span>●</span>Aujourd'hui</a>
+    <a href="/progress" class="navlink {{ 'active' if request.url.path == '/progress' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
+      <span>▲</span>Progres</a>
+    <a href="/trends" class="navlink {{ 'active' if request.url.path == '/trends' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
+      <span>~</span>Tendances</a>
+    <a href="/sessions" class="navlink {{ 'active' if request.url.path == '/sessions' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
+      <span>▤</span>Seances</a>
+    <a href="/achievements" class="navlink {{ 'active' if request.url.path == '/achievements' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
+      <span>🏆</span>Trophees</a>
+    <a href="/settings" class="navlink {{ 'active' if request.url.path == '/settings' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
+      <span>⚙</span>Reglages</a>
+  </nav>
+
+  <script>
+    Chart.defaults.color = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary');
+    Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--grid');
+    Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

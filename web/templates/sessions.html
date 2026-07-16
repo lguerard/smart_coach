@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Seances - Smart Sport{% endblock %}
+{% block content %}
+
+<p class="text-xs px-1" style="color: var(--muted);">
+  La categorie vient de l'auto-detection Garmin (parfois peu fiable pour
+  le tapis/calisthenie) -- la duree et la date sont toujours exactes.
+  Corrige-la si besoin.
+</p>
+
+<div class="card divide-y" style="border-color: var(--border);">
+  {% for s in sessions %}
+  <div class="p-4 relative" style="border-color: var(--border);">
+    <div class="flex items-center justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-sm font-medium truncate">
+          {{ s.title if s.title else (s.date ~ " - " ~ s.duration_min ~ " min") }}
+        </p>
+        <p class="text-xs mt-0.5 capitalize" style="color: var(--muted);">
+          {% if s.title %}{{ s.date }} - {{ s.duration_min }} min - {% endif %}
+          {{ "categorie" if s.is_corrected else "categorie Garmin" }} : {{ s.label }}
+          {% if s.rpe %} - RPE {{ s.rpe }}{% endif %}
+        </p>
+        {% if s.notes %}
+        <p class="text-xs mt-1" style="color: var(--text-secondary);">{{ s.notes }}</p>
+        {% endif %}
+      </div>
+      <details class="shrink-0">
+        <summary class="text-xs px-2 py-1 rounded-full border cursor-pointer list-none"
+          style="border-color: var(--border); color: var(--blue);">
+          corriger
+        </summary>
+        <form method="post" action="/sessions/{{ s.uuid }}/label"
+          class="absolute mt-2 mr-4 right-4 flex gap-2 card p-2" style="z-index: 5;">
+          <input name="label" placeholder="{{ s.auto_label }}" value="{{ s.label if s.is_corrected else '' }}"
+            class="rounded-lg border px-2 py-1 text-xs bg-transparent w-32" style="border-color: var(--border);">
+          <button type="submit" class="text-xs px-2 py-1 rounded-lg text-white" style="background: var(--blue);">OK</button>
+        </form>
+      </details>
+    </div>
+  </div>
+  {% else %}
+  <p class="p-5 text-sm text-center" style="color: var(--muted);">Aucune seance enregistree.</p>
+  {% endfor %}
+</div>
+
+{% endblock %}
