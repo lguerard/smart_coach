@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Donnees - Smart Sport{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between px-1">
+  <p class="text-xs" style="color: var(--muted);">
+    Toutes les donnees ingerees (Garmin + Health Connect), un jour par
+    ligne.
+  </p>
+  <div class="flex gap-1 text-xs shrink-0">
+    {% for n in (30, 90, 180) %}
+    <a href="/data?days={{ n }}"
+      class="px-2.5 py-1 rounded-full border"
+      style="border-color: var(--border); {{ 'color: var(--blue); font-weight: 600;' if days == n else 'color: var(--muted);' }}">
+      {{ n }}j
+    </a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card p-0 overflow-hidden">
+  <div class="overflow-x-auto">
+    <table class="text-xs num" style="border-collapse: collapse; min-width: 64rem;">
+      <thead>
+        <tr class="text-left" style="color: var(--muted);">
+          {% for h in ("Date", "Pas", "FC repos", "Sommeil h", "Seances",
+                       "Sport min", "Cal. actives", "Cal. brulees",
+                       "Cal. mangees", "Prot. g", "Eau ml", "Poids kg",
+                       "MG %", "MM kg", "Dist. km", "Etages") %}
+          <th class="px-3 py-2 font-medium whitespace-nowrap sticky top-0"
+            style="background: var(--surface-1-solid); border-bottom: 1px solid var(--border);">
+            {{ h }}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr style="border-bottom: 1px solid var(--grid);">
+          <td class="px-3 py-1.5 whitespace-nowrap font-medium">{{ r.date }}</td>
+          {% for key in ("steps", "rhr", "sleep_h", "sessions_n",
+                         "sport_min", "active_kcal", "total_kcal",
+                         "kcal_in", "protein_g", "hydration_ml",
+                         "weight_kg", "body_fat_pct", "lean_kg",
+                         "distance_km", "floors") %}
+          <td class="px-3 py-1.5 whitespace-nowrap"
+            style="color: {{ 'var(--text-secondary)' if r[key] is not none else 'var(--muted)' }};">
+            {{ r[key] if r[key] is not none else "·" }}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

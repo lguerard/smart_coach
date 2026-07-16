@@ -533,6 +533,128 @@ async def correct_session_label(uuid: str, request: Request):
     return RedirectResponse(url="/sessions", status_code=303)
 
 
+# --- Data (unified explorer) ---
+
+def _sum_by_date(
+    conn: sqlite3.Connection, user_id: int, table: str, column: str,
+    start: str,
+) -> dict[str, float]:
+    """``{local_date: SUM(column)}`` for one interval/point table."""
+    return {
+        r["local_date"]: r["total"]
+        for r in conn.execute(
+            f"SELECT local_date, SUM({column}) AS total FROM {table} "
+            "WHERE user_id = ? AND local_date >= ? GROUP BY local_date",
+            (user_id, start),
+        )
+    }
+
+
+@app.get("/data", response_class=HTMLResponse)
+def data_page(request: Request) -> HTMLResponse:
+    """Every ingested metric, one row per day -- the single place to
+    see Garmin + Health Connect data side by side instead of hopping
+    between apps.
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    try:
+        days = int(request.query_params.get("days", 30))
+    except ValueError:
+        days = 30
+    days = max(7, min(180, days))
+    start = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=days - 1)
+    ).isoformat()
+
+    steps = _sum_by_date(conn, user_id, "steps", "count", start)
+    nutrition_kcal = _sum_by_date(conn, user_id, "nutrition", "calories", start)
+    protein = _sum_by_date(conn, user_id, "nutrition", "protein_g", start)
+    hydration = _sum_by_date(conn, user_id, "hydration", "volume_ml", start)
+    active_kcal = _sum_by_date(conn, user_id, "active_calories", "kcal", start)
+    total_kcal = _sum_by_date(
+        conn, user_id, "total_calories_burned", "kcal", start,
+    )
+    distance = _sum_by_date(conn, user_id, "distance", "meters", start)
+    floors = _sum_by_date(conn, user_id, "floors_climbed", "floors", start)
+    avg = lambda table, col: {  # noqa: E731 -- tiny local helper
+        r["local_date"]: r["v"]
+        for r in conn.execute(
+            f"SELECT local_date, AVG({col}) AS v FROM {table} "
+            "WHERE user_id = ? AND local_date >= ? GROUP BY local_date",
+            (user_id, start),
+        )
+    }
+    rhr = avg("resting_heart_rate", "bpm")
+    weight = avg("weight", "kg")
+    body_fat = avg("body_fat", "percentage")
+    lean = avg("lean_body_mass", "kg")
+
+    # Sleep hours per wake-up local date: one pass over all sessions.
+    # ponytail: O(sessions) full scan per page view -- fine for one
+    # user's phone data; add a local_date column at ingest if it ever
+    # isn't.
+    tz = metrics.local_tz(conn, user_id)
+    sleep_hours: dict[str, float] = {}
+    for row in conn.execute(
+        "SELECT start_utc, end_utc FROM sleep_sessions WHERE user_id = ?",
+        (user_id,),
+    ):
+        if row["end_utc"] <= row["start_utc"]:
+            continue
+        end = dt.datetime.fromisoformat(row["end_utc"])
+        day = end.astimezone(tz).date().isoformat()
+        if day >= start:
+            hours = (
+                end - dt.datetime.fromisoformat(row["start_utc"])
+            ).total_seconds() / 3600
+            sleep_hours[day] = max(sleep_hours.get(day, 0), hours)
+
+    sessions_by_day: dict[str, dict] = {}
+    for row in conn.execute(
+        "SELECT local_date, start_utc, end_utc FROM exercise_sessions "
+        "WHERE user_id = ? AND local_date >= ?", (user_id, start),
+    ):
+        entry = sessions_by_day.setdefault(
+            row["local_date"], {"n": 0, "minutes": 0},
+        )
+        entry["n"] += 1
+        entry["minutes"] += max(0, round((
+            dt.datetime.fromisoformat(row["end_utc"])
+            - dt.datetime.fromisoformat(row["start_utc"])
+        ).total_seconds() / 60))
+
+    rows = []
+    current = dt.date.fromisoformat(date)
+    for _ in range(days):
+        d = current.isoformat()
+        sess = sessions_by_day.get(d, {})
+        rows.append({
+            "date": d,
+            "steps": steps.get(d),
+            "rhr": round(rhr[d]) if d in rhr else None,
+            "sleep_h": round(sleep_hours[d], 1) if d in sleep_hours else None,
+            "sessions_n": sess.get("n"),
+            "sport_min": sess.get("minutes"),
+            "active_kcal": round(active_kcal[d]) if d in active_kcal else None,
+            "total_kcal": round(total_kcal[d]) if d in total_kcal else None,
+            "kcal_in": round(nutrition_kcal[d]) if d in nutrition_kcal else None,
+            "protein_g": round(protein[d]) if d in protein else None,
+            "hydration_ml": round(hydration[d]) if d in hydration else None,
+            "weight_kg": round(weight[d], 1) if d in weight else None,
+            "body_fat_pct": round(body_fat[d], 1) if d in body_fat else None,
+            "lean_kg": round(lean[d], 1) if d in lean else None,
+            "distance_km": round(distance[d] / 1000, 1) if d in distance else None,
+            "floors": round(floors[d]) if d in floors else None,
+        })
+        current -= dt.timedelta(days=1)
+
+    return templates.TemplateResponse(
+        request, "data.html", {"rows": rows, "days": days},
+    )
+
+
 # --- Achievements ---
 
 @app.get("/achievements", response_class=HTMLResponse)
