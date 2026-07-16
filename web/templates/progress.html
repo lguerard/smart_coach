@@ -97,7 +97,7 @@
     {% if bundle.lean_mass_trend_28d %}
     <p class="text-2xl font-semibold mt-1">{{ bundle.lean_mass_trend_28d.current_avg }} kg</p>
     <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if bundle.lean_mass_trend_28d.delta >= 0 else 'var(--critical)' }};">
-      {{ '%+.2f'|format(bundle.lean_mass_trend_28d.delta) }} kg -- {{ "muscle preserve" if bundle.lean_mass_trend_28d.delta >= 0 else "attention muscle" }}
+      {{ '%+.2f'|format(bundle.lean_mass_trend_28d.delta) }} kg -- {{ "muscle maintenu" if bundle.lean_mass_trend_28d.delta >= 0 else "attention muscle" }}
     </p>
     {% else %}
     <p class="text-sm mt-1" style="color: var(--muted);">Pas assez de donnees</p>

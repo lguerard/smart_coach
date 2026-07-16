@@ -254,7 +254,7 @@ def regenerate(request: Request) -> HTMLResponse:
         training.get_deload_until(conn, user_id, entry["session_type"])
         if entry["session_type"] else None
     )
-    today_session = {"type": "bike"} if not entry["session_type"] else {
+    today_session = {"type": "off_system"} if not entry["session_type"] else {
         "type": entry["session_type"], "status": entry["status"],
         "level": entry["level"],
         "values": training.session_values(
