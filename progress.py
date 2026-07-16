@@ -45,9 +45,15 @@ def _weight_like_trend(
         dict: ``current_avg``, ``past_avg``, ``delta`` (current minus
         past), or ``{}`` if not enough readings in either half.
     """
+    # Two equal, non-overlapping halves of days//2 dates each (BETWEEN
+    # is inclusive on both ends, so bounds are half-1 / half / 2*half-1
+    # days back -- a naive days//2 / days split double-counts the mid
+    # date and spans days+1 dates).
     end = dt.date.fromisoformat(end_date)
-    mid = (end - dt.timedelta(days=days // 2)).isoformat()
-    start = (end - dt.timedelta(days=days)).isoformat()
+    half = days // 2
+    current_lo = (end - dt.timedelta(days=half - 1)).isoformat()
+    past_hi = (end - dt.timedelta(days=half)).isoformat()
+    start = (end - dt.timedelta(days=2 * half - 1)).isoformat()
 
     def avg(lo: str, hi: str) -> Optional[float]:
         row = conn.execute(
@@ -57,8 +63,8 @@ def _weight_like_trend(
         ).fetchone()
         return row["avg"] if row["n"] else None
 
-    current_avg = avg(mid, end_date)
-    past_avg = avg(start, mid)
+    current_avg = avg(current_lo, end_date)
+    past_avg = avg(start, past_hi)
     if current_avg is None or past_avg is None:
         return {}
     return {
@@ -671,8 +677,16 @@ if __name__ == "__main__":
 
     end_date = (base + dt.timedelta(days=27)).isoformat()
     trend = weight_trend(conn, uid, end_date)
-    assert trend["delta"] < 0, trend
+    # The last 14 days of the fixture are entirely flat: a clean
+    # non-overlapping two-half window must report zero delta (the
+    # losing phase is older than the window).
+    assert trend["delta"] == 0.0, trend
     assert trend["current_avg"] < 900  # not contaminated by the other user
+    # During the losing phase the same window shows the loss.
+    losing = weight_trend(
+        conn, uid, (base + dt.timedelta(days=13)).isoformat(),
+    )
+    assert losing["delta"] < 0, losing
 
     protein = protein_trend(conn, uid, end_date)
     assert protein["avg_protein_g"] == 140.0
