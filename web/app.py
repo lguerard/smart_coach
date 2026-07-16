@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import sqlite3
+import urllib.parse
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -30,6 +31,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import achievements
 import db
+import gcal
 import llm
 import metrics
 import progress
@@ -220,6 +222,7 @@ def home(request: Request) -> HTMLResponse:
             "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
             "new_achievements_today": new_today, "in_deload": in_deload,
+            "cal_note": request.query_params.get("cal_note"),
             "username": request.session.get("username"),
         },
     )
@@ -279,6 +282,58 @@ def regenerate(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "_message.html", {"entry": entry, "error": None},
     )
+
+
+@app.post("/today/level")
+async def edit_today_level(request: Request):
+    """Edit tonight's level from the Home card and sync the calendar.
+
+    The ``levels`` row is updated too, so tomorrow's daily +-1 starts
+    from the edit. The DB write is committed before the calendar
+    push: a gcal failure (missing token, calendar renamed) surfaces
+    as a note on the Home page, never as a lost edit or a 500.
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    entry = latest_coach_entry(conn, user_id, date)
+    if not entry or not entry["session_type"]:
+        return RedirectResponse(url="/", status_code=303)
+    form = await request.form()
+    try:
+        level = int(form.get("level", ""))
+    except (TypeError, ValueError):
+        return RedirectResponse(url="/", status_code=303)
+    level = max(training.LEVEL_MIN, min(training.LEVEL_MAX, level))
+
+    session_type = entry["session_type"]
+    training.set_level(conn, user_id, session_type, level)
+    conn.execute(
+        "UPDATE coach_log SET level = ? WHERE id = ? AND user_id = ?",
+        (level, entry["id"], user_id),
+    )
+    conn.commit()
+
+    values = training.session_values(session_type, level)
+    description = training.format_description_fr(
+        session_type, level, values, entry["status"],
+    )
+    note = None
+    calendar_name = db.get_setting(conn, user_id, "calendar_name")
+    day = dt.date.fromisoformat(date)
+    if not calendar_name:
+        note = "Calendrier non configure (reglez calendar_name)."
+    else:
+        try:
+            gcal.push_description(
+                request.session["username"], calendar_name, day,
+                training.schedule_for_user(conn, user_id)[day.weekday()],
+                description,
+            )
+        except Exception as error:
+            note = f"Calendrier non mis a jour: {error}"
+    url = "/" if not note else "/?cal_note=" + urllib.parse.quote(note)
+    return RedirectResponse(url=url, status_code=303)
 
 
 # --- Progress ---

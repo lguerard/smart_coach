@@ -125,9 +125,14 @@
       </h1>
     </div>
     {% if entry.level is not none %}
-    <p class="text-sm" style="color: var(--text-secondary);">
-      Niveau <span class="font-semibold" style="color: var(--text-primary);">{{ entry.level }}</span>/10
-    </p>
+    <form method="post" action="/today/level" class="flex items-center gap-1 text-sm" style="color: var(--text-secondary);">
+      Niveau
+      <input name="level" type="number" min="0" max="10" value="{{ entry.level }}"
+        class="w-14 rounded-lg border px-2 py-1 text-sm bg-transparent text-right font-semibold"
+        style="border-color: var(--border); color: var(--text-primary);">
+      /10
+      <button type="submit" class="text-xs px-2 py-1 rounded-lg text-white ml-1" style="background: var(--blue);">OK</button>
+    </form>
     {% endif %}
   </div>
 
@@ -135,6 +140,9 @@
   <p class="text-sm mt-3 p-3 rounded-xl" style="background: color-mix(in srgb, var(--surface-1-solid) 60%, transparent); color: var(--text-secondary);">
     {{ description.split(': ', 1)[1].split(' (statut')[0] }}
   </p>
+  {% endif %}
+  {% if cal_note %}
+  <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
   {% endif %}
 </div>
 

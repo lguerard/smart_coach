@@ -95,11 +95,10 @@ def run_for_user(conn, user: dict) -> None:
             )
         else:
             try:
-                service = gcal.get_calendar_service(username)
-                calendar_id = gcal.resolve_calendar_id(service, calendar_name)
-                gcal.upsert_session_event(
-                    service, calendar_id, dt.date.fromisoformat(today),
-                    template, calendar_description,
+                gcal.push_description(
+                    username, calendar_name,
+                    dt.date.fromisoformat(today), template,
+                    calendar_description,
                 )
             except Exception as error:
                 calendar_note = f"(Calendrier non mis a jour: {error})"

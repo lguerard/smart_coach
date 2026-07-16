@@ -187,6 +187,33 @@ def upsert_session_event(
     return created["id"]
 
 
+def push_description(
+    username: str, calendar_name: str, day: dt.date, template: dict,
+    description: str,
+) -> str:
+    """Authenticate, resolve the calendar, and upsert the day's event.
+
+    Shared by the daily cron and the dashboard's level editor. No
+    error handling here on purpose: callers wrap failures into their
+    own user-facing note.
+
+    Parameters:
+        username (str): Account whose token file to use.
+        calendar_name (str): Calendar display name (user setting).
+        day (date): Day of the session.
+        template (dict): The user's weekday template.
+        description (str): New event description.
+
+    Returns:
+        str: The event id that was updated or created.
+    """
+    service = get_calendar_service(username)
+    calendar_id = resolve_calendar_id(service, calendar_name)
+    return upsert_session_event(
+        service, calendar_id, day, template, description,
+    )
+
+
 if __name__ == "__main__":
     window = _search_window(
         dt.date(2026, 7, 13), {"start": "20:00", "duration_min": 30},
