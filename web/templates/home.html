@@ -58,6 +58,24 @@
   </div>
 </div>
 
+{% if target_rows %}
+<div class="card p-4">
+  <h2 class="text-sm font-semibold mb-2">Objectifs du jour</h2>
+  {% for row in target_rows %}
+  {% set pct = (100 * row.actual / row.target) | round %}
+  <div class="{{ 'mt-2' if not loop.first }}">
+    <div class="flex items-center justify-between text-xs" style="color: var(--text-secondary);">
+      <span>{{ row.label }}</span>
+      <span>{{ row.actual | round | int }} / {{ row.target }} {{ row.unit }}</span>
+    </div>
+    <div class="mt-1 rounded-full overflow-hidden" style="height: 5px; background: var(--grid);">
+      <div class="h-full rounded-full" style="width: {{ [pct, 100] | min }}%; background: {{ 'var(--green)' if pct >= 100 else 'var(--blue)' }};"></div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% if not entry %}
 <div class="card p-5 text-center">
   <p class="text-sm" style="color: var(--muted);">

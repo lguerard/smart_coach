@@ -109,6 +109,7 @@ def run_for_user(conn, user: dict) -> None:
         "nutrition_today": nutrition,
         "weekly_progress": weekly,
         "today_session": today_session,
+        "today_targets": progress.macro_targets(conn, user_id, today),
         **metrics.history_snapshot(conn, user_id, today),
     }
 

@@ -49,8 +49,10 @@ FR_SYSTEM_PROMPT = (
     "cible (weekly_progress.nutrition_yesterday : targets, actual, "
     "gap -- gap positif = manque encore, negatif = deja depasse), "
     "les tendances hebdo (weekly_progress : poids, masse grasse, "
-    "balance calorique, proteines, plateau), et la seance prevue ce "
-    "soir (today_session).\n"
+    "balance calorique, proteines, plateau), les cibles du jour "
+    "(today_targets : calorie_target_kcal, protein_target_g, "
+    "fat_target_g, carb_target_g, hydration_target_ml -- le budget "
+    "d'AUJOURD'HUI), et la seance prevue ce soir (today_session).\n"
     "Utilise l'historique DANS les lignes existantes, jamais comme "
     "ligne en plus : une seance sautee ou une belle serie de verts "
     "se mentionne dans AUJOURD'HUI ou CONSEIL (sans culpabiliser, "
@@ -70,8 +72,12 @@ FR_SYSTEM_PROMPT = (
     "propose 1-2 aliments ou boissons CONCRETS et dimensionnes pour "
     "corriger aujourd'hui (ex. '150g de poulet + 2 oeufs', '500ml "
     "d'eau maintenant'), jamais un conseil vague type 'mange plus de "
-    "proteines'. Si rien n'est logue (targets ou actual absents), "
-    "dis-le en une phrase et n'invente aucune suggestion chiffree.\n"
+    "proteines'. Puis donne le budget du jour en chiffres de "
+    "today_targets (ex. '2100 kcal, 140g proteines aujourd'hui') -- "
+    "si nutrition_today a deja des donnees, exprime plutot ce qui "
+    "RESTE (cible moins deja logue). Si rien n'est logue (targets "
+    "ou actual absents), dis-le en une phrase et n'invente aucune "
+    "suggestion chiffree.\n"
     "PROGRES : si weekly_progress.weight_trend_14d ou "
     "calorie_balance_7d ont des donnees, UN point chiffre dessus "
     "(delta de poids, balance calorique) repris tel quel. Si "
@@ -125,8 +131,10 @@ EN_SYSTEM_PROMPT = (
     "(weekly_progress.nutrition_yesterday: targets, actual, gap -- "
     "positive gap = still short, negative = already exceeded), "
     "weekly trends (weekly_progress: weight, body fat, calorie "
-    "balance, protein, plateau), and tonight's planned session "
-    "(today_session).\n"
+    "balance, protein, plateau), today's targets (today_targets: "
+    "calorie_target_kcal, protein_target_g, fat_target_g, "
+    "carb_target_g, hydration_target_ml -- TODAY's budget), and "
+    "tonight's planned session (today_session).\n"
     "Use the history WITHIN the existing lines, never as an extra "
     "line: a skipped session or a nice green streak belongs in TODAY "
     "or TIP (no guilt-tripping -- one fact + one action); a very "
@@ -144,9 +152,12 @@ EN_SYSTEM_PROMPT = (
     "the gap figure (e.g. '42g protein short of target'), then "
     "suggest 1-2 CONCRETE, sized foods or drinks to fix it today "
     "(e.g. '150g chicken breast + 2 eggs', '500ml water now'), never "
-    "a vague 'eat more protein'. If nothing is logged (targets or "
-    "actual missing), say so in one sentence and invent no sized "
-    "suggestion.\n"
+    "a vague 'eat more protein'. Then give today's budget using "
+    "today_targets figures (e.g. '2100 kcal, 140g protein today') "
+    "-- if nutrition_today already has data, state what REMAINS "
+    "(target minus already logged) instead. If nothing is logged "
+    "(targets or actual missing), say so in one sentence and invent "
+    "no sized suggestion.\n"
     "PROGRESS: if weekly_progress.weight_trend_14d or "
     "calorie_balance_7d have data, ONE figure-based point (weight "
     "delta, calorie balance), reused as-is. If "
@@ -279,7 +290,8 @@ if __name__ == "__main__":
     # actually carries (metrics.history_snapshot), and the old lie
     # about nutrition_today holding yesterday's data is gone.
     for key in ("activities_last_7_days", "statuses_last_7_days",
-                "adherence_last_7_days", "training_load"):
+                "adherence_last_7_days", "training_load",
+                "today_targets"):
         assert key in FR_SYSTEM_PROMPT, key
         assert key in EN_SYSTEM_PROMPT, key
     assert "porte parfois les donnees d'hier" not in FR_SYSTEM_PROMPT

@@ -168,6 +168,28 @@ def home(request: Request) -> HTMLResponse:
         (user_id,),
     ).fetchone()["ran_at"]
     wellness = metrics.daily_wellness(conn, user_id, date)
+    nutrition = metrics.nutrition_for_date(conn, user_id, date)
+    targets = progress.macro_targets(conn, user_id, date)
+    # Today's budget vs what's logged so far -- rows with no target
+    # are omitted rather than shown empty.
+    target_rows = [
+        {"label": label, "actual": actual or 0, "target": target,
+         "unit": unit}
+        for label, actual, target, unit in (
+            ("Calories", nutrition.get("calories_kcal"),
+             targets.get("calorie_target_kcal"), "kcal"),
+            ("Proteines", nutrition.get("protein_g"),
+             targets.get("protein_target_g"), "g"),
+            ("Lipides", nutrition.get("fat_g"),
+             targets.get("fat_target_g"), "g"),
+            ("Glucides", nutrition.get("carbs_g"),
+             targets.get("carb_target_g"), "g"),
+            ("Eau", wellness.get("hydration_ml_today"),
+             targets.get("hydration_target_ml"), "ml"),
+            ("Pas", wellness.get("steps_today"),
+             wellness.get("step_goal"), ""),
+        ) if target
+    ]
     coach_score = achievements.score(conn, user_id)
     player_level = achievements.player_level(conn, user_id)
     new_today = [
@@ -190,6 +212,7 @@ def home(request: Request) -> HTMLResponse:
             "session_label_fr": training.SESSION_LABEL_FR,
             "status_label_fr": training.STATUS_LABEL_FR,
             "last_sync": last_sync, "wellness": wellness,
+            "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
             "new_achievements_today": new_today, "in_deload": in_deload,
             "username": request.session.get("username"),
@@ -237,6 +260,7 @@ def regenerate(request: Request) -> HTMLResponse:
         "wellness_today": wellness,
         "nutrition_today": nutrition, "weekly_progress": weekly,
         "today_session": today_session,
+        "today_targets": progress.macro_targets(conn, user_id, date),
         **metrics.history_snapshot(conn, user_id, date),
     })
     conn.execute(
