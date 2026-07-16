@@ -133,12 +133,15 @@ def sleep_for_date(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     candidates = [
         row for row in sessions
         if _local_date_of(row["end_utc"], tz) == date
+        # Corrupt HC rows (end <= start) are dropped outright: mixing
+        # them into max() would compare bool vs timedelta and crash.
+        and row["end_utc"] > row["start_utc"]
     ]
     if not candidates:
         return {}
     longest = max(
         candidates,
-        key=lambda row: row["end_utc"] > row["start_utc"] and (
+        key=lambda row: (
             dt.datetime.fromisoformat(row["end_utc"])
             - dt.datetime.fromisoformat(row["start_utc"])
         ),
