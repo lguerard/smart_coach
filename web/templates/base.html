@@ -26,6 +26,11 @@
     --blue: #4a90e8; --aqua: #22c48f; --yellow: #eda100; --green: #22c48f;
     --violet: #9085e9; --red: #e6675f; --magenta: #e87ba4; --orange: #eb8a4d;
     --good: #22c48f; --warning: #fab219; --critical: #e6675f;
+    /* Chart series order (fixed, never cycled) -- validated against
+       this surface for lightness band, CVD separation and contrast
+       (dataviz six-checks). Status colors above stay reserved. */
+    --chart-1: #4a90e8; --chart-2: #159c6c;
+    --chart-3: #9085e9; --chart-4: #d06a2c;
     --shadow: 0 12px 40px rgba(0,0,0,0.45);
   }
   @media (prefers-color-scheme: light) {
@@ -37,6 +42,8 @@
       --blue: #2a78d6; --aqua: #1baf7a; --yellow: #eda100; --green: #008300;
       --violet: #4a3aa7; --red: #e34948; --magenta: #e87ba4; --orange: #eb6834;
       --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+      --chart-1: #2a78d6; --chart-2: #0e8f60;
+      --chart-3: #4a3aa7; --chart-4: #c25a1f;
       --shadow: 0 8px 24px rgba(11,11,11,0.08);
     }
   }
@@ -62,7 +69,11 @@
     -webkit-backdrop-filter: blur(24px) saturate(140%);
     padding: 0.65rem 0.4rem; text-align: center;
   }
-  .stat-value { font-size: clamp(1rem, 4vw, 1.25rem); font-weight: 600; color: var(--text-primary); line-height: 1.1; }
+  .stat-value {
+    font-size: clamp(1rem, 4vw, 1.25rem); font-weight: 600;
+    color: var(--text-primary); line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
   .stat-label {
     font-size: 0.65rem; letter-spacing: 0.06em; text-transform: uppercase;
     color: var(--muted); font-weight: 600; margin-top: 0.2rem;
@@ -73,9 +84,13 @@
   @media (prefers-color-scheme: light) {
     .chip-yellow { color: #8a5a00; }
   }
-  .navlink { color: var(--text-secondary); }
+  .navlink { color: var(--text-secondary); transition: color 0.15s; }
+  .navlink:hover { color: var(--text-primary); }
   .navlink.active { color: var(--blue); font-weight: 600; }
+  .navlink svg { width: 20px; height: 20px; }
   ::selection { background: color-mix(in srgb, var(--blue) 35%, transparent); }
+  h1, h2, h3 { letter-spacing: -0.01em; }
+  .num { font-variant-numeric: tabular-nums; }
 </style>
 {% block head %}{% endblock %}
 </head>
@@ -112,24 +127,53 @@
 
   <nav class="md:hidden fixed bottom-0 inset-x-0 flex justify-around py-2 z-10"
        style="background: color-mix(in srgb, var(--bg-0) 82%, transparent); backdrop-filter: blur(20px); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom);">
+    {% set nav_icon_attrs = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' %}
     <a href="/" class="navlink {{ 'active' if request.url.path == '/' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <span>●</span>Aujourd'hui</a>
+      <svg {{ nav_icon_attrs|safe }}><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+      Aujourd'hui</a>
     <a href="/progress" class="navlink {{ 'active' if request.url.path == '/progress' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <span>▲</span>Progres</a>
+      <svg {{ nav_icon_attrs|safe }}><polyline points="3 7 9 13 13 9 21 17"/><polyline points="15 17 21 17 21 11"/></svg>
+      Progres</a>
     <a href="/trends" class="navlink {{ 'active' if request.url.path == '/trends' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <span>~</span>Tendances</a>
+      <svg {{ nav_icon_attrs|safe }}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Tendances</a>
     <a href="/sessions" class="navlink {{ 'active' if request.url.path == '/sessions' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <span>▤</span>Seances</a>
+      <svg {{ nav_icon_attrs|safe }}><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      Seances</a>
     <a href="/achievements" class="navlink {{ 'active' if request.url.path == '/achievements' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <span>🏆</span>Trophees</a>
+      <svg {{ nav_icon_attrs|safe }}><path d="M8 21h8M12 17v4M7 3h10v7a5 5 0 0 1-10 0zM7 5H4v2a3 3 0 0 0 3 3M17 5h3v2a3 3 0 0 1-3 3"/></svg>
+      Trophees</a>
     <a href="/settings" class="navlink {{ 'active' if request.url.path == '/settings' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <span>⚙</span>Reglages</a>
+      <svg {{ nav_icon_attrs|safe }}><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg>
+      Reglages</a>
   </nav>
 
   <script>
-    Chart.defaults.color = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary');
-    Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--grid');
-    Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+    (() => {
+      const css = getComputedStyle(document.documentElement);
+      const v = (name) => css.getPropertyValue(name).trim();
+      Chart.defaults.color = v('--text-secondary');
+      Chart.defaults.borderColor = v('--grid');
+      Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+      Chart.defaults.font.size = 11;
+      // Crosshair-style hover: nearest x, no need to hit the mark.
+      Chart.defaults.interaction = { mode: 'index', intersect: false };
+      Object.assign(Chart.defaults.plugins.tooltip, {
+        backgroundColor: v('--surface-1-solid'),
+        titleColor: v('--text-primary'), bodyColor: v('--text-secondary'),
+        borderColor: v('--border'), borderWidth: 1,
+        cornerRadius: 10, padding: 10, boxPadding: 4,
+        usePointStyle: true,
+      });
+      Object.assign(Chart.defaults.plugins.legend.labels, {
+        usePointStyle: true, pointStyle: 'circle', boxWidth: 6,
+        boxHeight: 6,
+      });
+      // Series colors: fixed order, validated per mode (see :root).
+      window.CHART_COLORS = [
+        v('--chart-1'), v('--chart-2'), v('--chart-3'), v('--chart-4'),
+      ];
+    })();
   </script>
   {% block scripts %}{% endblock %}
 </body>

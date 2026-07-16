@@ -25,9 +25,9 @@
 <div class="card p-4">
   <h2 class="font-semibold text-sm mb-1">Charge d'entrainement -- 30 jours</h2>
   <p class="text-xs mb-3" style="color: var(--muted);">
-    Forme (CTL, 42j) et fatigue (ATL, 7j), calculees depuis la duree des
-    seances x niveau prescrit ce jour-la (proxy d'intensite, pas de
-    puissance/RPE fiable disponible).
+    Forme (CTL, 42j) et fatigue (ATL, 7j), calculees depuis la duree
+    des seances x niveau prescrit ce jour-la ; un RPE logue releve le
+    poids d'un effort non planifie (sortie velo...).
   </p>
   {% if latest_load %}
   <div class="grid grid-cols-3 gap-2 mb-3">
@@ -45,16 +45,15 @@
 {% block scripts %}
 <script>
 const css = getComputedStyle(document.documentElement);
-const blue = css.getPropertyValue('--blue'), grid = css.getPropertyValue('--grid');
-const muted = css.getPropertyValue('--muted'), aqua = css.getPropertyValue('--aqua');
-const yellow = css.getPropertyValue('--yellow'), violet = css.getPropertyValue('--violet');
-const orange = css.getPropertyValue('--orange');
+const grid = css.getPropertyValue('--grid');
+const muted = css.getPropertyValue('--muted');
+const [c1, c2, c3, c4] = window.CHART_COLORS;
 const dates = {{ dates|tojson }};
 
 new Chart(document.getElementById('stepsChart'), {
   type: 'bar',
   data: { labels: dates, datasets: [
-    { data: {{ steps_values|tojson }}, backgroundColor: blue, borderRadius: 4, maxBarThickness: 10 },
+    { data: {{ steps_values|tojson }}, backgroundColor: c1, borderRadius: 4, maxBarThickness: 10 },
     {% if step_goal %}
     { type: 'line', data: dates.map(() => {{ step_goal }}), borderColor: muted,
       borderWidth: 1, borderDash: [4,4], pointRadius: 0 },
@@ -68,7 +67,7 @@ new Chart(document.getElementById('stepsChart'), {
 new Chart(document.getElementById('rhrChart'), {
   type: 'line',
   data: { labels: dates, datasets: [
-    { label: 'FC repos', data: {{ rhr_values|tojson }}, borderColor: blue,
+    { label: 'FC repos', data: {{ rhr_values|tojson }}, borderColor: c1,
       borderWidth: 2, pointRadius: 0, tension: 0.3, spanGaps: true },
     {% if rhr_baseline %}
     { label: 'Baseline', data: dates.map(() => {{ rhr_baseline }}), borderColor: muted,
@@ -83,7 +82,7 @@ new Chart(document.getElementById('rhrChart'), {
 new Chart(document.getElementById('sleepChart'), {
   type: 'line',
   data: { labels: dates, datasets: [{
-    data: {{ sleep_values|tojson }}, borderColor: aqua, borderWidth: 2,
+    data: {{ sleep_values|tojson }}, borderColor: c2, borderWidth: 2,
     pointRadius: 0, tension: 0.3, spanGaps: true,
   }]},
   options: { plugins: { legend: { display: false } },
@@ -91,7 +90,7 @@ new Chart(document.getElementById('sleepChart'), {
               y: { grid: { color: grid }, suggestedMin: 0, suggestedMax: 100 } } },
 });
 
-const levelColors = { treadmill: blue, lower_body: aqua, upper_body: violet, calisthenics: orange };
+const levelColors = { treadmill: c1, lower_body: c2, upper_body: c3, calisthenics: c4 };
 const levelLabels = {{ session_label_fr|tojson }};
 const levelSeries = {{ level_series|tojson }};
 new Chart(document.getElementById('levelChart'), {
@@ -113,9 +112,9 @@ const good = css.getPropertyValue('--good'), critical = css.getPropertyValue('--
 new Chart(document.getElementById('loadChart'), {
   type: 'line',
   data: { labels: dates, datasets: [
-    { label: 'Forme (CTL)', data: {{ ctl_values|tojson }}, borderColor: violet,
+    { label: 'Forme (CTL)', data: {{ ctl_values|tojson }}, borderColor: c3,
       borderWidth: 2, pointRadius: 0, tension: 0.3, spanGaps: true },
-    { label: 'Fatigue (ATL)', data: {{ atl_values|tojson }}, borderColor: orange,
+    { label: 'Fatigue (ATL)', data: {{ atl_values|tojson }}, borderColor: c4,
       borderWidth: 2, pointRadius: 0, tension: 0.3, spanGaps: true },
   ]},
   options: { plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } },

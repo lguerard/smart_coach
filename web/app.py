@@ -375,6 +375,9 @@ def progress_page(request: Request) -> HTMLResponse:
             "protein_values": [
                 round(r["protein_g"], 1) for r in protein_series
             ],
+            "target_weight": (
+                db.get_setting(conn, user_id, "target_weight_kg") or None
+            ),
         },
     )
 

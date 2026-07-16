@@ -92,6 +92,17 @@
     <p class="text-sm mt-1" style="color: var(--muted);">Pas assez de donnees</p>
     {% endif %}
   </div>
+  <div class="card p-4">
+    <p class="text-xs" style="color: var(--muted);">Masse maigre (28j)</p>
+    {% if bundle.lean_mass_trend_28d %}
+    <p class="text-2xl font-semibold mt-1">{{ bundle.lean_mass_trend_28d.current_avg }} kg</p>
+    <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if bundle.lean_mass_trend_28d.delta >= 0 else 'var(--critical)' }};">
+      {{ '%+.2f'|format(bundle.lean_mass_trend_28d.delta) }} kg -- {{ "muscle preserve" if bundle.lean_mass_trend_28d.delta >= 0 else "attention muscle" }}
+    </p>
+    {% else %}
+    <p class="text-sm mt-1" style="color: var(--muted);">Pas assez de donnees</p>
+    {% endif %}
+  </div>
 </div>
 
 <div class="card p-4">
@@ -114,16 +125,24 @@
 {% block scripts %}
 <script>
 const css = getComputedStyle(document.documentElement);
-const blue = css.getPropertyValue('--blue'), grid = css.getPropertyValue('--grid');
+const grid = css.getPropertyValue('--grid');
+const muted = css.getPropertyValue('--muted');
 const good = css.getPropertyValue('--good'), critical = css.getPropertyValue('--critical');
+const [c1] = window.CHART_COLORS;
+const weightLabels = {{ weight_labels|tojson }};
+const targetWeight = {{ target_weight|tojson }};
 
 new Chart(document.getElementById('weightChart'), {
   type: 'line',
-  data: { labels: {{ weight_labels|tojson }}, datasets: [{
-    data: {{ weight_values|tojson }}, borderColor: blue, borderWidth: 2,
-    pointRadius: 0, tension: 0.3, fill: false,
-  }]},
-  options: { plugins: { legend: { display: false } },
+  data: { labels: weightLabels, datasets: [
+    { label: 'Poids', data: {{ weight_values|tojson }}, borderColor: c1,
+      borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false },
+    ...(targetWeight ? [{ label: 'Objectif',
+      data: weightLabels.map(() => Number(targetWeight)),
+      borderColor: muted, borderWidth: 1, borderDash: [4,4],
+      pointRadius: 0 }] : []),
+  ]},
+  options: { plugins: { legend: { display: !!targetWeight } },
     scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
               y: { grid: { color: grid } } } },
 });
@@ -141,12 +160,17 @@ new Chart(document.getElementById('calorieChart'), {
               y: { grid: { color: grid } } } },
 });
 
+const proteinLabels = {{ protein_labels|tojson }};
+const proteinTarget = {{ bundle.protein_7d.target_g|default(none)|tojson }};
 new Chart(document.getElementById('proteinChart'), {
   type: 'bar',
-  data: { labels: {{ protein_labels|tojson }}, datasets: [{
-    data: {{ protein_values|tojson }}, backgroundColor: blue,
-    borderRadius: 4, maxBarThickness: 14,
-  }]},
+  data: { labels: proteinLabels, datasets: [
+    { data: {{ protein_values|tojson }}, backgroundColor: c1,
+      borderRadius: 4, maxBarThickness: 14 },
+    ...(proteinTarget ? [{ type: 'line', label: 'Objectif',
+      data: proteinLabels.map(() => proteinTarget), borderColor: muted,
+      borderWidth: 1, borderDash: [4,4], pointRadius: 0 }] : []),
+  ]},
   options: { plugins: { legend: { display: false } },
     scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
               y: { grid: { color: grid } } } },
