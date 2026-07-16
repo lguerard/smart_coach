@@ -31,8 +31,26 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- First account ever created is the admin; self-signed-up
+    -- accounts start unapproved and can't log in until the admin
+    -- approves them from Settings.
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    approved INTEGER NOT NULL DEFAULT 0
 );
+
+-- WebAuthn passkeys: one row per registered credential. credential_id
+-- and public_key are stored as the base64url/raw bytes the webauthn
+-- library emits; sign_count backs clone detection.
+CREATE TABLE IF NOT EXISTS passkeys (
+    credential_id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    public_key BLOB NOT NULL,
+    sign_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    label TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
 
 CREATE TABLE IF NOT EXISTS steps (
     uuid TEXT PRIMARY KEY,
@@ -417,12 +435,33 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create all tables/indexes if missing.
+    """Create all tables/indexes if missing, migrate old schemas.
 
     Parameters:
         conn (sqlite3.Connection): Open connection.
     """
     conn.executescript(SCHEMA)
+    # Migration for databases created before the admin/approval
+    # columns existed: everyone already on board is grandfathered as
+    # approved, and the oldest account becomes the admin.
+    cols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(users)")
+    }
+    if "approved" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN approved "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.execute("UPDATE users SET approved = 1")
+    if "is_admin" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN is_admin "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.execute(
+            "UPDATE users SET is_admin = 1 "
+            "WHERE id = (SELECT MIN(id) FROM users)"
+        )
     conn.commit()
 
 
@@ -437,13 +476,22 @@ def _hash_password(password: str, salt: str) -> str:
     ).hex()
 
 
-def create_user(conn: sqlite3.Connection, username: str, password: str) -> int:
+def create_user(
+    conn: sqlite3.Connection, username: str, password: str,
+    approved: bool = True,
+) -> int:
     """Create a new user account.
+
+    The very first account ever created becomes the admin and is
+    always approved, regardless of ``approved`` -- someone has to be
+    able to approve the others. Self-signup (the web form) passes
+    ``approved=False``; the admin CLI keeps the approved default.
 
     Parameters:
         conn (sqlite3.Connection): Open connection.
         username (str): Unique login name.
         password (str): Plain-text password (hashed before storing).
+        approved (bool): Whether the account can log in immediately.
 
     Returns:
         int: New user's id.
@@ -453,18 +501,30 @@ def create_user(conn: sqlite3.Connection, username: str, password: str) -> int:
     """
     import datetime as dt
 
+    first = conn.execute(
+        "SELECT COUNT(*) AS n FROM users"
+    ).fetchone()["n"] == 0
+    is_admin = first
+    if first:
+        approved = True
+
     salt = secrets.token_hex(16)
     password_hash = _hash_password(password, salt)
     try:
         cursor = conn.execute(
             "INSERT INTO users (username, password_hash, password_salt, "
-            "created_at) VALUES (?, ?, ?, ?)",
+            "created_at, is_admin, approved) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 username, password_hash, salt,
                 dt.datetime.now(dt.timezone.utc).isoformat(),
+                int(is_admin), int(approved),
             ),
         )
     except sqlite3.IntegrityError:
+        # Roll back the implicit transaction the failed INSERT opened
+        # -- a leaked request connection stuck in a transaction locks
+        # every other writer out of the database.
+        conn.rollback()
         raise ValueError(f"Username {username!r} is already taken.")
     conn.commit()
     user_id = cursor.lastrowid
@@ -479,7 +539,7 @@ def create_user(conn: sqlite3.Connection, username: str, password: str) -> int:
 
 def verify_login(
     conn: sqlite3.Connection, username: str, password: str,
-) -> int | None:
+) -> sqlite3.Row | None:
     """Check credentials.
 
     Parameters:
@@ -488,17 +548,20 @@ def verify_login(
         password (str): Plain-text password to check.
 
     Returns:
-        int | None: The user's id if valid, else None.
+        sqlite3.Row | None: ``id``/``approved``/``is_admin`` if the
+        credentials are valid, else ``None``. Approval is the
+        caller's check -- valid-but-pending gets a different message
+        than wrong credentials.
     """
     row = conn.execute(
-        "SELECT id, password_hash, password_salt FROM users "
-        "WHERE username = ?", (username,),
+        "SELECT id, password_hash, password_salt, approved, is_admin "
+        "FROM users WHERE username = ?", (username,),
     ).fetchone()
     if not row:
         return None
     candidate = _hash_password(password, row["password_salt"])
     if secrets.compare_digest(candidate, row["password_hash"]):
-        return row["id"]
+        return row
     return None
 
 
@@ -510,10 +573,114 @@ def get_user(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
 
 
 def all_users(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Every user account -- used by run_ingest.py/run_coach.py to
-    loop the daily pipeline once per person.
+    """Every approved user account -- used by run_ingest.py /
+    run_coach.py to loop the daily pipeline once per person. Pending
+    accounts get no pipeline until the admin approves them.
     """
-    return conn.execute("SELECT id, username FROM users ORDER BY id").fetchall()
+    return conn.execute(
+        "SELECT id, username FROM users WHERE approved = 1 ORDER BY id"
+    ).fetchall()
+
+
+def pending_users(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Self-signed-up accounts awaiting admin approval."""
+    return conn.execute(
+        "SELECT id, username, created_at FROM users WHERE approved = 0 "
+        "ORDER BY id"
+    ).fetchall()
+
+
+def approve_user(conn: sqlite3.Connection, user_id: int) -> None:
+    """Let a pending account log in."""
+    conn.execute(
+        "UPDATE users SET approved = 1 WHERE id = ?", (user_id,),
+    )
+    conn.commit()
+
+
+def reject_user(conn: sqlite3.Connection, user_id: int) -> None:
+    """Delete a PENDING account (guard in the WHERE clause: an
+    approved account with data is never deletable this way).
+    """
+    conn.execute(
+        "DELETE FROM settings WHERE user_id = ? AND EXISTS (SELECT 1 "
+        "FROM users WHERE id = ? AND approved = 0)", (user_id, user_id),
+    )
+    conn.execute(
+        "DELETE FROM users WHERE id = ? AND approved = 0", (user_id,),
+    )
+    conn.commit()
+
+
+def is_admin(conn: sqlite3.Connection, user_id: int) -> bool:
+    """Whether this account may approve/reject signups."""
+    row = conn.execute(
+        "SELECT is_admin FROM users WHERE id = ?", (user_id,),
+    ).fetchone()
+    return bool(row and row["is_admin"])
+
+
+# --- Passkeys (WebAuthn) ---
+
+def add_passkey(
+    conn: sqlite3.Connection, user_id: int, credential_id: str,
+    public_key: bytes, sign_count: int, label: str = "",
+) -> None:
+    """Store a newly registered WebAuthn credential."""
+    import datetime as dt
+
+    conn.execute(
+        "INSERT INTO passkeys (credential_id, user_id, public_key, "
+        "sign_count, created_at, label) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            credential_id, user_id, public_key, sign_count,
+            dt.datetime.now(dt.timezone.utc).isoformat(), label,
+        ),
+    )
+    conn.commit()
+
+
+def passkeys_for_user(
+    conn: sqlite3.Connection, user_id: int,
+) -> list[sqlite3.Row]:
+    """This user's registered passkeys (Settings list + login allow)."""
+    return conn.execute(
+        "SELECT credential_id, sign_count, created_at, label "
+        "FROM passkeys WHERE user_id = ? ORDER BY created_at",
+        (user_id,),
+    ).fetchall()
+
+
+def passkey_by_credential(
+    conn: sqlite3.Connection, credential_id: str,
+) -> sqlite3.Row | None:
+    """Look up a credential during authentication."""
+    return conn.execute(
+        "SELECT credential_id, user_id, public_key, sign_count "
+        "FROM passkeys WHERE credential_id = ?", (credential_id,),
+    ).fetchone()
+
+
+def set_passkey_sign_count(
+    conn: sqlite3.Connection, credential_id: str, sign_count: int,
+) -> None:
+    """Persist the authenticator's counter after a successful login."""
+    conn.execute(
+        "UPDATE passkeys SET sign_count = ? WHERE credential_id = ?",
+        (sign_count, credential_id),
+    )
+    conn.commit()
+
+
+def delete_passkey(
+    conn: sqlite3.Connection, user_id: int, credential_id: str,
+) -> None:
+    """Remove one of the user's own passkeys (user-scoped WHERE)."""
+    conn.execute(
+        "DELETE FROM passkeys WHERE credential_id = ? AND user_id = ?",
+        (credential_id, user_id),
+    )
+    conn.commit()
 
 
 # --- Per-user settings ---
@@ -578,7 +745,8 @@ if __name__ == "__main__":
     alice = create_user(test_conn, "alice", "correct horse battery staple")
     bob = create_user(test_conn, "bob", "hunter2")
     assert alice != bob
-    assert verify_login(test_conn, "alice", "correct horse battery staple") == alice
+    login = verify_login(test_conn, "alice", "correct horse battery staple")
+    assert login["id"] == alice
     assert verify_login(test_conn, "alice", "wrong password") is None
     assert verify_login(test_conn, "nobody", "x") is None
     try:
@@ -589,6 +757,54 @@ if __name__ == "__main__":
 
     assert get_user(test_conn, alice)["username"] == "alice"
     assert {u["username"] for u in all_users(test_conn)} == {"alice", "bob"}
+
+    # First user is the admin and always approved; a self-signup is
+    # pending (invisible to the pipeline loop) until approved.
+    assert login["is_admin"] == 1 and login["approved"] == 1
+    assert is_admin(test_conn, alice) and not is_admin(test_conn, bob)
+    carol = create_user(test_conn, "carol", "password1234", approved=False)
+    assert verify_login(test_conn, "carol", "password1234")["approved"] == 0
+    assert {u["username"] for u in all_users(test_conn)} == {"alice", "bob"}
+    assert [u["id"] for u in pending_users(test_conn)] == [carol]
+    approve_user(test_conn, carol)
+    assert "carol" in {u["username"] for u in all_users(test_conn)}
+    # reject only touches PENDING accounts -- approved carol survives.
+    reject_user(test_conn, carol)
+    assert get_user(test_conn, carol) is not None
+    dave = create_user(test_conn, "dave", "password1234", approved=False)
+    reject_user(test_conn, dave)
+    assert get_user(test_conn, dave) is None
+    assert test_conn.execute(
+        "SELECT COUNT(*) AS n FROM settings WHERE user_id = ?", (dave,),
+    ).fetchone()["n"] == 0
+
+    # Passkeys: register, look up, count update, user-scoped delete.
+    add_passkey(test_conn, alice, "cred-a", b"pk-bytes", 0, "phone")
+    add_passkey(test_conn, bob, "cred-b", b"pk-bytes-2", 5)
+    assert len(passkeys_for_user(test_conn, alice)) == 1
+    found = passkey_by_credential(test_conn, "cred-a")
+    assert found["user_id"] == alice and found["public_key"] == b"pk-bytes"
+    set_passkey_sign_count(test_conn, "cred-a", 7)
+    assert passkey_by_credential(test_conn, "cred-a")["sign_count"] == 7
+    delete_passkey(test_conn, bob, "cred-a")  # wrong owner: no-op
+    assert passkey_by_credential(test_conn, "cred-a") is not None
+    delete_passkey(test_conn, alice, "cred-a")
+    assert passkey_by_credential(test_conn, "cred-a") is None
+
+    # Migration path: a pre-admin-era users table gains the columns,
+    # everyone grandfathered approved, oldest account is admin.
+    old = connect(Path(tempfile.mkdtemp()) / "old.db")
+    old.executescript(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, "
+        "password_salt TEXT NOT NULL, created_at TEXT NOT NULL);"
+        "INSERT INTO users (username, password_hash, password_salt, "
+        "created_at) VALUES ('legacy1', 'h', 's', 't'), "
+        "('legacy2', 'h', 's', 't');"
+    )
+    init_db(old)
+    assert is_admin(old, 1) and not is_admin(old, 2)
+    assert {u["username"] for u in all_users(old)} == {"legacy1", "legacy2"}
 
     # Settings are per-user from creation (seeded by create_user) and
     # independently editable -- this IS the data-isolation contract.

@@ -24,11 +24,19 @@ import time
 import urllib.parse
 from pathlib import Path
 
+import webauthn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse, JSONResponse, RedirectResponse, Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria, PublicKeyCredentialDescriptor,
+    ResidentKeyRequirement, UserVerificationRequirement,
+)
 
 import achievements
 import db
@@ -45,7 +53,7 @@ app = FastAPI(title="smart_sport")
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 
-_PUBLIC_PREFIXES = ("/login", "/static")
+_PUBLIC_PREFIXES = ("/login", "/static", "/signup", "/passkey/login")
 
 
 @app.middleware("http")
@@ -181,16 +189,69 @@ async def login_submit(request: Request):
     username = str(form.get("username", "")).strip()
     password = str(form.get("password", ""))
     conn = get_conn()
-    user_id = db.verify_login(conn, username, password)
-    if user_id is None:
+    user = db.verify_login(conn, username, password)
+    if user is None:
         _login_failures.setdefault(key, []).append(now)
         return RedirectResponse(
             "/login?error=Identifiants+incorrects", status_code=303,
         )
+    if not user["approved"]:
+        # Valid credentials, pending account: different message, and
+        # no failure recorded (they typed the right password).
+        return RedirectResponse(
+            "/login?error=Compte+en+attente+d'approbation+par+l'admin",
+            status_code=303,
+        )
     _login_failures.pop(key, None)
-    request.session["user_id"] = user_id
+    request.session["user_id"] = user["id"]
     request.session["username"] = username
     return RedirectResponse("/", status_code=303)
+
+
+@app.get("/signup", response_class=HTMLResponse)
+def signup_page(request: Request) -> HTMLResponse:
+    """Self-signup form: account is created pending admin approval."""
+    if request.session.get("user_id"):
+        return RedirectResponse("/")
+    return templates.TemplateResponse(
+        request, "signup.html", {
+            "error": request.query_params.get("error"),
+            "created": request.query_params.get("created") is not None,
+        },
+    )
+
+
+@app.post("/signup")
+async def signup_submit(request: Request):
+    """Create a pending account (rate-limited like the login form)."""
+    key = "signup:" + _client_ip(request)
+    now = time.monotonic()
+    if _throttled(key, now):
+        return RedirectResponse(
+            "/signup?error=Trop+de+tentatives+--+reessayez+plus+tard",
+            status_code=303,
+        )
+    _login_failures.setdefault(key, []).append(now)
+    form = await request.form()
+    username = str(form.get("username", "")).strip()
+    password = str(form.get("password", ""))
+    if not (1 <= len(username) <= 40):
+        return RedirectResponse(
+            "/signup?error=Nom+d'utilisateur+invalide", status_code=303,
+        )
+    if len(password) < 8:
+        return RedirectResponse(
+            "/signup?error=Mot+de+passe+trop+court+(8+caracteres+min)",
+            status_code=303,
+        )
+    conn = get_conn()
+    try:
+        db.create_user(conn, username, password, approved=False)
+    except ValueError:
+        return RedirectResponse(
+            "/signup?error=Nom+d'utilisateur+deja+pris", status_code=303,
+        )
+    return RedirectResponse("/signup?created=1", status_code=303)
 
 
 @app.post("/logout")
@@ -198,6 +259,167 @@ def logout(request: Request):
     """End the session."""
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+# --- Passkeys (WebAuthn) ---
+# Requires a secure context in the browser (HTTPS, or localhost in
+# dev) -- exactly what the compose 'public' profile provides.
+
+def _relying_party(request: Request) -> tuple[str, str]:
+    """(rp_id, expected_origin) derived from the request.
+
+    Behind the caddy profile X-Forwarded-Proto is https; direct
+    LAN/dev access falls back to the request's own scheme.
+    """
+    host_header = request.headers.get("host", "localhost")
+    rp_id = host_header.split(":")[0]
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    return rp_id, f"{proto}://{host_header}"
+
+
+@app.get("/passkey/register/options")
+def passkey_register_options(request: Request) -> Response:
+    """WebAuthn creation options for the logged-in user."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    rp_id, _ = _relying_party(request)
+    options = webauthn.generate_registration_options(
+        rp_id=rp_id, rp_name="Smart Sport",
+        user_id=str(user_id).encode(),
+        user_name=request.session.get("username", str(user_id)),
+        exclude_credentials=[
+            PublicKeyCredentialDescriptor(
+                id=base64url_to_bytes(row["credential_id"]),
+            )
+            for row in db.passkeys_for_user(conn, user_id)
+        ],
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.PREFERRED,
+        ),
+    )
+    request.session["pk_challenge"] = bytes_to_base64url(options.challenge)
+    return Response(
+        webauthn.options_to_json(options), media_type="application/json",
+    )
+
+
+@app.post("/passkey/register")
+async def passkey_register(request: Request):
+    """Verify the authenticator's response and store the credential."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    challenge = request.session.pop("pk_challenge", None)
+    if not challenge:
+        return JSONResponse({"error": "challenge expiree"}, status_code=400)
+    body = await request.json()
+    rp_id, origin = _relying_party(request)
+    try:
+        verification = webauthn.verify_registration_response(
+            credential=body["credential"],
+            expected_challenge=base64url_to_bytes(challenge),
+            expected_rp_id=rp_id, expected_origin=origin,
+        )
+    except Exception as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+    db.add_passkey(
+        conn, user_id, bytes_to_base64url(verification.credential_id),
+        verification.credential_public_key, verification.sign_count,
+        str(body.get("label", ""))[:60],
+    )
+    return {"ok": True}
+
+
+@app.post("/passkey/delete")
+async def passkey_delete(request: Request):
+    """Remove one of the logged-in user's passkeys."""
+    conn = get_conn()
+    form = await request.form()
+    db.delete_passkey(
+        conn, current_user_id(request),
+        str(form.get("credential_id", "")),
+    )
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.get("/passkey/login/options")
+def passkey_login_options(request: Request) -> Response:
+    """WebAuthn request options (discoverable credentials: the
+    browser picks the passkey, no username typed)."""
+    rp_id, _ = _relying_party(request)
+    options = webauthn.generate_authentication_options(
+        rp_id=rp_id,
+        user_verification=UserVerificationRequirement.PREFERRED,
+    )
+    request.session["pk_challenge"] = bytes_to_base64url(options.challenge)
+    return Response(
+        webauthn.options_to_json(options), media_type="application/json",
+    )
+
+
+@app.post("/passkey/login")
+async def passkey_login(request: Request):
+    """Verify a passkey assertion and start a session."""
+    key = "pk:" + _client_ip(request)
+    now = time.monotonic()
+    if _throttled(key, now):
+        return JSONResponse(
+            {"error": "Trop de tentatives -- reessayez dans 15 min"},
+            status_code=429,
+        )
+    challenge = request.session.pop("pk_challenge", None)
+    if not challenge:
+        return JSONResponse({"error": "challenge expiree"}, status_code=400)
+    body = await request.json()
+    credential = body.get("credential", {})
+    conn = get_conn()
+    row = db.passkey_by_credential(conn, str(credential.get("id", "")))
+    if row is None:
+        _login_failures.setdefault(key, []).append(now)
+        return JSONResponse({"error": "passkey inconnue"}, status_code=400)
+    rp_id, origin = _relying_party(request)
+    try:
+        verification = webauthn.verify_authentication_response(
+            credential=credential,
+            expected_challenge=base64url_to_bytes(challenge),
+            expected_rp_id=rp_id, expected_origin=origin,
+            credential_public_key=row["public_key"],
+            credential_current_sign_count=row["sign_count"],
+        )
+    except Exception as error:
+        _login_failures.setdefault(key, []).append(now)
+        return JSONResponse({"error": str(error)}, status_code=400)
+    user = db.get_user(conn, row["user_id"])
+    db.set_passkey_sign_count(
+        conn, row["credential_id"], verification.new_sign_count,
+    )
+    _login_failures.pop(key, None)
+    request.session["user_id"] = row["user_id"]
+    request.session["username"] = user["username"]
+    return {"ok": True}
+
+
+# --- Admin: signup approvals ---
+
+@app.post("/admin/users/{user_id}/approve")
+def admin_approve(user_id: int, request: Request):
+    """Approve a pending signup (admin only)."""
+    conn = get_conn()
+    if not db.is_admin(conn, current_user_id(request)):
+        return RedirectResponse("/", status_code=303)
+    db.approve_user(conn, user_id)
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/admin/users/{user_id}/reject")
+def admin_reject(user_id: int, request: Request):
+    """Reject (delete) a pending signup (admin only; approved
+    accounts are not deletable through this)."""
+    conn = get_conn()
+    if not db.is_admin(conn, current_user_id(request)):
+        return RedirectResponse("/", status_code=303)
+    db.reject_user(conn, user_id)
+    return RedirectResponse("/settings", status_code=303)
 
 
 # --- Home ---
@@ -744,9 +966,13 @@ def settings_page(request: Request) -> HTMLResponse:
         session_type: training.get_level(conn, user_id, session_type)
         for session_type in training.SESSION_LABEL_FR
     }
+    admin = db.is_admin(conn, user_id)
     return templates.TemplateResponse(
         request, "settings.html", {
             "settings": settings, "levels": levels,
+            "passkeys": db.passkeys_for_user(conn, user_id),
+            "is_admin": admin,
+            "pending_users": db.pending_users(conn) if admin else [],
             "schedule": training.schedule_for_user(conn, user_id),
             "weekday_names": ["Lundi", "Mardi", "Mercredi", "Jeudi",
                               "Vendredi", "Samedi", "Dimanche"],

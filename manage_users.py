@@ -39,7 +39,8 @@ def main() -> None:
     except ValueError as error:
         print(error, file=sys.stderr)
         sys.exit(1)
-    print(f"Created user {username!r} (id={user_id}).")
+    suffix = " -- admin" if db.is_admin(conn, user_id) else ""
+    print(f"Created user {username!r} (id={user_id}){suffix}.")
 
 
 if __name__ == "__main__":

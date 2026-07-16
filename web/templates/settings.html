@@ -152,6 +152,54 @@
   </button>
 </form>
 
+{% if is_admin and pending_users %}
+<div class="card p-4" style="border-color: var(--warning);">
+  <h2 class="font-semibold text-sm mb-3">Comptes en attente d'approbation</h2>
+  <div class="space-y-2">
+    {% for u in pending_users %}
+    <div class="flex items-center justify-between text-sm">
+      <span>{{ u.username }} <span class="text-xs" style="color: var(--muted);">{{ u.created_at[:10] }}</span></span>
+      <span class="flex gap-2">
+        <form method="post" action="/admin/users/{{ u.id }}/approve">
+          <button type="submit" class="text-xs px-3 py-1 rounded-full text-white" style="background: var(--good);">Approuver</button>
+        </form>
+        <form method="post" action="/admin/users/{{ u.id }}/reject">
+          <button type="submit" class="text-xs px-3 py-1 rounded-full border" style="border-color: var(--border); color: var(--critical);">Refuser</button>
+        </form>
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-1">Passkeys</h2>
+  <p class="text-xs mb-3" style="color: var(--muted);">
+    Connexion sans mot de passe (empreinte, visage, cle de securite).
+    Necessite HTTPS (ou localhost).
+  </p>
+  <div class="space-y-2">
+    {% for pk in passkeys %}
+    <div class="flex items-center justify-between text-sm">
+      <span>&#128273; {{ pk.label or "Passkey" }}
+        <span class="text-xs" style="color: var(--muted);">{{ pk.created_at[:10] }}</span></span>
+      <form method="post" action="/passkey/delete">
+        <input type="hidden" name="credential_id" value="{{ pk.credential_id }}">
+        <button type="submit" class="text-xs px-3 py-1 rounded-full border" style="border-color: var(--border); color: var(--critical);">Supprimer</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="text-sm" style="color: var(--muted);">Aucune passkey enregistree.</p>
+    {% endfor %}
+  </div>
+  <button type="button" id="addPasskeyBtn"
+    class="mt-3 text-xs px-3 py-1.5 rounded-full text-white" style="background: var(--blue);">
+    Ajouter une passkey
+  </button>
+  <p id="passkeyMsg" class="text-xs mt-2 hidden"></p>
+</div>
+
 <div class="card p-4">
   <h2 class="font-semibold text-sm mb-3">Etat de l'ingestion</h2>
   <div class="space-y-2">
@@ -169,4 +217,45 @@
   </div>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const b64uToBuf = (s) => Uint8Array.from(
+    atob(s.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+  const bufToB64u = (b) => btoa(String.fromCharCode(...new Uint8Array(b)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+  document.getElementById("addPasskeyBtn").addEventListener("click", async () => {
+    const msg = document.getElementById("passkeyMsg");
+    msg.classList.add("hidden");
+    try {
+      const options = await (await fetch("/passkey/register/options")).json();
+      options.challenge = b64uToBuf(options.challenge);
+      options.user.id = b64uToBuf(options.user.id);
+      (options.excludeCredentials || []).forEach(c => c.id = b64uToBuf(c.id));
+      const cred = await navigator.credentials.create({ publicKey: options });
+      const label = prompt("Nom de cette passkey (ex. telephone) :") || "";
+      const resp = await fetch("/passkey/register", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label, credential: {
+          id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
+          response: {
+            clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+            attestationObject: bufToB64u(cred.response.attestationObject),
+          },
+          clientExtensionResults: cred.getClientExtensionResults(),
+        }}),
+      });
+      if (resp.ok) { location.reload(); return; }
+      msg.textContent = (await resp.json()).error || "Echec de l'enregistrement";
+      msg.style.color = "var(--critical)";
+      msg.classList.remove("hidden");
+    } catch (e) {
+      msg.textContent = e.message || "Enregistrement annule";
+      msg.style.color = "var(--critical)";
+      msg.classList.remove("hidden");
+    }
+  });
+</script>
 {% endblock %}

@@ -128,6 +128,18 @@ Dashboard: `http://<host>:8080`.
 Every account gets its own data, settings, weekly plan, calendar
 and notifications — the deployment is shared, nothing else is.
 
+The **first account ever created is the admin** (whether via the web
+form or the CLI). After that, new people sign up themselves at
+`/signup`; their account stays pending — no login, no pipeline —
+until the admin approves it from Settings > "Comptes en attente".
+
+Once logged in, anyone can add **passkeys** (fingerprint/face/security
+key, Settings > Passkeys) and sign in without a password from the
+login page. Passkeys need HTTPS (or localhost) — the public profile
+below provides exactly that.
+
+The CLI alternative still works (creates pre-approved accounts):
+
 ```bash
 # 1. Create the account
 docker compose run --rm -it smart_sport-worker python manage_users.py alice

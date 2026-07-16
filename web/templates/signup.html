@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Creer un compte - Smart Sport</title>
+<meta name="theme-color" content="#0b0e14">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --bg-0: #0b0e14; --surface-1: rgba(255,255,255,0.045);
+    --text-primary: #f3f4f6; --text-secondary: #a8adb8; --muted: #6f7480;
+    --border: rgba(255,255,255,0.09); --blue: #4a90e8;
+    --critical: #e6675f; --good: #22c48f;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg-0: #f3f4f2; --surface-1: rgba(255,255,255,0.72);
+      --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
+      --border: rgba(11,11,11,0.08); --blue: #2a78d6;
+      --critical: #d03b3b; --good: #0ca30c;
+    }
+  }
+  body {
+    color: var(--text-primary); background-color: var(--bg-0);
+    background-image:
+      radial-gradient(60vw 60vw at 8% -10%, color-mix(in srgb, var(--blue) 22%, transparent), transparent 60%),
+      radial-gradient(70vw 70vw at 50% 110%, color-mix(in srgb, #22c48f 14%, transparent), transparent 60%);
+    background-attachment: fixed; background-repeat: no-repeat;
+  }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 20px; backdrop-filter: blur(24px) saturate(140%);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  }
+</style>
+</head>
+<body class="min-h-screen flex items-center justify-center px-4" style="font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;">
+  <div class="card p-6 w-full max-w-sm">
+    <div class="flex items-center gap-2 mb-6">
+      <svg width="28" height="28" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="var(--blue)"/><path d="M30 65 Q30 50 45 50 Q60 50 60 38 Q60 30 50 30" stroke="#fff" stroke-width="9" fill="none" stroke-linecap="round"/><circle cx="50" cy="30" r="5" fill="#fff"/></svg>
+      <span class="font-semibold text-lg">Creer un compte</span>
+    </div>
+
+    {% if created %}
+    <p class="text-sm mb-4 p-2 rounded-lg" style="background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good);">
+      Compte cree. Vous pourrez vous connecter des que l'admin l'aura
+      approuve.
+    </p>
+    {% endif %}
+    {% if error %}
+    <p class="text-sm mb-4 p-2 rounded-lg" style="background: color-mix(in srgb, var(--critical) 15%, transparent); color: var(--critical);">
+      {{ error }}
+    </p>
+    {% endif %}
+
+    <form method="post" action="/signup" class="space-y-3">
+      <label class="block text-sm">
+        Utilisateur
+        <input name="username" required autofocus maxlength="40"
+          class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+      </label>
+      <label class="block text-sm">
+        Mot de passe (8 caracteres minimum)
+        <input name="password" type="password" required minlength="8"
+          class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+      </label>
+      <button type="submit"
+        class="w-full rounded-xl py-3 text-sm font-medium text-white mt-2" style="background: var(--blue);">
+        Creer le compte
+      </button>
+    </form>
+    <p class="text-xs mt-4" style="color: var(--muted);">
+      Deja un compte ? <a href="/login" style="color: var(--blue);">Se
+      connecter</a>.
+    </p>
+  </div>
+</body>
+</html>
