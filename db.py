@@ -14,6 +14,7 @@ collide.
 """
 
 import hashlib
+import json
 import os
 import secrets
 import sqlite3
@@ -346,6 +347,33 @@ CREATE TABLE IF NOT EXISTS coach_log (
 CREATE INDEX IF NOT EXISTS idx_coach_log_user_date ON coach_log(user_id, local_date);
 """
 
+# Per-user weekly plan: weekday ("0"=Monday ... "6"=Sunday) -> session
+# template. session_type null = day outside the leveling system (rest,
+# free activity); title/start/duration still drive the calendar event.
+# Default mirrors the original hardcoded week; each user edits their
+# own copy in Settings.
+DEFAULT_SCHEDULE = {
+    "0": {"session_type": "treadmill",
+          "title": "Tapis - marche rapide inclinee",
+          "start": "20:00", "duration_min": 30},
+    "1": {"session_type": "lower_body", "title": "Muscu bas du corps",
+          "start": "20:00", "duration_min": 30},
+    "2": {"session_type": "treadmill",
+          "title": "Tapis - marche rapide inclinee",
+          "start": "20:00", "duration_min": 30},
+    "3": {"session_type": "upper_body",
+          "title": "Muscu haut du corps + gainage",
+          "start": "20:00", "duration_min": 30},
+    "4": {"session_type": "treadmill",
+          "title": "Tapis - marche rapide inclinee",
+          "start": "20:00", "duration_min": 30},
+    "5": {"session_type": "calisthenics",
+          "title": "Calisthenie full body",
+          "start": "20:00", "duration_min": 30},
+    "6": {"session_type": None, "title": "Velo en famille",
+          "start": "09:00", "duration_min": 90},
+}
+
 DEFAULT_SETTINGS = {
     # Local calendar-day boundaries for sleep/steps/nutrition are
     # computed in this timezone (HC's per-record zone_offset isn't
@@ -365,6 +393,7 @@ DEFAULT_SETTINGS = {
     "rclone_remote": "",  # this user's Drive folder (multi-user: one export per person)
     "calendar_name": "",  # this user's target Google Calendar display name
     "ntfy_topic": "",  # this user's own ntfy topic (falls back to env NTFY_TOPIC)
+    "schedule": json.dumps(DEFAULT_SCHEDULE),
 }
 
 

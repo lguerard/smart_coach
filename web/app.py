@@ -15,7 +15,9 @@ path except /login and /static behind having a valid session.
 """
 
 import datetime as dt
+import json
 import os
+import re
 import secrets
 import sqlite3
 from pathlib import Path
@@ -204,10 +206,13 @@ def home(request: Request) -> HTMLResponse:
         if entry and entry["session_type"] else None
     )
     in_deload = bool(deload_until and deload_until >= date)
+    weekday = dt.date.fromisoformat(date).weekday()
+    off_title = training.schedule_for_user(conn, user_id)[weekday]["title"]
 
     return templates.TemplateResponse(
         request, "home.html", {
             "date": date, "entry": entry, "values": session_values,
+            "off_title": off_title,
             "description": description,
             "session_label_fr": training.SESSION_LABEL_FR,
             "status_label_fr": training.STATUS_LABEL_FR,
@@ -505,6 +510,9 @@ def settings_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "settings.html", {
             "settings": settings, "levels": levels,
+            "schedule": training.schedule_for_user(conn, user_id),
+            "weekday_names": ["Lundi", "Mardi", "Mercredi", "Jeudi",
+                              "Vendredi", "Samedi", "Dimanche"],
             "session_label_fr": training.SESSION_LABEL_FR,
             "ingest_status": last_ingest_status(conn, user_id),
             "saved": request.query_params.get("saved") is not None,
@@ -526,4 +534,29 @@ async def save_settings(request: Request):
         field = f"level_{session_type}"
         if field in form and str(form[field]).strip():
             training.set_level(conn, user_id, session_type, int(form[field]))
+    if "schedule_0_title" in form:
+        # Rebuild the weekly plan from the form; invalid fields keep
+        # the user's previous value rather than corrupting the JSON.
+        old = training.schedule_for_user(conn, user_id)
+        schedule = {}
+        for weekday in range(7):
+            entry = dict(old[weekday])
+            stype = str(form.get(f"schedule_{weekday}_type", "")).strip()
+            entry["session_type"] = (
+                stype if stype in training.SESSION_LABEL_FR else None
+            )
+            title = str(form.get(f"schedule_{weekday}_title", "")).strip()
+            if title:
+                entry["title"] = title
+            start = str(form.get(f"schedule_{weekday}_start", "")).strip()
+            if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", start):
+                entry["start"] = start
+            try:
+                duration = int(form.get(f"schedule_{weekday}_duration", ""))
+            except (TypeError, ValueError):
+                duration = 0
+            if 0 < duration <= 24 * 60:
+                entry["duration_min"] = duration
+            schedule[str(weekday)] = entry
+        db.set_setting(conn, user_id, "schedule", json.dumps(schedule))
     return RedirectResponse(url="/settings?saved=1", status_code=303)

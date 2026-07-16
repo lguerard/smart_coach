@@ -40,12 +40,14 @@ def run_for_user(conn, user: dict) -> None:
     weekly = progress.weekly_progress(conn, user_id, today)
 
     weekday = dt.date.fromisoformat(today).weekday()
-    session_type = training.session_type_for_weekday(weekday)
+    template = training.schedule_for_user(conn, user_id)[weekday]
+    session_type = template.get("session_type")
     today_session = {
-        "type": "bike",
+        "type": "off_system",
         "note": (
-            "Sortie velo en famille, 10-15 km minimum, hors systeme "
-            "de niveaux"
+            f"{template['title']}, hors systeme de niveaux"
+            if language == "fr"
+            else f"{template['title']}, outside the level system"
         ),
     }
     status = None
@@ -97,7 +99,7 @@ def run_for_user(conn, user: dict) -> None:
                 calendar_id = gcal.resolve_calendar_id(service, calendar_name)
                 gcal.upsert_session_event(
                     service, calendar_id, dt.date.fromisoformat(today),
-                    weekday, calendar_description,
+                    template, calendar_description,
                 )
             except Exception as error:
                 calendar_note = f"(Calendrier non mis a jour: {error})"

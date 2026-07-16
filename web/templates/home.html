@@ -116,7 +116,7 @@
     <div>
       <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">{{ date }}</p>
       <h1 class="text-lg font-semibold mt-0.5 flex items-center gap-2">
-        {{ session_label_fr.get(entry.session_type, "Sortie velo") }}
+        {{ session_label_fr.get(entry.session_type, off_title) }}
         {% if in_deload %}
         <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background: color-mix(in srgb, var(--violet) 20%, transparent); color: var(--violet);">
           🛡 deload

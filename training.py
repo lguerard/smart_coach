@@ -16,18 +16,13 @@ workout numbers. Two changes from the original:
 """
 
 import datetime as dt
+import json
 import sqlite3
 from typing import Optional
 
-LEVEL_MIN, LEVEL_MAX = 0, 10
+import db
 
-# Monday=0 ... Sunday=6. Sunday (family bike ride) is intentionally
-# excluded from the leveling system: the brief gives it no formula,
-# just "10-15 km minimum".
-SESSION_TYPE_BY_WEEKDAY: dict[int, Optional[str]] = {
-    0: "treadmill", 1: "lower_body", 2: "treadmill",
-    3: "upper_body", 4: "treadmill", 5: "calisthenics", 6: None,
-}
+LEVEL_MIN, LEVEL_MAX = 0, 10
 
 SESSION_LABEL_FR = {
     "treadmill": "Tapis",
@@ -59,7 +54,7 @@ def get_level(
     Parameters:
         conn (sqlite3.Connection): smart_sport db connection.
         user_id (int): Owning user.
-        session_type (str): One of ``SESSION_TYPE_BY_WEEKDAY``'s
+        session_type (str): One of ``SESSION_LABEL_FR``'s
             values.
 
     Returns:
@@ -337,16 +332,50 @@ def adjust_level(
     return level
 
 
-def session_type_for_weekday(weekday: int) -> Optional[str]:
-    """Map an ISO weekday (Monday=0) to a session type.
+def schedule_for_user(
+    conn: sqlite3.Connection, user_id: int,
+) -> dict[int, dict]:
+    """The user's weekly plan: weekday (Monday=0) -> session template.
+
+    Each template carries ``session_type`` (or ``None`` for a day
+    outside the leveling system), ``title``, ``start`` (HH:MM) and
+    ``duration_min`` -- the same shape as ``db.DEFAULT_SCHEDULE``.
 
     Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+
+    Returns:
+        dict[int, dict]: One template per weekday; a corrupt or
+        missing setting falls back to the default week.
+    """
+    raw = db.get_setting(conn, user_id, "schedule")
+    try:
+        schedule = json.loads(raw) if raw else db.DEFAULT_SCHEDULE
+    except json.JSONDecodeError:
+        schedule = db.DEFAULT_SCHEDULE
+    return {
+        weekday: {**db.DEFAULT_SCHEDULE[str(weekday)],
+                  **schedule.get(str(weekday), {})}
+        for weekday in range(7)
+    }
+
+
+def session_type_for_weekday(
+    conn: sqlite3.Connection, user_id: int, weekday: int,
+) -> Optional[str]:
+    """The user's session type for an ISO weekday (Monday=0).
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
         weekday (int): ``date.weekday()`` result.
 
     Returns:
-        str | None: Session type key, or ``None`` on Sunday.
+        str | None: Session type key, or ``None`` for a day outside
+        the leveling system.
     """
-    return SESSION_TYPE_BY_WEEKDAY[weekday]
+    return schedule_for_user(conn, user_id)[weekday].get("session_type")
 
 
 def treadmill_values(level: int) -> dict:
@@ -459,9 +488,6 @@ if __name__ == "__main__":
 
     import db as db_module
 
-    assert session_type_for_weekday(0) == "treadmill"
-    assert session_type_for_weekday(6) is None
-
     assert adjust_level(0, "red") == 0
     assert adjust_level(10, "green") == 10
     assert adjust_level(3, "yellow") == 3
@@ -502,6 +528,27 @@ if __name__ == "__main__":
     set_level(conn, uid, "treadmill", 4)
     assert get_level(conn, uid, "treadmill") == 4
     assert get_level(conn, other_uid, "treadmill") == 0  # isolated
+
+    # Schedule: default week, per-user override, corrupt fallback.
+    assert session_type_for_weekday(conn, uid, 0) == "treadmill"
+    assert session_type_for_weekday(conn, uid, 6) is None
+    db_module.set_setting(
+        conn, uid, "schedule",
+        json.dumps({"6": {"session_type": "treadmill",
+                          "title": "Tapis dominical",
+                          "start": "10:00", "duration_min": 45}}),
+    )
+    assert session_type_for_weekday(conn, uid, 6) == "treadmill"
+    assert schedule_for_user(conn, uid)[6]["start"] == "10:00"
+    # Unspecified weekdays keep the default template.
+    assert session_type_for_weekday(conn, uid, 1) == "lower_body"
+    # Other user's schedule is untouched.
+    assert session_type_for_weekday(conn, other_uid, 6) is None
+    db_module.set_setting(conn, uid, "schedule", "not json{")
+    assert session_type_for_weekday(conn, uid, 6) is None  # fallback
+    db_module.set_setting(
+        conn, uid, "schedule", db_module.DEFAULT_SETTINGS["schedule"],
+    )
 
     conn.executemany(
         "INSERT INTO resting_heart_rate VALUES (?, ?, ?, ?, ?)",

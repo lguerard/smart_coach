@@ -91,6 +91,39 @@
     {% endfor %}
   </div>
 
+  <div class="card p-4 space-y-3">
+    <h2 class="font-semibold text-sm">Planning hebdo</h2>
+    <p class="text-xs" style="color: var(--muted);">
+      Type "libre" = jour hors systeme de niveaux (repos, activite
+      libre) -- le titre et l'horaire pilotent quand meme l'evenement
+      calendrier.
+    </p>
+    {% for weekday in range(7) %}
+    {% set day = schedule[weekday] %}
+    <div class="space-y-1">
+      <p class="text-xs font-medium" style="color: var(--text-secondary);">{{ weekday_names[weekday] }}</p>
+      <div class="flex gap-2">
+        <select name="schedule_{{ weekday }}_type"
+          class="rounded-lg border px-2 py-1.5 text-xs bg-transparent w-28" style="border-color: var(--border);">
+          <option value="" {{ "selected" if not day.session_type }}>libre</option>
+          {% for session_type, label in session_label_fr.items() %}
+          <option value="{{ session_type }}" {{ "selected" if day.session_type == session_type }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <input name="schedule_{{ weekday }}_title" value="{{ day.title }}"
+          class="flex-1 min-w-0 rounded-lg border px-2 py-1.5 text-xs bg-transparent" style="border-color: var(--border);">
+      </div>
+      <div class="flex gap-2">
+        <input name="schedule_{{ weekday }}_start" type="time" value="{{ day.start }}"
+          class="rounded-lg border px-2 py-1.5 text-xs bg-transparent" style="border-color: var(--border);">
+        <input name="schedule_{{ weekday }}_duration" type="number" min="1" max="1440" value="{{ day.duration_min }}"
+          class="w-20 rounded-lg border px-2 py-1.5 text-xs bg-transparent text-right" style="border-color: var(--border);">
+        <span class="text-xs self-center" style="color: var(--muted);">min</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
   <button type="submit"
     class="w-full rounded-xl py-3 text-sm font-medium text-white" style="background: var(--blue);">
     Enregistrer

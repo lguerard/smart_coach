@@ -26,24 +26,6 @@ CLIENT_SECRET_FILE = (
 )
 CONFIG_DIR = Path.home() / ".config/smart_sport"
 
-# Used only when no matching event is found for the day (insert path).
-WEEKDAY_TEMPLATES = {
-    0: {"title": "Tapis - marche rapide inclinee",
-        "start": "20:00", "duration_min": 30},
-    1: {"title": "Muscu bas du corps",
-        "start": "20:00", "duration_min": 30},
-    2: {"title": "Tapis - marche rapide inclinee",
-        "start": "20:00", "duration_min": 30},
-    3: {"title": "Muscu haut du corps + gainage",
-        "start": "20:00", "duration_min": 30},
-    4: {"title": "Tapis - marche rapide inclinee",
-        "start": "20:00", "duration_min": 30},
-    5: {"title": "Calisthenie full body",
-        "start": "20:00", "duration_min": 30},
-    6: {"title": "Velo en famille",
-        "start": "09:00", "duration_min": 90},
-}
-
 WINDOW_BEFORE_MIN = 30
 WINDOW_AFTER_MIN = 90
 
@@ -165,7 +147,7 @@ def find_matching_event(
 
 
 def upsert_session_event(
-    service, calendar_id: str, day: dt.date, weekday: int,
+    service, calendar_id: str, day: dt.date, template: dict,
     description: str,
 ) -> str:
     """Update tonight's event description, or create it if missing.
@@ -174,13 +156,13 @@ def upsert_session_event(
         service: Authenticated Calendar API service.
         calendar_id (str): Target calendar id.
         day (date): Day of the session.
-        weekday (int): ``date.weekday()`` for ``day``.
+        template (dict): The user's weekday template
+            (``training.schedule_for_user``): title/start/duration.
         description (str): New event description (adapted workout).
 
     Returns:
         str: The event id that was updated or created.
     """
-    template = WEEKDAY_TEMPLATES[weekday]
     existing = find_matching_event(service, calendar_id, day, template)
     if existing:
         service.events().patch(
@@ -207,7 +189,7 @@ def upsert_session_event(
 
 if __name__ == "__main__":
     window = _search_window(
-        dt.date(2026, 7, 13), WEEKDAY_TEMPLATES[0],
+        dt.date(2026, 7, 13), {"start": "20:00", "duration_min": 30},
     )
     start = dt.datetime.fromisoformat(window[0])
     end = dt.datetime.fromisoformat(window[1])
