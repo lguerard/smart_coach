@@ -117,7 +117,7 @@ cp ~/.config/smart_sport/calendar_token.json data/gcal-config/
 docker compose run --rm -it smart_sport-worker python -c \
   "from ingest import garmin_api; garmin_api.get_client('<username>')"
 #     First run only: backfill history further than the default
-#     14-day window with GARMIN_LOOKBACK_DAYS=365 python run_ingest.py
+#     30-day window with GARMIN_LOOKBACK_DAYS=365 python run_ingest.py
 
 # 4. End-to-end test before trusting the cron
 docker compose run --rm -it smart_sport-worker python run_ingest.py

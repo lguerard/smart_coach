@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 from garminconnect import Garmin
 
 TOKEN_ROOT = Path(os.environ.get("GARMIN_TOKEN_DIR", "data/garmin-tokens"))
-LOOKBACK_DAYS = int(os.environ.get("GARMIN_LOOKBACK_DAYS", "14"))
+LOOKBACK_DAYS = int(os.environ.get("GARMIN_LOOKBACK_DAYS", "30"))
 
 # Garmin activityType.typeKey -> Health Connect exercise_type int
 # (see EXERCISE_TYPE_LABELS in parse_health_connect). Downstream
@@ -349,7 +349,7 @@ def fetch_and_upsert(
         user_id (int): Owning user.
         username (str): Account name (keys the Garmin token dir).
         days (int): Trailing fetch window (GARMIN_LOOKBACK_DAYS env,
-            default 14 -- raise it once for a first-run backfill).
+            default 30 -- raise it once for a first-run backfill).
 
     Returns:
         dict[str, int]: Row counts per table, also logged to
