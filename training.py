@@ -3,16 +3,20 @@
 
 Ported from garmin-coach/training.py: same per-session-type level
 (0-10), same green/yellow/red daily status, same level -> concrete
-workout numbers. Two changes from the original:
+workout numbers. Changes from the original:
 
 1. State lives in smart_sport's db (``levels`` table) instead of a
    flat JSON file.
-2. The vote set is 3 signals instead of garmin-coach's 4: HRV status
-   and training-readiness/body-battery have no Health Connect
-   equivalent (see metrics.py), so they're replaced by a resting-HR
-   baseline computed directly from smart_sport's own ingested history
-   (no more manual rolling-window bookkeeping -- the full history is
-   already in the db) plus a NEW activity-load vote.
+2. Resting-HR baseline is computed directly from smart_sport's own
+   ingested history (no more manual rolling-window bookkeeping -- the
+   full history is already in the db), plus a NEW activity-load vote
+   with no garmin-coach equivalent.
+3. HRV and training-readiness are back as real votes (they were
+   dropped in the Health-Connect-only era -- see metrics.py's
+   ``garmin_wellness`` -- now pulled straight from the Garmin API via
+   ingest/garmin_api.py). Body battery has no vote: it's a running
+   energy gauge, not a morning score, so it's dashboard/LLM context
+   only (metrics.daily_wellness).
 """
 
 import datetime as dt
@@ -44,6 +48,7 @@ RHR_SPIKE_RED_MIN = 5  # bpm above rolling personal baseline
 RHR_BASELINE_DAYS = 14
 ACTIVITY_LOAD_SPIKE_RATIO = 1.5  # recent-7d vs previous-7d minutes
 ACTIVITY_LOAD_HIGH_RPE = 7.0
+TRAINING_READINESS_GOOD, TRAINING_READINESS_POOR = 75, 50  # 0-100 scale
 
 
 def get_level(
@@ -278,6 +283,24 @@ def _resting_hr_vote(
     return "red" if spike >= RHR_SPIKE_RED_MIN else "green"
 
 
+_HRV_STATUS_VOTE = {"BALANCED": "green", "UNBALANCED": "yellow", "LOW": "red"}
+
+
+def _hrv_vote(wellness: dict) -> Optional[str]:
+    return _HRV_STATUS_VOTE.get(wellness.get("hrv_status"))
+
+
+def _training_readiness_vote(wellness: dict) -> Optional[str]:
+    score = wellness.get("training_readiness_score")
+    if score is None:
+        return None
+    if score >= TRAINING_READINESS_GOOD:
+        return "green"
+    if score < TRAINING_READINESS_POOR:
+        return "red"
+    return "yellow"
+
+
 def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
     """Combine wellness signals into a green/yellow/red daily status.
 
@@ -298,6 +321,8 @@ def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
             _sleep_vote(wellness),
             _activity_load_vote(wellness),
             _resting_hr_vote(wellness, baseline_rhr),
+            _hrv_vote(wellness),
+            _training_readiness_vote(wellness),
         )
         if vote is not None
     ]
@@ -561,6 +586,20 @@ if __name__ == "__main__":
         {"recent_minutes": 200, "previous_minutes": 100,
          "recent_avg_rpe": 4.0}, None,
     ) == "yellow"
+
+    # HRV / training readiness: Garmin-API-only votes, no HC equivalent.
+    assert compute_status({"hrv_status": "BALANCED"}, None) == "green"
+    assert compute_status({"hrv_status": "UNBALANCED"}, None) == "yellow"
+    assert compute_status({"hrv_status": "LOW"}, None) == "red"
+    # Unrecognized status casts no vote -> falls back to yellow (no data).
+    assert compute_status({"hrv_status": "UNKNOWN_ENUM"}, None) == "yellow"
+    assert compute_status({"training_readiness_score": 80}, None) == "green"
+    assert compute_status({"training_readiness_score": 60}, None) == "yellow"
+    assert compute_status({"training_readiness_score": 30}, None) == "red"
+    # A red HRV outvotes an otherwise-green sleep score.
+    assert compute_status(
+        {"sleep_score": 90, "hrv_status": "LOW"}, None,
+    ) == "red"
 
     assert treadmill_values(0)["speed_kmh"] == 5.5
     assert treadmill_values(20)["speed_kmh"] == 7.0

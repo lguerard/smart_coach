@@ -30,19 +30,25 @@ overview, see the [README](../README.md).
 **Input**, two sources:
 
 - **Garmin API** (`ingest/garmin_api.py`): exercise sessions
-  (correct activity types, per-session HR series) and sleep
-  (sessions + stages). Garmin's Health Connect writer mislabels
-  activity types and never syncs workout HR series — the API has
-  both, so these two domains bypass Health Connect entirely.
+  (correct activity types, per-session HR series), sleep (sessions +
+  stages), and daily HRV / training readiness / body battery.
+  Garmin's Health Connect writer mislabels activity types and never
+  syncs workout HR series or any of the recovery signals — the API
+  has all of it, so these domains bypass Health Connect entirely.
 - **`health_connect_export.db`** — Android's raw internal Health
   Connect SQLite backup — for every other record type (steps, heart
   rate, weight, body fat, nutrition, hydration, ...), from whichever
   apps write to it (Garmin Connect, MyFitnessPal, ...).
 
-Note: HRV, VO2max, training readiness and body battery are dropped,
-not approximated, in favor of a resting-HR baseline computed from
-your own ingested history, a sleep-score approximation from sleep
-stages, and an activity-load signal from recent exercise volume.
+HRV status and training readiness feed real votes in the daily
+green/yellow/red status (`training.compute_status`), alongside a
+resting-HR baseline computed from your own ingested history, a
+sleep-score approximation from sleep stages, and an activity-load
+signal from recent exercise volume. Body battery has no vote (it's a
+running energy gauge, not a morning score) but shows on the
+dashboard and reaches the coaching message. VO2max is not ingested
+yet (`get_max_metrics` has no stable typed schema in the Garmin
+client used here).
 
 **Output**: every morning, one concrete plan — tonight's session
 (level-adapted numbers) plus the day's calorie/macro/hydration

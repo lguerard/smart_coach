@@ -2,11 +2,14 @@
 """Derive a daily wellness dict from smart_sport's ingested tables.
 
 Replaces garmin-coach's coach.fetch_wellness()/fetch_nutrition(),
-which called the Garmin Connect API directly. Every value here comes
-from smart_sport's own Health-Connect-sourced database instead, and
-two fields (sleep_score, activity_load) are NEW approximations that
-have no Garmin equivalent to copy -- see training.py for how they
-feed the daily readiness vote.
+which called the Garmin Connect API directly for every value. Most
+signals here now come from smart_sport's own Health-Connect-sourced
+database instead; HRV/training-readiness/body-battery (see
+``garmin_wellness``) are the exception -- they're ingested from the
+Garmin API too (ingest/garmin_api.py), just staged through the db
+instead of a live call. Two fields (sleep_score, activity_load) are
+NEW approximations with no Garmin equivalent at all -- see
+training.py for how everything feeds the daily readiness vote.
 
 Multi-user: every function takes ``user_id`` and scopes its queries to
 that person's rows only -- this is the actual data-isolation boundary
@@ -337,6 +340,53 @@ def latest_body_comp(
     return result
 
 
+def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
+    """Garmin-API-only signals for a date: HRV, readiness, body battery.
+
+    No Health Connect equivalent for any of these (see
+    ingest/garmin_api.py) -- absent entirely until the Garmin
+    ingestion step has run for this date.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date.
+
+    Returns:
+        dict: ``hrv_last_night_avg``, ``hrv_status``,
+        ``training_readiness_score``, ``training_readiness_level``,
+        ``body_battery_charged``, ``body_battery_drained``,
+        ``body_battery_highest``, ``body_battery_lowest`` -- keys
+        with no data that day are simply absent.
+    """
+    result: dict = {}
+    hrv = conn.execute(
+        "SELECT last_night_avg, status FROM garmin_hrv WHERE "
+        "user_id = ? AND local_date = ?", (user_id, date),
+    ).fetchone()
+    if hrv:
+        result["hrv_last_night_avg"] = hrv["last_night_avg"]
+        result["hrv_status"] = hrv["status"]
+    readiness = conn.execute(
+        "SELECT score, level FROM garmin_training_readiness WHERE "
+        "user_id = ? AND local_date = ?", (user_id, date),
+    ).fetchone()
+    if readiness:
+        result["training_readiness_score"] = readiness["score"]
+        result["training_readiness_level"] = readiness["level"]
+    battery = conn.execute(
+        "SELECT charged, drained, highest, lowest FROM "
+        "garmin_body_battery WHERE user_id = ? AND local_date = ?",
+        (user_id, date),
+    ).fetchone()
+    if battery:
+        result["body_battery_charged"] = battery["charged"]
+        result["body_battery_drained"] = battery["drained"]
+        result["body_battery_highest"] = battery["highest"]
+        result["body_battery_lowest"] = battery["lowest"]
+    return result
+
+
 def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Full daily wellness dict for a date, in garmin-coach's shape.
 
@@ -367,6 +417,7 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         ) or None,
         **activity_load(conn, user_id, date),
         **latest_body_comp(conn, user_id, date),
+        **garmin_wellness(conn, user_id, date),
     }
     hydration = sum_for_date(conn, user_id, "hydration", "volume_ml", date)
     distance = sum_for_date(conn, user_id, "distance", "meters", date)
@@ -581,6 +632,18 @@ if __name__ == "__main__":
         "INSERT INTO weight VALUES ('w1', ?, '2026-07-13T07:00:00+00:00', "
         "'2026-07-13', 80.0)", (uid,),
     )
+    conn.execute(
+        "INSERT INTO garmin_hrv VALUES (?, '2026-07-13', 55.0, 58.0, "
+        "'BALANCED')", (uid,),
+    )
+    conn.execute(
+        "INSERT INTO garmin_training_readiness VALUES (?, '2026-07-13', "
+        "62, 'MODERATE', 'note')", (uid,),
+    )
+    conn.execute(
+        "INSERT INTO garmin_body_battery VALUES (?, '2026-07-13', 80, "
+        "45, 90, 30)", (uid,),
+    )
     conn.commit()
 
     # 2026-07-13 06:00 UTC = 08:00 Europe/Paris (CEST), so this
@@ -606,10 +669,19 @@ if __name__ == "__main__":
     assert "distance_km_today" not in wellness  # none logged -> omitted
     assert nutrition_for_date(conn, uid, "2026-07-13") == {}
 
+    # Garmin-API-only signals (no HC equivalent): merged into wellness.
+    assert wellness["hrv_status"] == "BALANCED"
+    assert wellness["hrv_last_night_avg"] == 55.0
+    assert wellness["training_readiness_score"] == 62
+    assert wellness["body_battery_charged"] == 80
+    assert wellness["body_battery_lowest"] == 30
+    assert garmin_wellness(conn, uid, "2026-07-01") == {}  # no data that day
+
     # Data isolation: the other user sees none of uid's data.
     other_wellness = daily_wellness(conn, other_uid, "2026-07-13")
     assert other_wellness.get("steps_today") == 99999
     assert "sleep_score" not in other_wellness
+    assert "hrv_status" not in other_wellness
 
     # --- history_snapshot ---
     # HR samples + overlapping active-calories for e1 (07-12 18:00-30).

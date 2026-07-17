@@ -1,15 +1,23 @@
-"""Garmin Connect API ingestion: exercise sessions and sleep.
+"""Garmin Connect API ingestion: sessions, sleep, HRV, readiness.
 
-These two domains come straight from Garmin's API (same unofficial
-``garminconnect`` client garmin-coach used) instead of the Health
-Connect export -- Garmin's HC writer mislabels activity types and
-never syncs per-session HR series, while its own API has both. All
-other record types (steps, weight, nutrition, ...) still flow in
+Exercise sessions and sleep come straight from Garmin's API (same
+unofficial ``garminconnect`` client garmin-coach used) instead of the
+Health Connect export -- Garmin's HC writer mislabels activity types
+and never syncs per-session HR series, while its own API has both.
+All other record types (steps, weight, nutrition, ...) still flow in
 from the Health Connect export via parse_health_connect.
 
-Rows land in the same tables the HC parser used to fill
-(``exercise_sessions``, ``sleep_sessions``, ``sleep_stages``, plus
-``exercise_hr_samples``), keyed by ``garmin-*`` uuids, so every
+HRV, training readiness and body battery have NO Health Connect
+equivalent at all (Garmin never syncs them there) -- these were
+dropped entirely in the HC-only era (see training.py's original
+docstring) and are now pulled straight from the API into their own
+tables (``garmin_hrv``, ``garmin_training_readiness``,
+``garmin_body_battery``), feeding real votes in
+training.compute_status instead of the activity-load proxy alone.
+
+Exercise/sleep rows land in the same tables the HC parser used to
+fill (``exercise_sessions``, ``sleep_sessions``, ``sleep_stages``,
+plus ``exercise_hr_samples``), keyed by ``garmin-*`` uuids, so every
 consumer (metrics, training, dashboard) is untouched. A Garmin row
 overlapping an existing HC-era row is skipped rather than
 duplicated, so switching sources mid-history is safe.
@@ -338,18 +346,149 @@ def upsert_sleep(
     return session_count, stage_count
 
 
+def upsert_hrv(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch today's HRV summary into garmin_hrv.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a summary was upserted, 0 if Garmin has none yet
+        (common right after waking -- HRV needs a full night's sleep
+        to compute).
+    """
+    data = client.get_hrv_data(date) or {}
+    summary = data.get("hrvSummary") or {}
+    if summary.get("lastNightAvg") is None:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_hrv (user_id, local_date, last_night_avg, "
+        "weekly_avg, status) VALUES (?, ?, ?, ?, ?) ON CONFLICT"
+        "(user_id, local_date) DO UPDATE SET "
+        "last_night_avg = excluded.last_night_avg, "
+        "weekly_avg = excluded.weekly_avg, status = excluded.status",
+        (
+            user_id, date, summary.get("lastNightAvg"),
+            summary.get("weeklyAvg"), summary.get("status"),
+        ),
+    )
+    return 1
+
+
+def upsert_training_readiness(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch today's training readiness into garmin_training_readiness.
+
+    Garmin's own aggregate of HRV, sleep, ACWR and stress history --
+    the most-recent snapshot wins if the endpoint returns several
+    (e.g. one per wake-up event).
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a snapshot was upserted, 0 if none yet.
+    """
+    snapshots = client.get_training_readiness(date) or []
+    if not snapshots:
+        return 0
+    latest = max(snapshots, key=lambda s: s.get("timestamp") or "")
+    if latest.get("score") is None:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_training_readiness (user_id, local_date, "
+        "score, level, feedback_long) VALUES (?, ?, ?, ?, ?) ON "
+        "CONFLICT(user_id, local_date) DO UPDATE SET "
+        "score = excluded.score, level = excluded.level, "
+        "feedback_long = excluded.feedback_long",
+        (
+            user_id, date, latest.get("score"), latest.get("level"),
+            latest.get("feedbackLong"),
+        ),
+    )
+    return 1
+
+
+def upsert_body_battery(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch today's body battery summary into garmin_body_battery.
+
+    A running energy-level gauge (charged overnight, drained during
+    the day), not a morning score -- dashboard/LLM context only, not
+    a training.compute_status vote.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a summary was upserted, 0 if none yet.
+    """
+    entries = client.get_body_battery(date) or []
+    if not entries:
+        return 0
+    entry = entries[0]
+    conn.execute(
+        "INSERT INTO garmin_body_battery (user_id, local_date, "
+        "charged, drained, highest, lowest) VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(user_id, local_date) DO UPDATE SET "
+        "charged = excluded.charged, drained = excluded.drained, "
+        "highest = excluded.highest, lowest = excluded.lowest",
+        (
+            user_id, date, entry.get("charged"), entry.get("drained"),
+            _body_battery_extreme(entry, max),
+            _body_battery_extreme(entry, min),
+        ),
+    )
+    return 1
+
+
+def _body_battery_extreme(entry: dict, pick) -> int | None:
+    """Highest/lowest level from a body-battery entry's samples.
+
+    Parameters:
+        entry (dict): One ``get_body_battery`` list entry.
+        pick (Callable): ``max`` or ``min``.
+
+    Returns:
+        int | None: The picked level, or ``None`` if no samples.
+    """
+    levels = [
+        point[1] for point in entry.get("bodyBatteryValuesArray") or []
+        if len(point) > 1 and point[1] is not None
+    ]
+    return pick(levels) if levels else None
+
+
 def fetch_and_upsert(
     conn: sqlite3.Connection, user_id: int, username: str,
     days: int = LOOKBACK_DAYS,
 ) -> dict[str, int]:
-    """Pull one user's Garmin activities + sleep into the db.
+    """Pull one user's Garmin activities, sleep and wellness into the db.
+
+    HRV/training-readiness/body-battery are fetched for today's local
+    date only (not backfilled over ``days``) -- they're morning-vote
+    inputs for today's coaching run, not historical training data.
 
     Parameters:
         conn (sqlite3.Connection): smart_sport db connection.
         user_id (int): Owning user.
         username (str): Account name (keys the Garmin token dir).
-        days (int): Trailing fetch window (GARMIN_LOOKBACK_DAYS env,
-            default 30 -- raise it once for a first-run backfill).
+        days (int): Trailing fetch window for activities/sleep
+            (GARMIN_LOOKBACK_DAYS env, default 30 -- raise it once
+            for a first-run backfill).
 
     Returns:
         dict[str, int]: Row counts per table, also logged to
@@ -367,11 +506,17 @@ def fetch_and_upsert(
     sleep_sessions, sleep_stages = upsert_sleep(
         conn, user_id, client, tz, days,
     )
+    today = dt.datetime.now(tz).date().isoformat()
     counts = {
         "exercise_sessions": sessions,
         "exercise_hr_samples": hr_samples,
         "sleep_sessions": sleep_sessions,
         "sleep_stages": sleep_stages,
+        "hrv": upsert_hrv(conn, user_id, client, today),
+        "training_readiness": upsert_training_readiness(
+            conn, user_id, client, today,
+        ),
+        "body_battery": upsert_body_battery(conn, user_id, client, today),
     }
     ran_at = dt.datetime.now(dt.timezone.utc).isoformat()
     conn.executemany(
@@ -449,6 +594,35 @@ if __name__ == "__main__":
                      "activityLevel": 3.0},
                 ],
             }
+
+        def get_hrv_data(self, date: str) -> dict:
+            if date != "2026-07-16":
+                return {}
+            return {
+                "hrvSummary": {
+                    "lastNightAvg": 55.0, "weeklyAvg": 58.0,
+                    "status": "BALANCED",
+                },
+            }
+
+        def get_training_readiness(self, date: str) -> list:
+            if date != "2026-07-16":
+                return []
+            return [{
+                "timestamp": "2026-07-16T06:00:00.0", "score": 62,
+                "level": "MODERATE", "feedbackLong": "note",
+            }]
+
+        def get_body_battery(self, date: str) -> list:
+            if date != "2026-07-16":
+                return []
+            return [{
+                "date": "2026-07-16", "charged": 80, "drained": 45,
+                "bodyBatteryValuesArray": [
+                    [1784260800000, 90], [1784304000000, 30],
+                    [1784332800000, None],
+                ],
+            }]
 
     tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
     conn = db.connect(tmp)
@@ -557,5 +731,45 @@ if __name__ == "__main__":
     ).fetchall()
     scored = metrics.score_sleep(stages_rows)
     assert scored["sleep_hours"] == 7.5, scored
+
+    # HRV / training readiness / body battery: today's row upserted,
+    # a day with no Garmin data yet yields 0 and no row.
+    other_uid = db.create_user(conn, "other", "password1234")
+    assert upsert_hrv(conn, uid, fake, "2026-07-01") == 0
+    assert upsert_hrv(conn, uid, fake, "2026-07-16") == 1
+    hrv_row = conn.execute(
+        "SELECT * FROM garmin_hrv WHERE user_id = ? AND "
+        "local_date = '2026-07-16'", (uid,),
+    ).fetchone()
+    assert hrv_row["last_night_avg"] == 55.0, dict(hrv_row)
+    assert hrv_row["status"] == "BALANCED"
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM garmin_hrv WHERE user_id = ?",
+        (other_uid,),
+    ).fetchone()["n"] == 0  # isolated
+
+    assert upsert_training_readiness(conn, uid, fake, "2026-07-01") == 0
+    assert upsert_training_readiness(conn, uid, fake, "2026-07-16") == 1
+    tr_row = conn.execute(
+        "SELECT * FROM garmin_training_readiness WHERE user_id = ? AND "
+        "local_date = '2026-07-16'", (uid,),
+    ).fetchone()
+    assert tr_row["score"] == 62, dict(tr_row)
+    assert tr_row["level"] == "MODERATE", dict(tr_row)
+
+    assert upsert_body_battery(conn, uid, fake, "2026-07-01") == 0
+    assert upsert_body_battery(conn, uid, fake, "2026-07-16") == 1
+    bb_row = conn.execute(
+        "SELECT * FROM garmin_body_battery WHERE user_id = ? AND "
+        "local_date = '2026-07-16'", (uid,),
+    ).fetchone()
+    assert bb_row["charged"] == 80 and bb_row["drained"] == 45, dict(bb_row)
+    assert bb_row["highest"] == 90 and bb_row["lowest"] == 30, dict(bb_row)
+
+    # Re-run: idempotent upsert, no duplicate row.
+    assert upsert_hrv(conn, uid, fake, "2026-07-16") == 1
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM garmin_hrv WHERE user_id = ?", (uid,),
+    ).fetchone()["n"] == 1
 
     print("garmin_api.py: all checks passed (no live Garmin call made)")

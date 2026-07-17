@@ -155,6 +155,41 @@ CREATE TABLE IF NOT EXISTS exercise_route_points (
 );
 CREATE INDEX IF NOT EXISTS idx_route_parent ON exercise_route_points(exercise_uuid);
 
+-- Garmin-API-only signals (no Health Connect equivalent): one row
+-- per (user, day), fetched alongside sleep/activities in
+-- ingest/garmin_api.py. All three feed training.compute_status
+-- votes and the LLM payload.
+CREATE TABLE IF NOT EXISTS garmin_hrv (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    last_night_avg REAL,
+    weekly_avg REAL,
+    status TEXT,
+    PRIMARY KEY (user_id, local_date)
+);
+
+CREATE TABLE IF NOT EXISTS garmin_training_readiness (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    score INTEGER,
+    level TEXT,
+    feedback_long TEXT,
+    PRIMARY KEY (user_id, local_date)
+);
+
+-- Body battery is a running energy-level gauge, not a morning score
+-- like the two above -- context for the LLM/dashboard, not a
+-- training.compute_status vote.
+CREATE TABLE IF NOT EXISTS garmin_body_battery (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    charged INTEGER,
+    drained INTEGER,
+    highest INTEGER,
+    lowest INTEGER,
+    PRIMARY KEY (user_id, local_date)
+);
+
 CREATE TABLE IF NOT EXISTS weight (
     uuid TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),

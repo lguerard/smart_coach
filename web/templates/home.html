@@ -58,6 +58,29 @@
   </div>
 </div>
 
+{% set readiness = wellness.get("training_readiness_score") %}
+{% set hrv = wellness.get("hrv_last_night_avg") %}
+{% set battery_charged = wellness.get("body_battery_charged") %}
+{% set battery_drained = wellness.get("body_battery_drained") %}
+{% if readiness is not none or hrv is not none or battery_charged is not none %}
+<div class="grid grid-cols-3 gap-2">
+  <div class="stat-tile">
+    <div class="stat-value">{{ readiness if readiness is not none else "-" }}</div>
+    <div class="stat-label">Recuperation</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-value">{{ (hrv | round | int) if hrv is not none else "-" }}</div>
+    <div class="stat-label">VFC (ms)</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-value">
+      {% if battery_charged is not none %}+{{ battery_charged }}/-{{ battery_drained or 0 }}{% else %}-{% endif %}
+    </div>
+    <div class="stat-label">Batterie corps</div>
+  </div>
+</div>
+{% endif %}
+
 {% if target_rows %}
 <div class="card p-4">
   <h2 class="text-sm font-semibold mb-2">Objectifs du jour</h2>
