@@ -10,9 +10,10 @@ just you, your numbers, and a plan.
 
 ## What it does
 
-- **Reads your real data.** Steps, heart rate, sleep, workouts,
-  weight, body fat and nutrition flow in automatically from Android's
-  Health Connect — whatever your watch and apps already record.
+- **Reads your real data.** Workouts and sleep come straight from
+  your Garmin account; steps, heart rate, weight, body fat and
+  nutrition flow in from Android's Health Connect — whatever your
+  watch and apps already record.
 - **Judges your readiness.** Each day gets a green, yellow or red
   status from your sleep, resting heart rate and recent training
   load. Three red days in a row force an easier week — the coach
@@ -32,7 +33,8 @@ just you, your numbers, and a plan.
 
 1. Overnight, your phone backs up its Health Connect data to Google
    Drive — automatically, like it already does.
-2. Early morning, Smart Sport pulls that backup and updates its
+2. Early morning, Smart Sport asks Garmin for your latest workouts
+   and sleep, pulls the Drive backup for the rest, and updates its
    local database.
 3. It scores your recovery, picks tonight's training level, and
    computes the day's calorie and macro budget.

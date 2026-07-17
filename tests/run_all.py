@@ -9,6 +9,7 @@ MODULES = [
     "db.py", "training.py", "training_load.py", "metrics.py", "progress.py",
     "achievements.py", "llm.py", "notify.py", "gcal.py",
     "ingest/sync_drive.py", "ingest/parse_health_connect.py",
+    "ingest/garmin_api.py",
 ]
 
 if __name__ == "__main__":

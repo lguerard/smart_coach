@@ -61,5 +61,6 @@ services:
     volumes:
       - ./data/db:/app/data/db
       - ./data/inbox:/app/data/inbox
+      - ./data/garmin-tokens:/app/data/garmin-tokens
       - ./data/rclone:/root/.config/rclone
       - ./data/gcal-config:/root/.config/smart_sport

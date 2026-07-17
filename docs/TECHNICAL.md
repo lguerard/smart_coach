@@ -6,9 +6,14 @@ overview, see the [README](../README.md).
 ## Requirements
 
 - Docker + Docker Compose (recommended), or Python 3.11+ directly
+- A Garmin account (watch syncing to Garmin Connect) — exercise
+  sessions and sleep are fetched from the Garmin API directly
+  (unofficial `garminconnect` client, interactive login once, tokens
+  cached ~1 year per user)
 - Health Connect on Android, exporting automatically to Google Drive
   (Settings > Health Connect > backup/export) — this project reads
-  the raw exported `health_connect_export.db`
+  the raw exported `health_connect_export.db` for everything else
+  (steps, weight, nutrition, ...)
 - [rclone](https://rclone.org) configured with read access to that
   Drive folder
 - Claude Code installed and logged in (`claude -p`, subscription
@@ -22,15 +27,22 @@ overview, see the [README](../README.md).
 
 ## Input and expected output
 
-**Input**: `health_connect_export.db`, Android's raw internal Health
-Connect SQLite backup (not a curated export — every record type
-Health Connect knows about, including whichever apps write to it:
-Garmin Connect, Samsung Health, MyFitnessPal, Sleep as Android...).
-Note: Garmin does **not** sync HRV, VO2max, training readiness, or
-body battery into Health Connect — those signals are dropped, not
-approximated, in favor of a resting-HR baseline computed from your
-own ingested history, a sleep-score approximation from sleep stages,
-and a new activity-load signal from recent exercise volume.
+**Input**, two sources:
+
+- **Garmin API** (`ingest/garmin_api.py`): exercise sessions
+  (correct activity types, per-session HR series) and sleep
+  (sessions + stages). Garmin's Health Connect writer mislabels
+  activity types and never syncs workout HR series — the API has
+  both, so these two domains bypass Health Connect entirely.
+- **`health_connect_export.db`** — Android's raw internal Health
+  Connect SQLite backup — for every other record type (steps, heart
+  rate, weight, body fat, nutrition, hydration, ...), from whichever
+  apps write to it (Garmin Connect, MyFitnessPal, ...).
+
+Note: HRV, VO2max, training readiness and body battery are dropped,
+not approximated, in favor of a resting-HR baseline computed from
+your own ingested history, a sleep-score approximation from sleep
+stages, and an activity-load signal from recent exercise volume.
 
 **Output**: every morning, one concrete plan — tonight's session
 (level-adapted numbers) plus the day's calorie/macro/hydration
@@ -48,9 +60,12 @@ Settings (goals, weekly plan editor, ingestion health check).
 
 ```text
 worker container cron
-  05:30  run_ingest.py    rclone-sync the Drive export, extract,
-                           upsert into data/db/smart_sport.db
-                           (idempotent -- full snapshot each time)
+  05:30  run_ingest.py    Garmin API fetch (activities + sleep,
+                           trailing GARMIN_LOOKBACK_DAYS window),
+                           then rclone-sync the Drive export,
+                           extract, upsert the rest into
+                           data/db/smart_sport.db (idempotent --
+                           full snapshot each time)
   06:00  run_coach.py     metrics.py + progress.py compute today's
                            wellness + weekly trends; training.py
                            applies the deload guardrail (3 reds in a
@@ -96,6 +111,14 @@ docker compose run --rm -it smart_sport-worker claude setup-token
 .venv/bin/python -c "import gcal; gcal.get_calendar_service()"
 cp ~/.config/smart_sport/calendar_token.json data/gcal-config/
 
+# 3b. Garmin login (email/password + possible MFA prompt; tokens land
+#     in data/garmin-tokens/<username>, valid ~1 year). Use your
+#     smart_sport account name:
+docker compose run --rm -it smart_sport-worker python -c \
+  "from ingest import garmin_api; garmin_api.get_client('<username>')"
+#     First run only: backfill history further than the default
+#     14-day window with GARMIN_LOOKBACK_DAYS=365 python run_ingest.py
+
 # 4. End-to-end test before trusting the cron
 docker compose run --rm -it smart_sport-worker python run_ingest.py
 docker compose run --rm -it smart_sport-worker python run_coach.py
@@ -134,6 +157,10 @@ docker compose run --rm -it smart_sport-worker rclone config   # new remote
 # 3. Calendar consent for that account (host, not Docker):
 .venv/bin/python -c "import gcal; gcal.get_calendar_service('alice')"
 cp ~/.config/smart_sport/calendar_token_alice.json data/gcal-config/
+
+# 4. Garmin login for that account:
+docker compose run --rm -it smart_sport-worker python -c \
+  "from ingest import garmin_api; garmin_api.get_client('alice')"
 ```
 
 Then the user logs in and fills in Settings: goals and macro ratios,

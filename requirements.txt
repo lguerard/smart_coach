@@ -1,4 +1,5 @@
 fastapi
+garminconnect
 uvicorn[standard]
 jinja2
 python-multipart

@@ -18,7 +18,6 @@ lookup table, so smart_sport ships its own copy for display purposes.
 import datetime as dt
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 SLEEP_STAGE_LABELS = {
     1: "awake",
@@ -341,95 +340,6 @@ def _parse_elevation_gained(
     )
 
 
-def _parse_sleep_sessions(
-    hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
-) -> tuple[int, int]:
-    sessions = hc.execute(
-        "SELECT row_id, uuid, start_time, start_zone_offset, end_time, "
-        "title, notes FROM sleep_session_record_table"
-    ).fetchall()
-    session_data = [
-        (
-            uuid.hex(), _iso_utc(start_ms), _iso_utc(end_ms),
-            _local_date(start_ms, offset), title, notes,
-        )
-        for _, uuid, start_ms, offset, end_ms, title, notes in sessions
-    ]
-    session_count = _upsert(
-        conn, user_id, "sleep_sessions",
-        ["uuid", "start_utc", "end_utc", "local_date", "title",
-         "notes"], session_data,
-    )
-
-    row_id_to_uuid = {row[0]: row[1].hex() for row in sessions}
-    stages = hc.execute(
-        "SELECT parent_key, stage_start_time, stage_end_time, "
-        "stage_type FROM sleep_stages_table"
-    ).fetchall()
-    stage_data = [
-        (
-            row_id_to_uuid[parent_key], user_id, _iso_utc(start_ms),
-            _iso_utc(end_ms), stage_type,
-        )
-        for parent_key, start_ms, end_ms, stage_type in stages
-        if parent_key in row_id_to_uuid
-    ]
-    if stage_data:
-        conn.executemany(
-            "INSERT OR IGNORE INTO sleep_stages "
-            "(parent_uuid, user_id, stage_start_utc, stage_end_utc, "
-            "stage_type) VALUES (?, ?, ?, ?, ?)",
-            stage_data,
-        )
-    return session_count, len(stage_data)
-
-
-def _clean_rpe(rpe: Optional[float]) -> Optional[float]:
-    """Discard garbage RPE values written by some HC source apps.
-
-    Observed in a real export: Garmin Connect's HC writer stores
-    ``1.4013e-45`` (float32's smallest positive subnormal -- a classic
-    uninitialized/never-set sentinel, not a real perceived-exertion
-    reading) instead of leaving the field null. The RPE scale is
-    defined in 0.5 steps from 0-10, so any nonzero value below 0.5 is
-    not a legitimate reading.
-
-    Parameters:
-        rpe (float | None): Raw session_rate_of_perceived_exertion.
-
-    Returns:
-        float | None: ``rpe``, or ``None`` if it's the known garbage
-        sentinel (or anything else implausibly close to zero).
-    """
-    if rpe is not None and 0 < rpe < 0.5:
-        return None
-    return rpe
-
-
-def _parse_exercise_sessions(
-    hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
-) -> int:
-    rows = hc.execute(
-        "SELECT uuid, start_time, start_zone_offset, end_time, "
-        "exercise_type, title, notes, session_rate_of_perceived_exertion "
-        "FROM exercise_session_record_table"
-    ).fetchall()
-    data = [
-        (
-            uuid.hex(), _iso_utc(start_ms), _iso_utc(end_ms),
-            _local_date(start_ms, offset), exercise_type, title, notes,
-            _clean_rpe(rpe),
-        )
-        for uuid, start_ms, offset, end_ms, exercise_type, title, notes,
-        rpe in rows
-    ]
-    return _upsert(
-        conn, user_id, "exercise_sessions",
-        ["uuid", "start_utc", "end_utc", "local_date", "exercise_type",
-         "title", "notes", "rpe"], data,
-    )
-
-
 def _parse_nutrition(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
@@ -511,14 +421,14 @@ def parse_and_upsert(
     """
     hc = sqlite3.connect(f"file:{hc_export_path}?mode=ro", uri=True)
     try:
-        sleep_sessions, sleep_stages = _parse_sleep_sessions(hc, conn, user_id)
+        # Exercise sessions and sleep deliberately NOT parsed here:
+        # those two domains come straight from the Garmin API
+        # (ingest/garmin_api.py) -- Garmin's HC writer mislabels
+        # activity types and carries no per-session HR series.
         counts = {
             "steps": _parse_steps(hc, conn, user_id),
             "heart_rate_daily": _parse_heart_rate_daily(hc, conn, user_id),
             "resting_heart_rate": _parse_resting_heart_rate(hc, conn, user_id),
-            "sleep_sessions": sleep_sessions,
-            "sleep_stages": sleep_stages,
-            "exercise_sessions": _parse_exercise_sessions(hc, conn, user_id),
             "weight": _parse_weight(hc, conn, user_id),
             "body_fat": _parse_body_fat(hc, conn, user_id),
             "lean_body_mass": _parse_lean_body_mass(hc, conn, user_id),
@@ -646,6 +556,9 @@ if __name__ == "__main__":
             "INSERT INTO resting_heart_rate_record_table VALUES "
             "(?, ?, 3600, ?)", (u1, t0, 55),
         )
+        # Sleep/exercise rows present in the export (as in real life)
+        # but deliberately ignored -- those domains are Garmin API
+        # territory now (ingest/garmin_api.py).
         hc.execute(
             "INSERT INTO sleep_session_record_table VALUES "
             "(1, ?, ?, 3600, ?, 'Sleep', NULL)",
@@ -666,17 +579,10 @@ if __name__ == "__main__":
             "INSERT INTO heart_rate_record_series_table VALUES "
             "(1, ?, 80)", (t0 + 1000,),
         )
-        # Garmin's real HC writer stores this exact subnormal-float
-        # sentinel instead of a real RPE -- must be nulled, not shown.
-        hc.execute(
-            "INSERT INTO exercise_session_record_table VALUES "
-            "(?, ?, 3600, ?, 70, NULL, NULL, 1.4013e-45)",
-            (u1, t0, t0 + 1800_000),
-        )
         hc.execute(
             "INSERT INTO exercise_session_record_table VALUES "
             "(?, ?, 3600, ?, 70, NULL, NULL, 7.5)",
-            (u2, t0 + 7200_000, t0 + 9000_000),
+            (u1, t0, t0 + 1800_000),
         )
         # Raw values as actually observed in a real HC export: Mass in
         # grams, Energy in calories, Power in watts -- regression
@@ -705,9 +611,16 @@ if __name__ == "__main__":
         counts = parse_and_upsert(hc_path, conn, uid)
         assert counts["steps"] == 1
         assert counts["resting_heart_rate"] == 1
-        assert counts["sleep_sessions"] == 1
-        assert counts["sleep_stages"] == 1
         assert counts["heart_rate_daily"] == 1
+        # Sleep and exercise stay untouched by the HC parse.
+        assert "sleep_sessions" not in counts
+        assert "exercise_sessions" not in counts
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM sleep_sessions",
+        ).fetchone()["n"] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM exercise_sessions",
+        ).fetchone()["n"] == 0
 
         # Re-running (same export, same user) must not duplicate or
         # double-count.
@@ -740,15 +653,6 @@ if __name__ == "__main__":
         ).fetchone()
         # 86.05 W -> ~1777 kcal/day (Power's internal unit is watts)
         assert 1770 < bmr_row["kcal_per_day"] < 1785, bmr_row["kcal_per_day"]
-
-        rpes = {
-            row["rpe"] for row in
-            conn.execute(
-                "SELECT rpe FROM exercise_sessions WHERE user_id = ?",
-                (uid,),
-            )
-        }
-        assert rpes == {None, 7.5}, rpes  # garbage sentinel nulled out
 
         # Isolation check: a second user's export (real Android UUIDs
         # are per-device cryptographically random, so two real phones
