@@ -211,6 +211,17 @@ CREATE TABLE IF NOT EXISTS garmin_workout_pushes (
     local_date TEXT NOT NULL
 );
 
+-- Earned Garmin Connect badges, surfaced as achievements (see
+-- achievements.py's _garmin_badge_items) instead of a separate
+-- "Garmin badges" section -- one unified Trophees page/history.
+CREATE TABLE IF NOT EXISTS garmin_badges (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    badge_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    earned_date TEXT NOT NULL,
+    PRIMARY KEY (user_id, badge_key)
+);
+
 CREATE TABLE IF NOT EXISTS weight (
     uuid TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -369,7 +380,11 @@ CREATE TABLE IF NOT EXISTS deload_events (
     user_id INTEGER NOT NULL REFERENCES users(id),
     session_type TEXT NOT NULL,
     triggered_at TEXT NOT NULL,
-    ends_at TEXT NOT NULL
+    ends_at TEXT NOT NULL,
+    -- "red_streak" (3 reds in a row) or "tsb" (critical Training
+    -- Stress Balance). NULL for events logged before this column
+    -- existed -- see init_db's migration.
+    trigger TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_deload_events_user ON deload_events(user_id);
 
@@ -518,6 +533,12 @@ def init_db(conn: sqlite3.Connection) -> None:
             "UPDATE users SET is_admin = 1 "
             "WHERE id = (SELECT MIN(id) FROM users)"
         )
+    deload_cols = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(deload_events)")
+    }
+    if "trigger" not in deload_cols:
+        conn.execute("ALTER TABLE deload_events ADD COLUMN trigger TEXT")
     conn.commit()
 
 

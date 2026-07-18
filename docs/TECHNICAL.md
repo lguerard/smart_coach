@@ -78,10 +78,13 @@ load, weight/nutrition trends). Plus a dashboard at
 bars; tonight's level is editable inline and the edit is pushed
 straight to the calendar event), Progress, Trends (including a
 30-day HRV/training-readiness chart), Sessions (a Leaflet map of
-every GPS-tracked route across all activity types, plus per-workout
-avg/max HR, an HR-zone breakdown bar, and a small route-shape
-preview per session), Achievements, and Settings (goals, weekly plan
-editor, ingestion health check).
+every GPS-tracked route across all activity types -- click one for
+that session's details -- plus per-workout avg/max HR, an HR-zone
+breakdown bar, and a small route-shape preview per session),
+Achievements (homegrown unlocks plus earned Garmin Connect badges,
+surfaced as achievements rather than a separate section; a full
+history view lists every one with its unlock date), and Settings
+(goals, weekly plan editor, ingestion health check).
 
 ## Architecture
 
@@ -96,8 +99,9 @@ worker container cron
   06:00  run_coach.py     metrics.py + progress.py compute today's
                            wellness + weekly trends; training.py
                            applies the deload guardrail (3 reds in a
-                           row -> forced lighter week) on top of the
-                           daily status/level; gcal.py updates
+                           row, OR a single critically negative TSB
+                           reading -> forced lighter week) on top of
+                           the daily status/level; gcal.py updates
                            tonight's event; garmin_api.py pushes
                            tonight's session to the watch as a
                            scheduled workout; llm.py (claude -p)

@@ -576,6 +576,67 @@ def upsert_stress(
     return 1
 
 
+# get_earned_badges() has no typed wrapper in garminconnect and no
+# test fixture upstream either -- field names below are the
+# commonly-documented ones (badgeId/badgeKey, badgeName,
+# badgeEarnedDate) but UNVERIFIED against a live account. Failure
+# mode if wrong is graceful (badge silently skipped, not a crash or
+# a wrong value shown), but verify against a real account and adjust
+# these keys if badges don't show up on the Trophees page.
+def _badge_key(badge: dict) -> str | None:
+    raw = (
+        badge.get("badgeId") or badge.get("badgeKey")
+        or badge.get("badgeUuid")
+    )
+    return str(raw) if raw is not None else None
+
+
+def _badge_earned_date(badge: dict) -> str | None:
+    raw = (
+        badge.get("badgeEarnedDate") or badge.get("earnedDate")
+        or badge.get("badgeAcquiredDate")
+    )
+    if not raw:
+        return None
+    return raw.split("T")[0].split(" ")[0]
+
+
+def upsert_badges(
+    conn: sqlite3.Connection, user_id: int, client: Garmin,
+) -> int:
+    """Fetch earned Garmin Connect badges into garmin_badges.
+
+    Surfaced as achievements (achievements.py's ``_garmin_badge_items``)
+    instead of a separate section -- one unified Trophees page.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+
+    Returns:
+        int: Number of badges upserted (skips entries missing an id
+        or an earned date -- see the field-name caveat above).
+    """
+    badges = client.get_earned_badges() or []
+    rows = []
+    for badge in badges:
+        key = _badge_key(badge)
+        earned = _badge_earned_date(badge)
+        name = badge.get("badgeName")
+        if not key or not earned or not name:
+            continue
+        rows.append((user_id, key, name, earned))
+    conn.executemany(
+        "INSERT INTO garmin_badges (user_id, badge_key, name, "
+        "earned_date) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, "
+        "badge_key) DO UPDATE SET name = excluded.name, "
+        "earned_date = excluded.earned_date",
+        rows,
+    )
+    return len(rows)
+
+
 def fetch_and_upsert(
     conn: sqlite3.Connection, user_id: int, username: str,
     days: int = LOOKBACK_DAYS,
@@ -623,6 +684,7 @@ def fetch_and_upsert(
         ),
         "body_battery": upsert_body_battery(conn, user_id, client, today),
         "stress": upsert_stress(conn, user_id, client, today),
+        "badges": upsert_badges(conn, user_id, client),
     }
     ran_at = dt.datetime.now(dt.timezone.utc).isoformat()
     conn.executemany(
@@ -888,6 +950,16 @@ if __name__ == "__main__":
                 return {}
             return {"avgStressLevel": 32, "maxStressLevel": 68}
 
+        def get_earned_badges(self) -> list:
+            return [
+                {
+                    "badgeId": 42, "badgeName": "5K Runner",
+                    "badgeEarnedDate": "2026-07-10T08:00:00.0",
+                },
+                # Missing a name -> must be skipped, not crash.
+                {"badgeId": 43, "badgeEarnedDate": "2026-07-11T08:00:00.0"},
+            ]
+
         def get_sleep_data(self, date: str) -> dict:
             if date != "2026-07-15":
                 return {"dailySleepDTO": {}}
@@ -1108,6 +1180,20 @@ if __name__ == "__main__":
     ).fetchone()
     assert stress_row["avg_level"] == 32, dict(stress_row)
     assert stress_row["max_level"] == 68, dict(stress_row)
+
+    # Badges: nameless entry skipped, not crashed on; idempotent re-run.
+    assert upsert_badges(conn, uid, fake) == 1
+    badge_row = conn.execute(
+        "SELECT * FROM garmin_badges WHERE user_id = ?", (uid,),
+    ).fetchone()
+    assert badge_row["badge_key"] == "42", dict(badge_row)
+    assert badge_row["name"] == "5K Runner", dict(badge_row)
+    assert badge_row["earned_date"] == "2026-07-10", dict(badge_row)
+    assert upsert_badges(conn, uid, fake) == 1
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM garmin_badges WHERE user_id = ?",
+        (uid,),
+    ).fetchone()["n"] == 1
 
     # Re-run: idempotent upsert, no duplicate row.
     assert upsert_hrv(conn, uid, fake, "2026-07-16") == 1

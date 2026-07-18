@@ -25,6 +25,12 @@ import training
 
 TIER_POINTS = {"bronze": 10, "silver": 25, "gold": 50, "platinum": 100}
 
+# Earned Garmin Connect badges (ingest/garmin_api.py) are surfaced as
+# achievements too, not a separate section -- Garmin assigns the
+# badge, we don't grade it, so every one gets this flat tier (no
+# reliable per-badge difficulty/points field in the ingested data).
+GARMIN_BADGE_TIER = "silver"
+
 ACHIEVEMENTS = {
     "first_sync": {
         "icon": "\U0001F4E1", "tier": "bronze",
@@ -1311,8 +1317,51 @@ def xp_ledger_entries(
     return [dict(row) for row in rows]
 
 
+def _garmin_badge_count(conn: sqlite3.Connection, user_id: int) -> int:
+    """Number of earned Garmin badges on record for this user."""
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM garmin_badges WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()["n"]
+
+
+def _garmin_badge_items(conn: sqlite3.Connection, user_id: int) -> list[dict]:
+    """Earned Garmin badges, shaped like an ACHIEVEMENTS entry each.
+
+    Passthrough only: Garmin's own catalog and criteria, not
+    verified or graded here -- see GARMIN_BADGE_TIER. Only earned
+    badges are ingested (no locked/available-badge tracking), so
+    every entry here is always unlocked.
+
+    Returns:
+        list[dict]: Same shape ``all_achievements_with_status``
+        produces per entry, ready to merge into the same list.
+    """
+    rows = conn.execute(
+        "SELECT badge_key, name, earned_date FROM garmin_badges WHERE "
+        "user_id = ? ORDER BY earned_date DESC", (user_id,),
+    ).fetchall()
+    return [
+        {
+            "key": f"garmin:{row['badge_key']}",
+            "icon": "\U0001F396", "tier": GARMIN_BADGE_TIER,
+            "name_fr": row["name"], "name_en": row["name"],
+            "desc_fr": "Badge officiel Garmin Connect.",
+            "desc_en": "Official Garmin Connect badge.",
+            "points": TIER_POINTS[GARMIN_BADGE_TIER],
+            "unlocked": True, "unlocked_at": row["earned_date"],
+            "progress": None,
+        }
+        for row in rows
+    ]
+
+
 def score(conn: sqlite3.Connection, user_id: int) -> dict:
     """Coach Score summary, Gamerscore-style.
+
+    Earned Garmin badges count too (see ``_garmin_badge_items``) --
+    always fully "unlocked" against their own count, since only
+    earned badges are tracked, not Garmin's full catalog.
 
     Returns:
         dict: ``unlocked_points``, ``total_points``, ``unlocked_count``,
@@ -1325,20 +1374,26 @@ def score(conn: sqlite3.Connection, user_id: int) -> dict:
     total_points = sum(
         TIER_POINTS[definition["tier"]] for definition in ACHIEVEMENTS.values()
     )
+    garmin_count = _garmin_badge_count(conn, user_id)
+    garmin_points = garmin_count * TIER_POINTS[GARMIN_BADGE_TIER]
     return {
-        "unlocked_points": unlocked_points, "total_points": total_points,
-        "unlocked_count": len(unlocked), "total_count": len(ACHIEVEMENTS),
+        "unlocked_points": unlocked_points + garmin_points,
+        "total_points": total_points + garmin_points,
+        "unlocked_count": len(unlocked) + garmin_count,
+        "total_count": len(ACHIEVEMENTS) + garmin_count,
     }
 
 
 def all_achievements_with_status(
     conn: sqlite3.Connection, user_id: int, date: str,
 ) -> list[dict]:
-    """Every achievement definition plus unlock status, for the
-    Achievements page: unlocked first (most recent first), then
-    locked ones ordered bronze->platinum. Locked entries carry a
-    ``progress`` dict (current/target/unit/pct) when computable, so
-    the page shows real numbers, not just a locked icon.
+    """Every achievement (homegrown + earned Garmin badges) plus
+    unlock status, for the Achievements page: unlocked first (most
+    recent first), then locked ones ordered bronze->platinum. Locked
+    entries carry a ``progress`` dict (current/target/unit/pct) when
+    computable, so the page shows real numbers, not just a locked
+    icon. Garmin badges (see ``_garmin_badge_items``) are always
+    unlocked, so they only ever land in the first group.
 
     Returns:
         list[dict]: ``key``, definition fields, ``points``,
@@ -1372,6 +1427,8 @@ def all_achievements_with_status(
             "unlocked": is_unlocked, "unlocked_at": unlocked_at,
             "progress": progress_info,
         })
+    items.extend(_garmin_badge_items(conn, user_id))
+
     def sort_key(item: dict) -> tuple:
         if item["unlocked"]:
             ordinal = dt.date.fromisoformat(item["unlocked_at"]).toordinal()
@@ -1485,6 +1542,32 @@ if __name__ == "__main__":
     # ...an event-based one (no meaningful single-number bar) doesn't.
     assert by_key["true_recomp"]["progress"] is None
     assert by_key["comeback"]["unlocked"] is True  # already unlocked above
+
+    # --- Earned Garmin badges, surfaced as achievements ---
+    conn.execute(
+        "INSERT INTO garmin_badges VALUES (?, '42', '5K Runner', "
+        "'2026-08-20')", (uid,),
+    )
+    conn.commit()
+    garmin_summary = score(conn, uid)
+    assert garmin_summary["unlocked_count"] == summary["unlocked_count"] + 1
+    assert garmin_summary["total_count"] == summary["total_count"] + 1
+    assert (
+        garmin_summary["unlocked_points"]
+        == summary["unlocked_points"] + TIER_POINTS[GARMIN_BADGE_TIER]
+    )
+    assert score(conn, other_uid)["unlocked_count"] == 0  # isolated
+
+    items_with_badge = all_achievements_with_status(conn, uid, "2026-08-06")
+    assert len(items_with_badge) == len(ACHIEVEMENTS) + 1
+    badge_item = next(
+        i for i in items_with_badge if i["key"] == "garmin:42"
+    )
+    assert badge_item["unlocked"] is True
+    assert badge_item["unlocked_at"] == "2026-08-20"
+    assert badge_item["name_fr"] == "5K Runner"
+    assert badge_item["tier"] == GARMIN_BADGE_TIER
+    assert items_with_badge[0]["key"] == "garmin:42"  # most recent first
 
     # --- Player Level / XP ledger ---
     xp_before = xp_total(conn, uid)

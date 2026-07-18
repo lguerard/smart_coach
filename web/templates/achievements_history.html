@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Historique des succes - Smart Sport{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between px-1">
+  <p class="text-xs" style="color: var(--muted);">
+    Tous les succes (maison + badges Garmin officiels), avec leur date
+    d'obtention.
+  </p>
+  <a href="/achievements" class="text-xs shrink-0" style="color: var(--blue);">-- Retour aux trophees</a>
+</div>
+
+<div class="card p-0 overflow-hidden">
+  <table class="text-xs" style="border-collapse: collapse; width: 100%;">
+    <thead>
+      <tr class="text-left" style="color: var(--muted);">
+        {% for h in ("Date", "Succes", "Palier") %}
+        <th class="px-3 py-2 font-medium whitespace-nowrap sticky top-0"
+          style="background: var(--surface-1-solid); border-bottom: 1px solid var(--border);">
+          {{ h }}
+        </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in items %}
+      <tr style="border-bottom: 1px solid var(--grid);">
+        <td class="px-3 py-2 whitespace-nowrap" style="color: {{ 'var(--text-secondary)' if a.unlocked else 'var(--muted)' }};">
+          {{ a.unlocked_at if a.unlocked else "-" }}
+        </td>
+        <td class="px-3 py-2 {{ '' if a.unlocked else 'opacity-60' }}">
+          <span class="mr-1">{{ a.icon }}</span>{{ a.name_fr }}
+          {% if a.key.startswith('garmin:') %}
+          <span class="text-[9px] px-1.5 py-0.5 rounded-full" style="border: 1px solid var(--border); color: var(--muted);">Garmin</span>
+          {% endif %}
+        </td>
+        <td class="px-3 py-2 whitespace-nowrap capitalize" style="color: var(--muted);">{{ a.tier }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="px-3 py-6 text-center" style="color: var(--muted);">Aucun succes pour l'instant.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

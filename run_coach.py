@@ -61,8 +61,14 @@ def run_for_user(conn, user: dict) -> None:
     if session_type is not None:
         baseline = training.rhr_baseline(conn, user_id, today)
         status = training.compute_status(wellness, baseline)
+        # Yesterday's TSB (today's isn't computed until after this
+        # pipeline runs, see the training_load call below) -- lets
+        # the guardrail force a deload on accumulated fatigue alone,
+        # not just 3 reds in a row.
+        latest_load = training_load.latest_training_load(conn, user_id)
         deload = training.apply_deload_guardrail(
             conn, user_id, session_type, status, today,
+            tsb=latest_load["tsb"] if latest_load else None,
         )
         level = deload["level"]
 
@@ -72,9 +78,17 @@ def run_for_user(conn, user: dict) -> None:
             session_type, level, values, status,
         )
         if deload["deload_triggered"]:
+            reason_fr = (
+                "3 rouges d'affilee" if deload["trigger"] == "red_streak"
+                else "fatigue accumulee (TSB)"
+            )
+            reason_en = (
+                "3 reds in a row" if deload["trigger"] == "red_streak"
+                else "accumulated fatigue (TSB)"
+            )
             deload_note = (
-                "SEMAINE DE DELOAD (3 rouges d'affilee)" if language == "fr"
-                else "DELOAD WEEK (3 reds in a row)"
+                f"SEMAINE DE DELOAD ({reason_fr})" if language == "fr"
+                else f"DELOAD WEEK ({reason_en})"
             )
             description = f"{description}\n{deload_note}"
         today_session = {

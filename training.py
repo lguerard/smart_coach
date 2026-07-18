@@ -51,6 +51,11 @@ RHR_BASELINE_DAYS = 14
 ACTIVITY_LOAD_SPIKE_RATIO = 1.5  # recent-7d vs previous-7d minutes
 ACTIVITY_LOAD_HIGH_RPE = 7.0
 TRAINING_READINESS_GOOD, TRAINING_READINESS_POOR = 75, 50  # 0-100 scale
+# TSB (yesterday's CTL - ATL): very negative means fatigue has been
+# accumulating for a while -- unlike a single red day, TSB is already
+# a smoothed signal (42d/7d windows), so one critical reading is
+# trustworthy enough to force a deload immediately, no streak needed.
+TSB_DELOAD_THRESHOLD = -20.0
 
 
 def get_level(
@@ -152,12 +157,57 @@ DELOAD_DAYS = 7
 DELOAD_LEVEL_CUT = 2
 
 
+def _trigger_deload(
+    conn: sqlite3.Connection, user_id: int, session_type: str, level: int,
+    date: str, trigger: str,
+) -> dict:
+    """Force the level cut + deload window, shared by both triggers.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        session_type (str): Session type key.
+        level (int): Current level, before the cut.
+        date (str): ISO local date (today) -- deload window start.
+        trigger (str): ``"red_streak"`` or ``"tsb"``, logged to
+            ``deload_events`` for the Progress page's history.
+
+    Returns:
+        dict: ``level``, ``in_deload=True``, ``deload_triggered=True``,
+        ``trigger``.
+    """
+    new_level = max(level - DELOAD_LEVEL_CUT, LEVEL_MIN)
+    ends_at = (
+        dt.date.fromisoformat(date) + dt.timedelta(days=DELOAD_DAYS)
+    ).isoformat()
+    set_level(conn, user_id, session_type, new_level)
+    set_red_streak(conn, user_id, session_type, 0)
+    set_deload_until(conn, user_id, session_type, ends_at)
+    conn.execute(
+        "INSERT INTO deload_events (user_id, session_type, triggered_at, "
+        "ends_at, trigger) VALUES (?, ?, ?, ?, ?)",
+        (user_id, session_type, date, ends_at, trigger),
+    )
+    conn.commit()
+    return {
+        "level": new_level, "in_deload": True, "deload_triggered": True,
+        "trigger": trigger,
+    }
+
+
 def apply_deload_guardrail(
     conn: sqlite3.Connection, user_id: int, session_type: str, status: str,
-    date: str,
+    date: str, tsb: Optional[float] = None,
 ) -> dict:
     """Adjust today's level, applying the deload guardrail on top of
     the normal +-1 rule.
+
+    Two independent triggers force a deload: 3 reds in a row (the
+    original guardrail), or TSB dropping below
+    ``TSB_DELOAD_THRESHOLD`` -- the latter fires on a single reading
+    (no streak needed), since TSB is already a smoothed 42d/7d signal
+    that can miss the red-streak counter entirely (e.g. red/yellow/
+    red never reaches 3 in a row while fatigue keeps climbing).
 
     Parameters:
         conn (sqlite3.Connection): smart_sport db connection.
@@ -165,36 +215,32 @@ def apply_deload_guardrail(
         session_type (str): Session type key.
         status (str): Today's ``compute_status`` result.
         date (str): ISO local date (today).
+        tsb (float | None): Yesterday's Training Stress Balance
+            (``training_load.latest_training_load``), if computed yet.
 
     Returns:
         dict: ``level`` (new level, already persisted),
         ``in_deload`` (a deload window is active today),
-        ``deload_triggered`` (this call is what triggered it).
+        ``deload_triggered`` (this call is what triggered it), and
+        ``trigger`` (``"red_streak"`` or ``"tsb"``) only present when
+        ``deload_triggered`` is true.
     """
     level = get_level(conn, user_id, session_type)
     deload_until = get_deload_until(conn, user_id, session_type)
     in_deload = deload_until is not None and date <= deload_until
 
+    if (
+        not in_deload and tsb is not None
+        and tsb <= TSB_DELOAD_THRESHOLD
+    ):
+        return _trigger_deload(conn, user_id, session_type, level, date, "tsb")
+
     if status == "red":
         streak = get_red_streak(conn, user_id, session_type) + 1
         if streak >= RED_STREAK_THRESHOLD:
-            new_level = max(level - DELOAD_LEVEL_CUT, LEVEL_MIN)
-            ends_at = (
-                dt.date.fromisoformat(date) + dt.timedelta(days=DELOAD_DAYS)
-            ).isoformat()
-            set_level(conn, user_id, session_type, new_level)
-            set_red_streak(conn, user_id, session_type, 0)
-            set_deload_until(conn, user_id, session_type, ends_at)
-            conn.execute(
-                "INSERT INTO deload_events (user_id, session_type, "
-                "triggered_at, ends_at) VALUES (?, ?, ?, ?)",
-                (user_id, session_type, date, ends_at),
+            return _trigger_deload(
+                conn, user_id, session_type, level, date, "red_streak",
             )
-            conn.commit()
-            return {
-                "level": new_level, "in_deload": True,
-                "deload_triggered": True,
-            }
         set_red_streak(conn, user_id, session_type, streak)
         new_level = adjust_level(level, status)
         set_level(conn, user_id, session_type, new_level)
@@ -686,6 +732,7 @@ if __name__ == "__main__":
     r3 = apply_deload_guardrail(conn, uid, "lower_body", "red", d2)
     assert r3["deload_triggered"] is True
     assert r3["level"] == 2  # 4 - DELOAD_LEVEL_CUT(2)
+    assert r3["trigger"] == "red_streak"
     assert get_red_streak(conn, uid, "lower_body") == 0
     deload_until = get_deload_until(conn, uid, "lower_body")
     assert deload_until == (
@@ -717,5 +764,33 @@ if __name__ == "__main__":
     assert after2["in_deload"] is False
     assert after2["level"] == after["level"] + 1
     assert get_deload_until(conn, uid, "lower_body") is None
+
+    # TSB-triggered deload: fires on a SINGLE critical reading, no
+    # streak needed, even on a non-red (yellow) day.
+    set_level(conn, uid, "calisthenics", 6)
+    tsb_day = "2026-09-01"
+    no_trigger = apply_deload_guardrail(
+        conn, uid, "calisthenics", "yellow", tsb_day, tsb=-5.0,
+    )
+    assert no_trigger["deload_triggered"] is False  # above threshold
+    tsb_r = apply_deload_guardrail(
+        conn, uid, "calisthenics", "yellow", tsb_day,
+        tsb=TSB_DELOAD_THRESHOLD - 1,
+    )
+    assert tsb_r["deload_triggered"] is True
+    assert tsb_r["trigger"] == "tsb"
+    assert tsb_r["level"] == 4  # 6 - DELOAD_LEVEL_CUT(2)
+    assert conn.execute(
+        "SELECT trigger FROM deload_events WHERE user_id = ? AND "
+        "session_type = 'calisthenics'", (uid,),
+    ).fetchone()["trigger"] == "tsb"
+    # Already in deload -> a second critical reading doesn't re-cut.
+    again = apply_deload_guardrail(
+        conn, uid, "calisthenics", "yellow",
+        (dt.date.fromisoformat(tsb_day) + dt.timedelta(days=1)).isoformat(),
+        tsb=TSB_DELOAD_THRESHOLD - 1,
+    )
+    assert again["deload_triggered"] is False
+    assert again["level"] == 4
 
     print("training.py: all checks passed")

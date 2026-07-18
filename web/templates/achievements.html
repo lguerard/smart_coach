@@ -19,6 +19,7 @@
   <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">Coach Score (points de succes)</p>
   <p class="text-2xl font-bold mt-1">{{ score.unlocked_points }} <span style="color: var(--muted); font-size: 1rem;">/ {{ score.total_points }}</span></p>
   <p class="text-xs mt-1" style="color: var(--muted);">{{ score.unlocked_count }} / {{ score.total_count }} succes debloques</p>
+  <a href="/achievements/history" class="text-xs mt-2 inline-block" style="color: var(--blue);">Historique complet avec dates -&gt;</a>
 </div>
 
 <div class="grid grid-cols-2 gap-3">
@@ -32,7 +33,12 @@
         {{ a.tier }} - {{ a.points }}
       </span>
     </div>
-    <p class="text-sm font-semibold mt-2">{{ a.name_fr }}</p>
+    <p class="text-sm font-semibold mt-2">
+      {{ a.name_fr }}
+      {% if a.key.startswith('garmin:') %}
+      <span class="text-[9px] font-normal px-1.5 py-0.5 rounded-full" style="border: 1px solid var(--border); color: var(--muted);">Garmin</span>
+      {% endif %}
+    </p>
     <p class="text-xs mt-1" style="color: var(--muted);">{{ a.desc_fr }}</p>
     {% if a.unlocked %}
     <p class="text-[10px] mt-2" style="color: var(--good);">Debloque le {{ a.unlocked_at }}</p>

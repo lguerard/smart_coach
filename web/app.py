@@ -1060,6 +1060,21 @@ def achievements_page(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/achievements/history", response_class=HTMLResponse)
+def achievements_history(request: Request) -> HTMLResponse:
+    """Every achievement (homegrown + earned Garmin badges) with its
+    unlock date, unlocked first -- most recent first -- then locked
+    ones, for a chronological read the card grid doesn't give.
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    items = achievements.all_achievements_with_status(conn, user_id, date)
+    return templates.TemplateResponse(
+        request, "achievements_history.html", {"items": items},
+    )
+
+
 # --- Settings ---
 
 @app.get("/settings", response_class=HTMLResponse)
