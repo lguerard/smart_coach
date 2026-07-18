@@ -190,6 +190,27 @@ CREATE TABLE IF NOT EXISTS garmin_body_battery (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- Context only, like body battery -- deliberately not a
+-- training.compute_status vote (would double-count with the
+-- training-readiness vote, which already factors stress history in).
+CREATE TABLE IF NOT EXISTS garmin_stress (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    avg_level INTEGER,
+    max_level INTEGER,
+    PRIMARY KEY (user_id, local_date)
+);
+
+-- Tracks the most recently pushed watch workout per user, so the
+-- next day's push can delete the old template before creating a new
+-- one (see ingest/garmin_api.py:push_workout_for_session) instead of
+-- accumulating one workout per day forever in the Garmin library.
+CREATE TABLE IF NOT EXISTS garmin_workout_pushes (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id),
+    workout_id TEXT NOT NULL,
+    local_date TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS weight (
     uuid TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),

@@ -356,8 +356,9 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         dict: ``hrv_last_night_avg``, ``hrv_status``,
         ``training_readiness_score``, ``training_readiness_level``,
         ``body_battery_charged``, ``body_battery_drained``,
-        ``body_battery_highest``, ``body_battery_lowest`` -- keys
-        with no data that day are simply absent.
+        ``body_battery_highest``, ``body_battery_lowest``,
+        ``stress_avg_level``, ``stress_max_level`` -- keys with no
+        data that day are simply absent.
     """
     result: dict = {}
     hrv = conn.execute(
@@ -384,6 +385,13 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         result["body_battery_drained"] = battery["drained"]
         result["body_battery_highest"] = battery["highest"]
         result["body_battery_lowest"] = battery["lowest"]
+    stress = conn.execute(
+        "SELECT avg_level, max_level FROM garmin_stress WHERE "
+        "user_id = ? AND local_date = ?", (user_id, date),
+    ).fetchone()
+    if stress:
+        result["stress_avg_level"] = stress["avg_level"]
+        result["stress_max_level"] = stress["max_level"]
     return result
 
 
@@ -452,6 +460,73 @@ def _session_duration_min(row: sqlite3.Row) -> int:
     start = dt.datetime.fromisoformat(row["start_utc"])
     end = dt.datetime.fromisoformat(row["end_utc"])
     return max(0, round((end - start).total_seconds() / 60))
+
+
+# Standard 5-zone %-of-max-HR model (Z1 <60%, Z2 60-70%, ... Z5 >=90%).
+HR_ZONE_BOUNDS_PCT = (0.6, 0.7, 0.8, 0.9)
+
+
+def estimated_max_hr(conn: sqlite3.Connection, user_id: int) -> int | None:
+    """Age-based max-HR estimate (220-age), or None if age isn't set.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+
+    Returns:
+        int | None: Estimated max HR, or ``None`` (age_years unset).
+    """
+    age = db.get_setting(conn, user_id, "age_years")
+    try:
+        return 220 - int(age)
+    except (TypeError, ValueError):
+        return None
+
+
+def hr_zone_pct(
+    conn: sqlite3.Connection, user_id: int, uuid: str, max_hr: int,
+) -> list[float]:
+    """Time-in-zone breakdown for one exercise session's HR samples.
+
+    ponytail: each sample's weight is the time gap to the NEXT sample
+    (last sample reuses the previous gap) -- correct for roughly-even
+    sampling (this project's source data), a coarser approximation if
+    the watch samples very unevenly.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        uuid (str): exercise_sessions uuid.
+        max_hr (int): Estimated or known max HR (see
+            ``estimated_max_hr``).
+
+    Returns:
+        list[float]: 5 percentages (Z1..Z5) summing to ~100, or an
+        empty list if this session has no HR samples.
+    """
+    rows = conn.execute(
+        "SELECT epoch_utc, bpm FROM exercise_hr_samples WHERE "
+        "user_id = ? AND exercise_uuid = ? ORDER BY epoch_utc",
+        (user_id, uuid),
+    ).fetchall()
+    if not rows or not max_hr:
+        return []
+    times = [dt.datetime.fromisoformat(r["epoch_utc"]) for r in rows]
+    zone_seconds = [0.0] * 5
+    for i, row in enumerate(rows):
+        if i + 1 < len(rows):
+            gap = (times[i + 1] - times[i]).total_seconds()
+        elif i > 0:
+            gap = (times[i] - times[i - 1]).total_seconds()
+        else:
+            gap = 0.0
+        ratio = row["bpm"] / max_hr
+        zone = sum(1 for bound in HR_ZONE_BOUNDS_PCT if ratio >= bound)
+        zone_seconds[zone] += max(gap, 0.0)
+    total = sum(zone_seconds)
+    if total <= 0:
+        return []
+    return [round(100 * s / total, 1) for s in zone_seconds]
 
 
 def history_snapshot(
@@ -644,6 +719,10 @@ if __name__ == "__main__":
         "INSERT INTO garmin_body_battery VALUES (?, '2026-07-13', 80, "
         "45, 90, 30)", (uid,),
     )
+    conn.execute(
+        "INSERT INTO garmin_stress VALUES (?, '2026-07-13', 32, 68)",
+        (uid,),
+    )
     conn.commit()
 
     # 2026-07-13 06:00 UTC = 08:00 Europe/Paris (CEST), so this
@@ -675,6 +754,8 @@ if __name__ == "__main__":
     assert wellness["training_readiness_score"] == 62
     assert wellness["body_battery_charged"] == 80
     assert wellness["body_battery_lowest"] == 30
+    assert wellness["stress_avg_level"] == 32
+    assert wellness["stress_max_level"] == 68
     assert garmin_wellness(conn, uid, "2026-07-01") == {}  # no data that day
 
     # Data isolation: the other user sees none of uid's data.
@@ -729,6 +810,15 @@ if __name__ == "__main__":
         "10.123, 20.456, -10.333)", (uid,),
     )
     conn.commit()
+
+    # HR zone breakdown for e1's samples (120/140/160 bpm, 600s gaps
+    # each): with max_hr 190, zones land Z2/Z3/Z4 respectively.
+    assert estimated_max_hr(conn, uid) is None  # age_years unset
+    db.set_setting(conn, uid, "age_years", "30")
+    assert estimated_max_hr(conn, uid) == 190
+    zones = hr_zone_pct(conn, uid, "e1", 190)
+    assert zones == [0.0, 33.3, 33.3, 33.3, 0.0], zones
+    assert hr_zone_pct(conn, uid, "no-such-uuid", 190) == []
 
     snap = history_snapshot(conn, uid, "2026-07-13")
     acts = snap["activities_last_7_days"]

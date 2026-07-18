@@ -18,6 +18,15 @@
 </div>
 
 <div class="card p-4">
+  <h2 class="font-semibold text-sm mb-1">Recuperation Garmin -- 30 jours</h2>
+  <p class="text-xs mb-3" style="color: var(--muted);">
+    VFC (variabilite de la frequence cardiaque, en ms) et score de
+    preparation Garmin (0-100) -- absents avant la synchro Garmin.
+  </p>
+  <div style="height: 200px;"><canvas id="recoveryChart"></canvas></div>
+</div>
+
+<div class="card p-4">
   <h2 class="font-semibold text-sm mb-3">Progression des niveaux</h2>
   <div style="height: 220px;"><canvas id="levelChart"></canvas></div>
 </div>
@@ -88,6 +97,22 @@ new Chart(document.getElementById('sleepChart'), {
   options: { plugins: { legend: { display: false } },
     scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
               y: { grid: { color: grid }, suggestedMin: 0, suggestedMax: 100 } } },
+});
+
+new Chart(document.getElementById('recoveryChart'), {
+  type: 'line',
+  data: { labels: dates, datasets: [
+    { label: 'VFC (ms)', data: {{ hrv_values|tojson }}, borderColor: c1,
+      borderWidth: 2, pointRadius: 0, tension: 0.3, spanGaps: true, yAxisID: 'y' },
+    { label: 'Preparation', data: {{ readiness_values|tojson }}, borderColor: c3,
+      borderWidth: 2, pointRadius: 0, tension: 0.3, spanGaps: true, yAxisID: 'y1' },
+  ]},
+  options: { plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } },
+    scales: {
+      x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
+      y: { grid: { color: grid }, position: 'left' },
+      y1: { position: 'right', grid: { display: false }, suggestedMin: 0, suggestedMax: 100 },
+    } },
 });
 
 const levelColors = { treadmill: c1, lower_body: c2, upper_body: c3, calisthenics: c4 };

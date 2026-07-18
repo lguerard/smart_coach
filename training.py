@@ -14,8 +14,10 @@ workout numbers. Changes from the original:
 3. HRV and training-readiness are back as real votes (they were
    dropped in the Health-Connect-only era -- see metrics.py's
    ``garmin_wellness`` -- now pulled straight from the Garmin API via
-   ingest/garmin_api.py). Body battery has no vote: it's a running
-   energy gauge, not a morning score, so it's dashboard/LLM context
+   ingest/garmin_api.py). Body battery and stress have no vote: body
+   battery is a running energy gauge, not a morning score, and a
+   separate stress vote would double-count what training-readiness's
+   own aggregate already factors in -- both are dashboard/LLM context
    only (metrics.daily_wellness).
 """
 

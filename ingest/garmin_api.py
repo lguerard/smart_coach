@@ -17,10 +17,24 @@ training.compute_status instead of the activity-load proxy alone.
 
 Exercise/sleep rows land in the same tables the HC parser used to
 fill (``exercise_sessions``, ``sleep_sessions``, ``sleep_stages``,
-plus ``exercise_hr_samples``), keyed by ``garmin-*`` uuids, so every
+plus ``exercise_hr_samples`` and ``exercise_route_points`` for
+activities with a GPS track), keyed by ``garmin-*`` uuids, so every
 consumer (metrics, training, dashboard) is untouched. A Garmin row
 overlapping an existing HC-era row is skipped rather than
 duplicated, so switching sources mid-history is safe.
+
+``push_workout_for_session`` closes the loop the other way: it
+builds a Garmin workout from tonight's coach-computed session
+(reps/duration per exercise) and pushes it to the watch via
+``upload_workout`` + ``schedule_workout``, replacing yesterday's
+pushed template so the library doesn't grow one workout per day
+forever. Ceiling (ponytail): per-step exercise labels are sent as a
+best-effort ``description`` extra field with no confirmed on-watch
+display -- verify against a real account and adjust
+``_EXERCISE_LABEL_FR``/the step-building helpers if labels don't
+show correctly. Treadmill incline has no confirmed Garmin workout
+target field either, so it's carried in the workout's overall
+description text, not enforced on-device.
 
 First run per user is interactive (Garmin email/password + MFA
 prompt); tokens persist ~1 year under GARMIN_TOKEN_DIR/<username>.
@@ -33,6 +47,18 @@ import sqlite3
 import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from garminconnect.workout import (
+    ConditionType,
+    ExecutableStep,
+    FitnessEquipmentWorkout,
+    StepType,
+    TargetType,
+    WalkingWorkout,
+    WorkoutSegment,
+    create_interval_step,
+    create_repeat_group,
+)
 
 from garminconnect import Garmin
 
@@ -60,6 +86,22 @@ GARMIN_TYPE_TO_HC = {
 # Garmin sleepLevels activityLevel -> HC stage_type int
 # (0 deep, 1 light, 2 REM, 3 awake -> see SLEEP_STAGE_LABELS).
 SLEEP_LEVEL_TO_HC_STAGE = {0: 5, 1: 4, 2: 6, 3: 1}
+
+# training.session_values() key -> French exercise label, for pushed
+# workout step descriptions. Keys ending in "_sec" are time-based
+# (seconds), everything else (except "rounds"/"duration_min", never
+# turned into a step) is rep-based.
+_EXERCISE_LABEL_FR = {
+    "squats": "squats", "lunges_per_leg": "fentes avant/jambe",
+    "wall_sit_sec": "chaise contre mur", "calf_raises": "mollets debout",
+    "glute_bridge": "pont fessier", "pushups": "pompes", "dips": "dips",
+    "superman": "superman", "plank_sec": "planche",
+    "reverse_lunges_per_leg": "fentes arriere/jambe",
+    "side_plank_sec": "gainage lateral/cote",
+    "mountain_climbers": "mountain climbers",
+    "jumping_jacks": "jumping jacks",
+}
+_NON_STEP_KEYS = {"rounds", "duration_min"}
 
 
 def get_client(username: str) -> Garmin:
@@ -176,14 +218,16 @@ def _hc_exercise_type(type_key: str | None, title: str | None) -> int:
     return GARMIN_TYPE_TO_HC.get(type_key or "", 0)
 
 
-def _ingest_hr_samples(
+def _ingest_activity_details(
     conn: sqlite3.Connection, user_id: int, client: Garmin,
     activity_id: int, uuid: str,
-) -> int:
-    """Fetch one activity's HR time series into exercise_hr_samples.
+) -> tuple[int, int]:
+    """Fetch one activity's HR series + GPS route into their tables.
 
-    Skipped (0) if samples already exist for this uuid -- one detail
-    call per activity, once ever.
+    Skipped entirely if HR samples already exist for this uuid -- one
+    detail call per activity, once ever. Route points are absent
+    (0) for indoor/strength sessions with no GPS track, which is the
+    common case for this project's bodyweight-circuit session types.
 
     Parameters:
         conn (sqlite3.Connection): smart_sport db connection.
@@ -193,42 +237,63 @@ def _ingest_hr_samples(
         uuid (str): Matching exercise_sessions uuid.
 
     Returns:
-        int: Number of HR samples inserted.
+        tuple[int, int]: (HR samples inserted, route points inserted).
     """
     if conn.execute(
         "SELECT 1 FROM exercise_hr_samples WHERE exercise_uuid = ? "
         "LIMIT 1", (uuid,),
     ).fetchone():
-        return 0
+        return 0, 0
     details = client.get_activity_details(activity_id)
     index = {
         d["key"]: d["metricsIndex"]
         for d in details.get("metricDescriptors") or []
     }
-    hr_i = index.get("directHeartRate")
-    ts_i = index.get("directTimestamp")
-    if hr_i is None or ts_i is None:
-        return 0
-    samples = []
+    hr_i, ts_i = index.get("directHeartRate"), index.get("directTimestamp")
+    lat_i, lon_i = index.get("directLatitude"), index.get("directLongitude")
+    alt_i = index.get("directElevation")
+
+    hr_samples, route_points = [], []
     for point in details.get("activityDetailMetrics") or []:
         values = point.get("metrics") or []
-        if max(hr_i, ts_i) < len(values) and values[hr_i] and values[ts_i]:
-            samples.append((
+        if (
+            hr_i is not None and ts_i is not None
+            and max(hr_i, ts_i) < len(values)
+            and values[hr_i] and values[ts_i]
+        ):
+            hr_samples.append((
                 uuid, user_id,
                 _epoch_ms_utc(values[ts_i]).isoformat(),
                 int(values[hr_i]),
             ))
+        if (
+            lat_i is not None and lon_i is not None and ts_i is not None
+            and max(lat_i, lon_i, ts_i) < len(values)
+            and values[lat_i] and values[lon_i] and values[ts_i]
+        ):
+            route_points.append((
+                uuid, user_id,
+                _epoch_ms_utc(values[ts_i]).isoformat(),
+                values[lat_i], values[lon_i],
+                values[alt_i] if alt_i is not None and alt_i < len(values)
+                else None,
+            ))
     conn.executemany(
         "INSERT OR IGNORE INTO exercise_hr_samples VALUES (?, ?, ?, ?)",
-        samples,
+        hr_samples,
     )
-    return len(samples)
+    conn.executemany(
+        "INSERT OR IGNORE INTO exercise_route_points VALUES "
+        "(?, ?, ?, ?, ?, ?)",
+        route_points,
+    )
+    return len(hr_samples), len(route_points)
 
 
 def upsert_activities(
     conn: sqlite3.Connection, user_id: int, client: Garmin,
     tz: ZoneInfo, days: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Fetch recent Garmin activities into exercise_sessions.
 
     Parameters:
@@ -239,13 +304,14 @@ def upsert_activities(
         days (int): Trailing window length.
 
     Returns:
-        tuple[int, int]: (sessions upserted, HR samples inserted).
+        tuple[int, int, int]: (sessions upserted, HR samples
+        inserted, route points inserted).
     """
     today = dt.date.today()
     activities = client.get_activities_by_date(
         (today - dt.timedelta(days=days)).isoformat(), today.isoformat()
     )
-    session_count = hr_count = 0
+    session_count = hr_count = route_count = 0
     for act in activities:
         start = _parse_gmt(act["startTimeGMT"])
         end = start + dt.timedelta(seconds=act.get("duration") or 0)
@@ -275,10 +341,12 @@ def upsert_activities(
             (row[0], user_id, *row[1:]),
         )
         session_count += 1
-        hr_count += _ingest_hr_samples(
+        hr_added, route_added = _ingest_activity_details(
             conn, user_id, client, act["activityId"], uuid,
         )
-    return session_count, hr_count
+        hr_count += hr_added
+        route_count += route_added
+    return session_count, hr_count, route_count
 
 
 def upsert_sleep(
@@ -472,6 +540,42 @@ def _body_battery_extreme(entry: dict, pick) -> int | None:
     return pick(levels) if levels else None
 
 
+def upsert_stress(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch today's all-day stress summary into garmin_stress.
+
+    Context only, deliberately NOT a training.compute_status vote:
+    Garmin's own training_readiness score already factors stress
+    history into its aggregate (see
+    TrainingReadiness.stress_history_factor_percent), so a separate
+    stress vote would double-count the same underlying signal and
+    bias the daily status toward red on days that are already
+    reflected in the readiness vote.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a summary was upserted, 0 if none yet.
+    """
+    data = client.get_all_day_stress(date) or {}
+    avg, high = data.get("avgStressLevel"), data.get("maxStressLevel")
+    if avg is None and high is None:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_stress (user_id, local_date, avg_level, "
+        "max_level) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, "
+        "local_date) DO UPDATE SET avg_level = excluded.avg_level, "
+        "max_level = excluded.max_level",
+        (user_id, date, avg, high),
+    )
+    return 1
+
+
 def fetch_and_upsert(
     conn: sqlite3.Connection, user_id: int, username: str,
     days: int = LOOKBACK_DAYS,
@@ -500,7 +604,7 @@ def fetch_and_upsert(
     tz = ZoneInfo(
         db.get_setting(conn, user_id, "timezone") or "Europe/Paris"
     )
-    sessions, hr_samples = upsert_activities(
+    sessions, hr_samples, route_points = upsert_activities(
         conn, user_id, client, tz, days,
     )
     sleep_sessions, sleep_stages = upsert_sleep(
@@ -510,6 +614,7 @@ def fetch_and_upsert(
     counts = {
         "exercise_sessions": sessions,
         "exercise_hr_samples": hr_samples,
+        "exercise_route_points": route_points,
         "sleep_sessions": sleep_sessions,
         "sleep_stages": sleep_stages,
         "hrv": upsert_hrv(conn, user_id, client, today),
@@ -517,6 +622,7 @@ def fetch_and_upsert(
             conn, user_id, client, today,
         ),
         "body_battery": upsert_body_battery(conn, user_id, client, today),
+        "stress": upsert_stress(conn, user_id, client, today),
     }
     ran_at = dt.datetime.now(dt.timezone.utc).isoformat()
     conn.executemany(
@@ -527,6 +633,195 @@ def fetch_and_upsert(
     )
     conn.commit()
     return counts
+
+
+def _treadmill_workout(level: int, values: dict) -> WalkingWorkout:
+    """Build a single-step walking workout for tonight's treadmill session.
+
+    Parameters:
+        level (int): Tonight's treadmill level (name only).
+        values (dict): ``training.treadmill_values()`` output.
+
+    Returns:
+        WalkingWorkout: Ready to upload via ``client.upload_workout``.
+    """
+    duration_s = values["duration_min"] * 60
+    segment = WorkoutSegment(
+        segmentOrder=1,
+        sportType={
+            "sportTypeId": 17, "sportTypeKey": "walking", "displayOrder": 17,
+        },
+        workoutSteps=[create_interval_step(duration_s, step_order=1)],
+    )
+    return WalkingWorkout(
+        workoutName=f"Smart Sport - Tapis niveau {level}",
+        estimatedDurationInSecs=int(duration_s),
+        description=(
+            f"{values['speed_kmh']} km/h, inclinaison "
+            f"{values['incline_pct']}%, {values['duration_min']} min"
+        ),
+        workoutSegments=[segment],
+    )
+
+
+def _circuit_steps(values: dict) -> list[ExecutableStep]:
+    """One step per exercise in ``values`` (reps- or time-based).
+
+    Parameters:
+        values (dict): A circuit session_values() output (lower_body/
+            upper_body/calisthenics) -- every key but ``rounds`` and
+            ``duration_min`` becomes one step.
+
+    Returns:
+        list[ExecutableStep]: Ordered steps, one per exercise.
+    """
+    steps = []
+    for order, (key, value) in enumerate(
+        (k, v) for k, v in values.items() if k not in _NON_STEP_KEYS
+    ):
+        is_time = key.endswith("_sec")
+        condition = (
+            {
+                "conditionTypeId": ConditionType.TIME,
+                "conditionTypeKey": "time", "displayOrder": 2,
+                "displayable": True,
+            } if is_time else {
+                "conditionTypeId": ConditionType.REPS,
+                "conditionTypeKey": "reps", "displayOrder": 10,
+                "displayable": True,
+            }
+        )
+        steps.append(ExecutableStep(
+            stepOrder=order + 1,
+            stepType={
+                "stepTypeId": StepType.INTERVAL,
+                "stepTypeKey": "interval", "displayOrder": 3,
+            },
+            endCondition=condition,
+            endConditionValue=float(value),
+            targetType={
+                "workoutTargetTypeId": TargetType.NO_TARGET,
+                "workoutTargetTypeKey": "no.target", "displayOrder": 1,
+            },
+            # Best-effort only -- not an officially typed field, see
+            # module docstring's ceiling note.
+            description=_EXERCISE_LABEL_FR.get(key, key),
+        ))
+    return steps
+
+
+def _circuit_workout(
+    session_type: str, level: int, values: dict,
+) -> FitnessEquipmentWorkout:
+    """Build a repeat-group bodyweight-circuit workout.
+
+    Parameters:
+        session_type (str): ``lower_body``, ``upper_body`` or
+            ``calisthenics``.
+        level (int): Tonight's level (name only).
+        values (dict): ``training.session_values()`` output.
+
+    Returns:
+        FitnessEquipmentWorkout: Ready to upload.
+    """
+    import training
+
+    group = create_repeat_group(
+        values["rounds"], _circuit_steps(values), step_order=1,
+    )
+    segment = WorkoutSegment(
+        segmentOrder=1,
+        sportType={
+            "sportTypeId": 6, "sportTypeKey": "cardio_training",
+            "displayOrder": 6,
+        },
+        workoutSteps=[group],
+    )
+    label = training.SESSION_LABEL_FR[session_type]
+    description = ", ".join(
+        f"{_EXERCISE_LABEL_FR.get(key, key)} {value}"
+        f"{'s' if key.endswith('_sec') else ''}"
+        for key, value in values.items() if key not in _NON_STEP_KEYS
+    )
+    return FitnessEquipmentWorkout(
+        workoutName=f"Smart Sport - {label} niveau {level}",
+        estimatedDurationInSecs=values["duration_min"] * 60,
+        description=f"{values['rounds']} tours - {description}",
+        workoutSegments=[segment],
+    )
+
+
+def build_workout(session_type: str, level: int, values: dict):
+    """Build a typed Garmin workout from tonight's coach-computed session.
+
+    Parameters:
+        session_type (str): One of ``training.SESSION_LABEL_FR``'s keys.
+        level (int): Tonight's level (name only, doesn't affect
+            enforced targets).
+        values (dict): ``training.session_values()`` output.
+
+    Returns:
+        WalkingWorkout | FitnessEquipmentWorkout: Ready to upload via
+        ``client.upload_workout(workout.to_dict())``.
+    """
+    if session_type == "treadmill":
+        return _treadmill_workout(level, values)
+    return _circuit_workout(session_type, level, values)
+
+
+def push_workout_for_session(
+    conn: sqlite3.Connection, user_id: int, client: Garmin,
+    session_type: str, level: int, values: dict, date: str,
+) -> str:
+    """Push tonight's session to the watch, replacing yesterday's.
+
+    Deletes the previously pushed workout template first (best-effort
+    -- a manually-deleted template on Garmin's side isn't an error
+    here), so the workout library doesn't accumulate one entry per
+    day forever.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        session_type (str): One of ``training.SESSION_LABEL_FR``'s keys.
+        level (int): Tonight's level.
+        values (dict): ``training.session_values()`` output.
+        date (str): ISO local date to schedule the workout on.
+
+    Returns:
+        str: The new Garmin workout id.
+
+    Raises:
+        RuntimeError: The upload response carried no workout id.
+    """
+    old = conn.execute(
+        "SELECT workout_id FROM garmin_workout_pushes WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if old:
+        try:
+            client.delete_workout(old["workout_id"])
+        except Exception:
+            pass
+
+    workout = build_workout(session_type, level, values)
+    result = client.upload_workout(workout.to_dict())
+    workout_id = result.get("workoutId") if isinstance(result, dict) else None
+    if not workout_id:
+        raise RuntimeError(
+            f"Garmin upload_workout returned no workoutId: {result!r}"
+        )
+    client.schedule_workout(workout_id, date)
+    conn.execute(
+        "INSERT INTO garmin_workout_pushes (user_id, workout_id, "
+        "local_date) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE "
+        "SET workout_id = excluded.workout_id, "
+        "local_date = excluded.local_date",
+        (user_id, str(workout_id), date),
+    )
+    conn.commit()
+    return str(workout_id)
 
 
 if __name__ == "__main__":
@@ -558,17 +853,40 @@ if __name__ == "__main__":
             ]
 
         def get_activity_details(self, activity_id: int) -> dict:
+            # Only activity 101 (the outdoor-ish canned one) carries a
+            # GPS track -- 102 (Muscu) has none, the common case for
+            # this project's indoor bodyweight sessions.
+            if activity_id != 101:
+                return {
+                    "metricDescriptors": [
+                        {"key": "directTimestamp", "metricsIndex": 0},
+                        {"key": "directHeartRate", "metricsIndex": 1},
+                    ],
+                    "activityDetailMetrics": [
+                        {"metrics": [1784311200000, 120.0]},
+                        {"metrics": [1784311260000, 150.0]},
+                        {"metrics": [1784311320000, None]},
+                    ],
+                }
             return {
                 "metricDescriptors": [
                     {"key": "directTimestamp", "metricsIndex": 0},
                     {"key": "directHeartRate", "metricsIndex": 1},
+                    {"key": "directLatitude", "metricsIndex": 2},
+                    {"key": "directLongitude", "metricsIndex": 3},
+                    {"key": "directElevation", "metricsIndex": 4},
                 ],
                 "activityDetailMetrics": [
-                    {"metrics": [1784311200000, 120.0]},
-                    {"metrics": [1784311260000, 150.0]},
-                    {"metrics": [1784311320000, None]},
+                    {"metrics": [1784311200000, 120.0, 45.75, 4.85, 200.0]},
+                    {"metrics": [1784311260000, 150.0, 45.76, 4.86, 205.0]},
+                    {"metrics": [1784311320000, None, None, None, None]},
                 ],
             }
+
+        def get_all_day_stress(self, date: str) -> dict:
+            if date != "2026-07-16":
+                return {}
+            return {"avgStressLevel": 32, "maxStressLevel": 68}
 
         def get_sleep_data(self, date: str) -> dict:
             if date != "2026-07-15":
@@ -634,9 +952,21 @@ if __name__ == "__main__":
     # Freeze the fetch window around the canned data's dates.
     real_date = dt.date
 
-    sessions, hr = upsert_activities(conn, uid, fake, tz, 3650)
+    sessions, hr, route = upsert_activities(conn, uid, fake, tz, 3650)
     assert sessions == 2, sessions
     assert hr == 4, hr  # 2 activities x 2 valid samples (None dropped)
+    assert route == 2, route  # only activity 101 carries a GPS track
+    route_rows = conn.execute(
+        "SELECT * FROM exercise_route_points WHERE exercise_uuid = "
+        "'garmin-101' ORDER BY epoch_utc",
+    ).fetchall()
+    assert len(route_rows) == 2, route_rows
+    assert route_rows[0]["latitude"] == 45.75, dict(route_rows[0])
+    assert route_rows[0]["altitude_m"] == 200.0, dict(route_rows[0])
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM exercise_route_points WHERE "
+        "exercise_uuid = 'garmin-102'",
+    ).fetchone()["n"] == 0  # no GPS track for the indoor session
     row = conn.execute(
         "SELECT * FROM exercise_sessions WHERE uuid = 'garmin-101'",
     ).fetchone()
@@ -656,8 +986,10 @@ if __name__ == "__main__":
         "UPDATE exercise_sessions SET label_override = 'perso' "
         "WHERE uuid = 'garmin-101'",
     )
-    sessions2, hr2 = upsert_activities(conn, uid, fake, tz, 3650)
-    assert sessions2 == 2 and hr2 == 0, (sessions2, hr2)
+    sessions2, hr2, route2 = upsert_activities(conn, uid, fake, tz, 3650)
+    assert sessions2 == 2 and hr2 == 0 and route2 == 0, (
+        sessions2, hr2, route2,
+    )
     assert conn.execute(
         "SELECT COUNT(*) AS n FROM exercise_sessions",
     ).fetchone()["n"] == 2
@@ -698,7 +1030,9 @@ if __name__ == "__main__":
                 "duration": 3000.0,
             }]
 
-    dup_sessions, _ = upsert_activities(conn, uid, _OverlapGarmin(), tz, 3650)
+    dup_sessions, _, _ = upsert_activities(
+        conn, uid, _OverlapGarmin(), tz, 3650,
+    )
     assert dup_sessions == 0, dup_sessions
     assert conn.execute(
         "SELECT COUNT(*) AS n FROM exercise_sessions",
@@ -766,10 +1100,88 @@ if __name__ == "__main__":
     assert bb_row["charged"] == 80 and bb_row["drained"] == 45, dict(bb_row)
     assert bb_row["highest"] == 90 and bb_row["lowest"] == 30, dict(bb_row)
 
+    assert upsert_stress(conn, uid, fake, "2026-07-01") == 0
+    assert upsert_stress(conn, uid, fake, "2026-07-16") == 1
+    stress_row = conn.execute(
+        "SELECT * FROM garmin_stress WHERE user_id = ? AND "
+        "local_date = '2026-07-16'", (uid,),
+    ).fetchone()
+    assert stress_row["avg_level"] == 32, dict(stress_row)
+    assert stress_row["max_level"] == 68, dict(stress_row)
+
     # Re-run: idempotent upsert, no duplicate row.
     assert upsert_hrv(conn, uid, fake, "2026-07-16") == 1
     assert conn.execute(
         "SELECT COUNT(*) AS n FROM garmin_hrv WHERE user_id = ?", (uid,),
     ).fetchone()["n"] == 1
+
+    # --- build_workout / push_workout_for_session ---
+    import training
+
+    td_values = training.treadmill_values(5)
+    treadmill_workout = build_workout("treadmill", 5, td_values).to_dict()
+    assert treadmill_workout["workoutName"] == "Smart Sport - Tapis niveau 5"
+    assert (
+        treadmill_workout["estimatedDurationInSecs"]
+        == td_values["duration_min"] * 60
+    )
+    assert "km/h" in treadmill_workout["description"]
+
+    lb_values = training.session_values("lower_body", 4)
+    circuit_workout = build_workout("lower_body", 4, lb_values).to_dict()
+    repeat_group = circuit_workout["workoutSegments"][0]["workoutSteps"][0]
+    assert repeat_group["numberOfIterations"] == lb_values["rounds"]
+    # One step per exercise key (squats, lunges, wall_sit, calf_raises,
+    # glute_bridge) -- rounds/duration_min never become steps.
+    assert len(repeat_group["workoutSteps"]) == 5, repeat_group
+
+    class _FakeWorkoutGarmin:
+        """Records upload/schedule/delete calls -- no live push made."""
+
+        def __init__(self):
+            self.uploaded, self.deleted, self.scheduled = [], [], []
+            self._next_id = 1000
+
+        def upload_workout(self, workout_json):
+            self._next_id += 1
+            self.uploaded.append(workout_json)
+            return {"workoutId": self._next_id}
+
+        def schedule_workout(self, workout_id, date_str):
+            self.scheduled.append((workout_id, date_str))
+            return {}
+
+        def delete_workout(self, workout_id):
+            self.deleted.append(workout_id)
+
+    fake_watch = _FakeWorkoutGarmin()
+    wid1 = push_workout_for_session(
+        conn, uid, fake_watch, "lower_body", 4, lb_values, "2026-07-16",
+    )
+    assert wid1 == "1001", wid1
+    assert fake_watch.deleted == []  # nothing to clean up on first push
+    assert fake_watch.scheduled == [(1001, "2026-07-16")]
+    push_row = conn.execute(
+        "SELECT * FROM garmin_workout_pushes WHERE user_id = ?", (uid,),
+    ).fetchone()
+    assert push_row["workout_id"] == "1001"
+
+    # Next day: yesterday's template gets deleted before the new one
+    # is uploaded+scheduled -- one row per user, not one per day.
+    wid2 = push_workout_for_session(
+        conn, uid, fake_watch, "treadmill", 6, training.treadmill_values(6),
+        "2026-07-17",
+    )
+    assert wid2 == "1002", wid2
+    assert fake_watch.deleted == ["1001"]
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM garmin_workout_pushes WHERE "
+        "user_id = ?", (uid,),
+    ).fetchone()["n"] == 1
+    push_row2 = conn.execute(
+        "SELECT workout_id FROM garmin_workout_pushes WHERE user_id = ?",
+        (uid,),
+    ).fetchone()
+    assert push_row2["workout_id"] == "1002"
 
     print("garmin_api.py: all checks passed (no live Garmin call made)")

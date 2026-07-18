@@ -15,13 +15,13 @@ just you, your numbers, and a plan.
   nutrition flow in from Android's Health Connect — whatever your
   watch and apps already record.
 - **Judges your readiness.** Each day gets a green, yellow or red
-  status from your sleep, resting heart rate and recent training
-  load. Three red days in a row force an easier week — the coach
-  protects you from yourself.
+  status from your sleep, resting heart rate, HRV and training
+  readiness, and recent training load. Three red days in a row force
+  an easier week — the coach protects you from yourself.
 - **Adapts your workout.** Each session type (treadmill, lower body,
   upper body, calisthenics) has its own level that rises and falls
   with your readiness, so tonight's numbers always match today's
-  body.
+  body — and get pushed straight to your watch as a workout.
 - **Talks like a coach.** Claude turns the numbers into a short,
   personal morning message, pushed to your phone and written into
   tonight's calendar event.

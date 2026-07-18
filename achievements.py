@@ -152,6 +152,18 @@ ACHIEVEMENTS = {
         "desc_fr": "FC repos amelioree de 3+ bpm sur ~3 mois.",
         "desc_en": "Resting HR improved 3+ bpm over ~3 months.",
     },
+    "hrv_week": {
+        "icon": "\U0001F9D8", "tier": "silver",
+        "name_fr": "VFC equilibree", "name_en": "Balanced HRV",
+        "desc_fr": "Statut VFC Garmin equilibre 7 jours d'affilee.",
+        "desc_en": "Balanced Garmin HRV status 7 days running.",
+    },
+    "readiness_week": {
+        "icon": "\U0001F50B", "tier": "silver",
+        "name_fr": "Toujours pret", "name_en": "Always Ready",
+        "desc_fr": "Score de preparation Garmin eleve 7 jours d'affilee.",
+        "desc_en": "High Garmin training readiness 7 days running.",
+    },
     "steps_100k": {
         "icon": "\U0001F463", "tier": "bronze",
         "name_fr": "100 000 pas", "name_en": "100K Steps",
@@ -512,6 +524,45 @@ def _count_sleep_good_days(
 
 def _check_sleep_week(conn: sqlite3.Connection, user_id: int, date: str) -> bool:
     return _count_sleep_good_days(conn, user_id, date) == WEEK_CHECK_DAYS
+
+
+def _count_hrv_good_days(
+    conn: sqlite3.Connection, user_id: int, date: str,
+    n: int = WEEK_CHECK_DAYS,
+) -> int:
+    count = 0
+    day = dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    for _ in range(n):
+        wellness = metrics.garmin_wellness(conn, user_id, day.isoformat())
+        if wellness.get("hrv_status") == "BALANCED":
+            count += 1
+        day -= dt.timedelta(days=1)
+    return count
+
+
+def _check_hrv_week(conn: sqlite3.Connection, user_id: int, date: str) -> bool:
+    return _count_hrv_good_days(conn, user_id, date) == WEEK_CHECK_DAYS
+
+
+def _count_readiness_good_days(
+    conn: sqlite3.Connection, user_id: int, date: str,
+    n: int = WEEK_CHECK_DAYS,
+) -> int:
+    count = 0
+    day = dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    for _ in range(n):
+        wellness = metrics.garmin_wellness(conn, user_id, day.isoformat())
+        score = wellness.get("training_readiness_score")
+        if score is not None and score >= training.TRAINING_READINESS_GOOD:
+            count += 1
+        day -= dt.timedelta(days=1)
+    return count
+
+
+def _check_readiness_week(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> bool:
+    return _count_readiness_good_days(conn, user_id, date) == WEEK_CHECK_DAYS
 
 
 def _avg_sleep_hours_30d(
@@ -915,6 +966,8 @@ CHECKS = {
     "sleep_week": _check_sleep_week,
     "sleep_month": _check_sleep_month,
     "rhr_improved": _check_rhr_improved,
+    "hrv_week": _check_hrv_week,
+    "readiness_week": _check_readiness_week,
     "steps_100k": _check_steps_100k,
     "steps_1m": _check_steps_1m,
     "steps_5m": _check_steps_5m,
@@ -1019,6 +1072,16 @@ def achievement_progress(
         return (
             _count_sleep_good_days(conn, user_id, date), WEEK_CHECK_DAYS,
             "jours",
+        )
+    if key == "hrv_week":
+        return (
+            _count_hrv_good_days(conn, user_id, date), WEEK_CHECK_DAYS,
+            "jours",
+        )
+    if key == "readiness_week":
+        return (
+            _count_readiness_good_days(conn, user_id, date),
+            WEEK_CHECK_DAYS, "jours",
         )
     if key == "sleep_month":
         avg = _avg_sleep_hours_30d(conn, user_id, date)
@@ -1385,6 +1448,24 @@ if __name__ == "__main__":
     conn.commit()
     unlocked5 = check_and_unlock(conn, uid, "2026-08-05")
     assert "comeback" in unlocked5
+
+    # 7 days of balanced HRV + high readiness -> both weekly Garmin
+    # achievements unlock; a lone gap breaks the streak.
+    for i in range(7):
+        day = (dt.date(2026, 8, 6) + dt.timedelta(days=i)).isoformat()
+        conn.execute(
+            "INSERT INTO garmin_hrv VALUES (?, ?, 55.0, 58.0, 'BALANCED')",
+            (uid, day),
+        )
+        conn.execute(
+            "INSERT INTO garmin_training_readiness VALUES "
+            "(?, ?, 80, 'HIGH', 'note')", (uid, day),
+        )
+    conn.commit()
+    unlocked6 = check_and_unlock(conn, uid, "2026-08-13")
+    assert "hrv_week" in unlocked6, unlocked6
+    assert "readiness_week" in unlocked6, unlocked6
+    assert _count_hrv_good_days(conn, other_uid, "2026-08-13") == 0
 
     summary = score(conn, uid)
     assert summary["unlocked_count"] >= 6

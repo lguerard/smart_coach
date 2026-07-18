@@ -31,7 +31,22 @@
         {% if s.notes %}
         <p class="text-xs mt-1" style="color: var(--text-secondary);">{{ s.notes }}</p>
         {% endif %}
+        {% if s.hr_zones %}
+        <div class="flex mt-2 rounded-full overflow-hidden" style="height: 6px; max-width: 220px;">
+          {% set zone_colors = ["#6b7280", "#3b82f6", "#22c55e", "#eab308", "#ef4444"] %}
+          {% for pct in s.hr_zones %}
+          {% if pct > 0 %}
+          <div style="width: {{ pct }}%; background: {{ zone_colors[loop.index0] }};" title="Z{{ loop.index }}: {{ pct }}%"></div>
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
       </div>
+      {% if s.route_points %}
+      <svg viewBox="0 0 100 60" class="shrink-0" style="width: 60px; height: 36px; opacity: 0.8;">
+        <polyline points="{{ s.route_points }}" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+      </svg>
+      {% endif %}
       <details class="shrink-0">
         <summary class="text-xs px-2 py-1 rounded-full border cursor-pointer list-none"
           style="border-color: var(--border); color: var(--blue);">

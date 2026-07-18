@@ -696,6 +696,19 @@ def trends(request: Request) -> HTMLResponse:
     load_by_date = {r["local_date"]: r for r in load_history}
     latest_load = training_load.latest_training_load(conn, user_id)
 
+    hrv_rows = conn.execute(
+        "SELECT local_date, last_night_avg FROM garmin_hrv WHERE "
+        "user_id = ? AND local_date >= ? ORDER BY local_date",
+        (user_id, dates[0]),
+    ).fetchall()
+    hrv_by_date = {r["local_date"]: r["last_night_avg"] for r in hrv_rows}
+    readiness_rows = conn.execute(
+        "SELECT local_date, score FROM garmin_training_readiness WHERE "
+        "user_id = ? AND local_date >= ? ORDER BY local_date",
+        (user_id, dates[0]),
+    ).fetchall()
+    readiness_by_date = {r["local_date"]: r["score"] for r in readiness_rows}
+
     return templates.TemplateResponse(
         request, "trends.html", {
             "dates": dates,
@@ -728,17 +741,58 @@ def trends(request: Request) -> HTMLResponse:
                 else None for d in dates
             ],
             "latest_load": latest_load,
+            "hrv_values": [hrv_by_date.get(d) for d in dates],
+            "readiness_values": [readiness_by_date.get(d) for d in dates],
         },
     )
 
 
 # --- Sessions ---
 
+def _route_svg_points(
+    conn: sqlite3.Connection, user_id: int, uuid: str,
+) -> str | None:
+    """Normalized SVG polyline points for one session's GPS route.
+
+    ponytail: a simple lat/long linear rescale, not a real map
+    projection -- fine for a tiny route-shape preview (loop vs
+    out-and-back), would distort at high latitudes or long routes;
+    swap for a proper projection if that ever matters here.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        uuid (str): exercise_sessions uuid.
+
+    Returns:
+        str | None: ``"x,y x,y ..."`` for a 100x60 viewBox, or
+        ``None`` if this session has fewer than 2 route points.
+    """
+    rows = conn.execute(
+        "SELECT latitude, longitude FROM exercise_route_points WHERE "
+        "user_id = ? AND exercise_uuid = ? ORDER BY epoch_utc",
+        (user_id, uuid),
+    ).fetchall()
+    if len(rows) < 2:
+        return None
+    lats = [r["latitude"] for r in rows]
+    lons = [r["longitude"] for r in rows]
+    lat_span = (max(lats) - min(lats)) or 1e-6
+    lon_span = (max(lons) - min(lons)) or 1e-6
+    points = [
+        f"{(lon - min(lons)) / lon_span * 100:.1f},"
+        f"{60 - (lat - min(lats)) / lat_span * 60:.1f}"
+        for lat, lon in zip(lats, lons)
+    ]
+    return " ".join(points)
+
+
 @app.get("/sessions", response_class=HTMLResponse)
 def sessions(request: Request) -> HTMLResponse:
     """Browsable table of recent exercise sessions."""
     conn = get_conn()
     user_id = current_user_id(request)
+    max_hr_est = metrics.estimated_max_hr(conn, user_id)
     rows = conn.execute(
         "SELECT * FROM exercise_sessions WHERE user_id = ? ORDER BY "
         "start_utc DESC LIMIT 60", (user_id,),
@@ -782,6 +836,11 @@ def sessions(request: Request) -> HTMLResponse:
             "avg_hr": round(hr["avg_hr"]) if hr else None,
             "max_hr": hr["max_hr"] if hr else None,
             "kcal": round(kcal) if kcal is not None else None,
+            "hr_zones": (
+                metrics.hr_zone_pct(conn, user_id, row["uuid"], max_hr_est)
+                if max_hr_est and hr else []
+            ),
+            "route_points": _route_svg_points(conn, user_id, row["uuid"]),
         })
     return templates.TemplateResponse(
         request, "sessions.html", {"sessions": items},

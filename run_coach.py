@@ -5,13 +5,15 @@ every user account.
 
 Run after run_ingest.py. Structurally the same pipeline as
 garmin-coach's coach.py:main(), but every input now comes from
-smart_sport's own db (Health Connect derived) instead of live Garmin
-Connect API calls, and the payload additionally carries
-progress.weekly_progress() so the message can speak to actual
-weight/muscle-gain progress, not just today's snapshot. Also applies
-the deload guardrail on top of the daily +-1 level adjustment, and
-checks/announces achievement unlocks. One user's failure (e.g. an
-expired Calendar token) doesn't block the others.
+smart_sport's own db (Health Connect derived, plus Garmin API for
+exercise/sleep/wellness -- see ingest/garmin_api.py) instead of live
+Garmin Connect API calls at coaching time, and the payload
+additionally carries progress.weekly_progress() so the message can
+speak to actual weight/muscle-gain progress, not just today's
+snapshot. Also applies the deload guardrail on top of the daily +-1
+level adjustment, pushes tonight's session to the watch as a Garmin
+workout, and checks/announces achievement unlocks. One user's failure
+(e.g. an expired Calendar token) doesn't block the others.
 """
 
 import datetime as dt
@@ -25,6 +27,7 @@ import notify
 import progress
 import training
 import training_load
+from ingest import garmin_api
 
 
 def run_for_user(conn, user: dict) -> None:
@@ -53,6 +56,7 @@ def run_for_user(conn, user: dict) -> None:
     status = None
     level = None
     calendar_note = None
+    workout_note = None
 
     if session_type is not None:
         baseline = training.rhr_baseline(conn, user_id, today)
@@ -105,6 +109,15 @@ def run_for_user(conn, user: dict) -> None:
             except Exception as error:
                 calendar_note = f"(Calendrier non mis a jour: {error})"
 
+        try:
+            watch_client = garmin_api.get_client(username)
+            garmin_api.push_workout_for_session(
+                conn, user_id, watch_client, session_type, level, values,
+                today,
+            )
+        except Exception as error:
+            workout_note = f"(Entrainement non envoye a la montre: {error})"
+
     payload = {
         "date": today,
         "language": language,
@@ -119,6 +132,8 @@ def run_for_user(conn, user: dict) -> None:
     message = llm.coach(payload)
     if calendar_note:
         message = f"{message}\n{calendar_note}"
+    if workout_note:
+        message = f"{message}\n{workout_note}"
 
     conn.execute(
         "INSERT INTO coach_log (user_id, created_at, local_date, status, "

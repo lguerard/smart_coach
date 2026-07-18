@@ -30,11 +30,12 @@ overview, see the [README](../README.md).
 **Input**, two sources:
 
 - **Garmin API** (`ingest/garmin_api.py`): exercise sessions
-  (correct activity types, per-session HR series), sleep (sessions +
-  stages), and daily HRV / training readiness / body battery.
-  Garmin's Health Connect writer mislabels activity types and never
-  syncs workout HR series or any of the recovery signals — the API
-  has all of it, so these domains bypass Health Connect entirely.
+  (correct activity types, per-session HR series, GPS route points
+  when the activity has a track), sleep (sessions + stages), and
+  daily HRV / training readiness / body battery / stress. Garmin's
+  Health Connect writer mislabels activity types and never syncs
+  workout HR series, GPS tracks, or any of the recovery signals — the
+  API has all of it, so these domains bypass Health Connect entirely.
 - **`health_connect_export.db`** — Android's raw internal Health
   Connect SQLite backup — for every other record type (steps, heart
   rate, weight, body fat, nutrition, hydration, ...), from whichever
@@ -44,23 +45,42 @@ HRV status and training readiness feed real votes in the daily
 green/yellow/red status (`training.compute_status`), alongside a
 resting-HR baseline computed from your own ingested history, a
 sleep-score approximation from sleep stages, and an activity-load
-signal from recent exercise volume. Body battery has no vote (it's a
-running energy gauge, not a morning score) but shows on the
-dashboard and reaches the coaching message. VO2max is not ingested
-yet (`get_max_metrics` has no stable typed schema in the Garmin
-client used here).
+signal from recent exercise volume. Body battery and stress have no
+vote — body battery is a running energy gauge, not a morning score,
+and a separate stress vote would double-count what
+training-readiness's own aggregate already factors in — both are
+dashboard/LLM context only. VO2max is not ingested (`get_max_metrics`
+has no stable typed schema in the Garmin client used here).
+
+Two capabilities were explicitly checked and are **not available**:
+Garmin Explore's route-suggestion/popularity-routing feature has no
+endpoint in the `garminconnect` client (or any known reverse-engineered
+one) — it's bound to Garmin Connect's own map UI and Explore-badged
+devices. Conversely, **pushing tonight's session to the watch as a
+Garmin workout is implemented**
+(`ingest/garmin_api.py:push_workout_for_session`, called from
+`run_coach.py`): it builds a typed workout from
+`training.session_values()` (a single timed step for treadmill, a
+repeat-group of rep/time steps for the bodyweight circuits) and
+uploads + schedules it, deleting yesterday's pushed template first.
+Ceiling: per-exercise step labels ride an unofficial `description`
+field with no confirmed on-watch display — verify against a real
+account; the mechanism (upload/schedule/cleanup) is solid regardless.
 
 **Output**: every morning, one concrete plan — tonight's session
-(level-adapted numbers) plus the day's calorie/macro/hydration
-budget — delivered as an ntfy push + Google Calendar event update,
-phrased by Claude from your full history (last 7 days of real
-sessions with HR/RPE/calories, planned-vs-done adherence, daily
-status streak, CTL/ATL/TSB training load, weight/nutrition trends).
-Plus a dashboard at `http://<host>:8080` with Today (targets card
-with live progress bars; tonight's level is editable inline and the
-edit is pushed straight to the calendar event), Progress, Trends,
-Sessions (with per-workout avg/max HR and kcal), Achievements, and
-Settings (goals, weekly plan editor, ingestion health check).
+(level-adapted numbers, also pushed to the watch) plus the day's
+calorie/macro/hydration budget — delivered as an ntfy push and
+Google Calendar event update, phrased by Claude from your full
+history (last 7 days of real sessions with HR/RPE/calories,
+planned-vs-done adherence, daily status streak, CTL/ATL/TSB training
+load, weight/nutrition trends). Plus a dashboard at
+`http://<host>:8080` with Today (targets card with live progress
+bars; tonight's level is editable inline and the edit is pushed
+straight to the calendar event), Progress, Trends (including a
+30-day HRV/training-readiness chart), Sessions (per-workout avg/max
+HR, an HR-zone breakdown bar, and a GPS route-shape preview when
+available), Achievements, and Settings (goals, weekly plan editor,
+ingestion health check).
 
 ## Architecture
 
@@ -77,10 +97,12 @@ worker container cron
                            applies the deload guardrail (3 reds in a
                            row -> forced lighter week) on top of the
                            daily status/level; gcal.py updates
-                           tonight's event; llm.py (claude -p) phrases
-                           the message; achievements.py checks/announces
-                           unlocks; notify.py pushes it; logged to
-                           coach_log
+                           tonight's event; garmin_api.py pushes
+                           tonight's session to the watch as a
+                           scheduled workout; llm.py (claude -p)
+                           phrases the message; achievements.py
+                           checks/announces unlocks; notify.py
+                           pushes it; logged to coach_log
 
 Note: no same-day/afternoon check-in -- the Health Connect export
 syncs once a day (overnight), so "today's" data doesn't exist until
