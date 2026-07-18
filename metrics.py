@@ -357,8 +357,10 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         ``training_readiness_score``, ``training_readiness_level``,
         ``body_battery_charged``, ``body_battery_drained``,
         ``body_battery_highest``, ``body_battery_lowest``,
-        ``stress_avg_level``, ``stress_max_level`` -- keys with no
-        data that day are simply absent.
+        ``stress_avg_level``, ``stress_max_level``,
+        ``menstrual_cycle_phase`` (only present if the user opted
+        into tracking it) -- keys with no data that day are simply
+        absent.
     """
     result: dict = {}
     hrv = conn.execute(
@@ -392,6 +394,12 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     if stress:
         result["stress_avg_level"] = stress["avg_level"]
         result["stress_max_level"] = stress["max_level"]
+    cycle = conn.execute(
+        "SELECT phase FROM garmin_menstrual_cycle WHERE user_id = ? "
+        "AND local_date = ?", (user_id, date),
+    ).fetchone()
+    if cycle and cycle["phase"]:
+        result["menstrual_cycle_phase"] = cycle["phase"]
     return result
 
 
@@ -755,6 +763,10 @@ if __name__ == "__main__":
         "INSERT INTO garmin_stress VALUES (?, '2026-07-13', 32, 68)",
         (uid,),
     )
+    conn.execute(
+        "INSERT INTO garmin_menstrual_cycle VALUES (?, '2026-07-13', "
+        "'LUTEAL')", (uid,),
+    )
     conn.commit()
 
     # 2026-07-13 06:00 UTC = 08:00 Europe/Paris (CEST), so this
@@ -788,6 +800,7 @@ if __name__ == "__main__":
     assert wellness["body_battery_lowest"] == 30
     assert wellness["stress_avg_level"] == 32
     assert wellness["stress_max_level"] == 68
+    assert wellness["menstrual_cycle_phase"] == "LUTEAL"
     assert garmin_wellness(conn, uid, "2026-07-01") == {}  # no data that day
 
     # Data isolation: the other user sees none of uid's data.
@@ -795,6 +808,7 @@ if __name__ == "__main__":
     assert other_wellness.get("steps_today") == 99999
     assert "sleep_score" not in other_wellness
     assert "hrv_status" not in other_wellness
+    assert "menstrual_cycle_phase" not in other_wellness
 
     # --- history_snapshot ---
     # HR samples + overlapping active-calories for e1 (07-12 18:00-30).

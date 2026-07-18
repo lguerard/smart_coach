@@ -1116,6 +1116,13 @@ async def save_settings(request: Request):
     for key in db.DEFAULT_SETTINGS:
         if key in form:
             db.set_setting(conn, user_id, key, str(form[key]).strip())
+    # Checkbox settings are absent from form data entirely when
+    # unchecked -- the generic loop above can only ever turn them on,
+    # never off, so they need explicit handling.
+    db.set_setting(
+        conn, user_id, "track_menstrual_cycle",
+        "1" if "track_menstrual_cycle" in form else "0",
+    )
     for session_type in training.SESSION_LABEL_FR:
         field = f"level_{session_type}"
         if field in form and str(form[field]).strip():

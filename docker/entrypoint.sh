@@ -17,6 +17,8 @@ case "$1" in
         {
             echo "30 5 * * * . /app/container.env; cd /app && python run_ingest.py >> /proc/1/fd/1 2>&1"
             echo "0 6 * * * . /app/container.env; cd /app && python run_coach.py >> /proc/1/fd/1 2>&1"
+            echo "0 16 * * * . /app/container.env; cd /app && python run_checkin.py afternoon >> /proc/1/fd/1 2>&1"
+            echo "0 21 * * * . /app/container.env; cd /app && python run_checkin.py evening >> /proc/1/fd/1 2>&1"
         } | crontab -
 
         exec cron -f

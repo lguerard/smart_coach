@@ -637,6 +637,49 @@ def upsert_badges(
     return len(rows)
 
 
+# get_menstrual_data_for_date has no typed wrapper AND no test
+# fixture upstream (same as badges, but higher stakes -- sensitive
+# personal health data). Only ever fetched if the user opts in
+# (settings.track_menstrual_cycle) -- never otherwise. Parsing is
+# maximally defensive: if the guessed field name is wrong, the day is
+# silently skipped, never a wrong/fabricated phase shown. Surfaced as
+# LLM context only (metrics.garmin_wellness), never a hard training
+# or nutrition rule -- verify against a real account and adjust
+# _cycle_phase's candidate keys if this never populates.
+def _cycle_phase(data: dict) -> str | None:
+    return (
+        data.get("cyclePhaseType") or data.get("phase")
+        or data.get("dayType")
+    )
+
+
+def upsert_menstrual_cycle(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch one day's menstrual cycle phase, opt-in only.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a phase was upserted, 0 if none/unrecognized.
+    """
+    data = client.get_menstrual_data_for_date(date) or {}
+    phase = _cycle_phase(data)
+    if not phase:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_menstrual_cycle (user_id, local_date, "
+        "phase) VALUES (?, ?, ?) ON CONFLICT(user_id, local_date) DO "
+        "UPDATE SET phase = excluded.phase",
+        (user_id, date, phase),
+    )
+    return 1
+
+
 def fetch_and_upsert(
     conn: sqlite3.Connection, user_id: int, username: str,
     days: int = LOOKBACK_DAYS,
@@ -685,6 +728,11 @@ def fetch_and_upsert(
         "body_battery": upsert_body_battery(conn, user_id, client, today),
         "stress": upsert_stress(conn, user_id, client, today),
         "badges": upsert_badges(conn, user_id, client),
+        "menstrual_cycle": (
+            upsert_menstrual_cycle(conn, user_id, client, today)
+            if db.get_setting(conn, user_id, "track_menstrual_cycle") == "1"
+            else 0
+        ),
     }
     ran_at = dt.datetime.now(dt.timezone.utc).isoformat()
     conn.executemany(
@@ -960,6 +1008,11 @@ if __name__ == "__main__":
                 {"badgeId": 43, "badgeEarnedDate": "2026-07-11T08:00:00.0"},
             ]
 
+        def get_menstrual_data_for_date(self, date: str) -> dict:
+            if date != "2026-07-16":
+                return {}
+            return {"cyclePhaseType": "LUTEAL"}
+
         def get_sleep_data(self, date: str) -> dict:
             if date != "2026-07-15":
                 return {"dailySleepDTO": {}}
@@ -1194,6 +1247,16 @@ if __name__ == "__main__":
         "SELECT COUNT(*) AS n FROM garmin_badges WHERE user_id = ?",
         (uid,),
     ).fetchone()["n"] == 1
+
+    # Menstrual cycle: opt-in only, never called unless the caller
+    # gates it -- direct unit test of the ingestion function itself.
+    assert upsert_menstrual_cycle(conn, uid, fake, "2026-07-01") == 0
+    assert upsert_menstrual_cycle(conn, uid, fake, "2026-07-16") == 1
+    cycle_row = conn.execute(
+        "SELECT phase FROM garmin_menstrual_cycle WHERE user_id = ? "
+        "AND local_date = '2026-07-16'", (uid,),
+    ).fetchone()
+    assert cycle_row["phase"] == "LUTEAL", dict(cycle_row)
 
     # Re-run: idempotent upsert, no duplicate row.
     assert upsert_hrv(conn, uid, fake, "2026-07-16") == 1

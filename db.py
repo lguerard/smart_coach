@@ -222,6 +222,18 @@ CREATE TABLE IF NOT EXISTS garmin_badges (
     PRIMARY KEY (user_id, badge_key)
 );
 
+-- Opt-in only (settings.track_menstrual_cycle) -- never fetched
+-- otherwise. phase is a best-effort extraction (see
+-- ingest/garmin_api.py:upsert_menstrual_cycle) from an endpoint with
+-- no typed wrapper or test fixture upstream; context for the LLM
+-- only, never a hard training/nutrition rule.
+CREATE TABLE IF NOT EXISTS garmin_menstrual_cycle (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    phase TEXT,
+    PRIMARY KEY (user_id, local_date)
+);
+
 CREATE TABLE IF NOT EXISTS weight (
     uuid TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -486,6 +498,18 @@ DEFAULT_SETTINGS = {
     # Max session duration: sessions stay dense and short by default;
     # raise this to let high levels extend the session instead.
     "session_cap_min": "30",
+    # Calendar checked for real-life conflicts before pushing tonight's
+    # session (gcal.find_available_start) -- "primary" (the account's
+    # main calendar) if unset. Only relevant if calendar_name differs
+    # from where the user's actual day lives.
+    "busy_calendar_name": "",
+    # City for the weather context (Open-Meteo, geocoded fresh each
+    # ingest run) -- e.g. "Lyon,FR". Empty disables the feature.
+    "city": "",
+    # Opt-in: fetches Garmin's menstrual cycle data (unofficial API,
+    # unverified field names) as LLM context only, never ingested
+    # otherwise.
+    "track_menstrual_cycle": "0",
 }
 
 

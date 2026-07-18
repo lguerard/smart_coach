@@ -7,7 +7,8 @@ from _helpers import run_module_selfcheck
 
 MODULES = [
     "db.py", "training.py", "training_load.py", "metrics.py", "progress.py",
-    "achievements.py", "llm.py", "notify.py", "gcal.py",
+    "achievements.py", "llm.py", "notify.py", "gcal.py", "weather.py",
+    "run_checkin.py",
     "ingest/sync_drive.py", "ingest/parse_health_connect.py",
     "ingest/garmin_api.py",
 ]

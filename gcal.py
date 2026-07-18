@@ -105,6 +105,93 @@ def resolve_calendar_id(service, name: str) -> str:
     raise RuntimeError(f"No calendar named {name!r} on this account.")
 
 
+# How far into the evening find_available_start will look for a free
+# slot before giving up and keeping the original (conflicting) time.
+RESCHEDULE_DAY_END_HOUR = 22
+RESCHEDULE_STEP_MIN = 15
+
+
+def _busy_intervals(
+    service, calendar_id: str, day: dt.date,
+) -> list[tuple[dt.datetime, dt.datetime]]:
+    """Busy blocks on ``calendar_id`` for one day, via freebusy.
+
+    Parameters:
+        service: Authenticated Calendar API service.
+        calendar_id (str): Calendar to check (e.g. "primary").
+        day (date): Day to check.
+
+    Returns:
+        list[tuple[datetime, datetime]]: Busy (start, end) pairs.
+    """
+    day_start = dt.datetime.combine(day, dt.time(0, 0)).astimezone()
+    day_end = dt.datetime.combine(
+        day, dt.time(RESCHEDULE_DAY_END_HOUR, 0)
+    ).astimezone()
+    result = service.freebusy().query(body={
+        "timeMin": day_start.isoformat(), "timeMax": day_end.isoformat(),
+        "items": [{"id": calendar_id}],
+    }).execute()
+    busy = result.get("calendars", {}).get(calendar_id, {}).get("busy", [])
+    return [
+        (
+            dt.datetime.fromisoformat(b["start"]),
+            dt.datetime.fromisoformat(b["end"]),
+        )
+        for b in busy
+    ]
+
+
+def find_available_start(
+    service, calendar_id: str, day: dt.date, template: dict,
+    duration_min: int,
+) -> tuple[str, bool]:
+    """Tonight's session start time, moved later if it conflicts.
+
+    Real life comes first: if the planned slot overlaps something
+    already on ``calendar_id`` (a real meeting, travel, ...), look for
+    the next free slot of ``duration_min`` before
+    ``RESCHEDULE_DAY_END_HOUR``. If none exists, keep the original
+    time rather than pushing the session somewhere unreasonable (e.g.
+    the middle of the night) -- a packed day beats a silently-wrong
+    schedule.
+
+    Parameters:
+        service: Authenticated Calendar API service.
+        calendar_id (str): Calendar checked for conflicts (the user's
+            ``busy_calendar_name`` setting, or "primary").
+        day (date): Day of the session.
+        template (dict): Weekday template with a ``"start"`` HH:MM.
+        duration_min (int): Today's computed session length.
+
+    Returns:
+        tuple[str, bool]: ``(start HH:MM, moved)`` -- ``moved`` is
+        true only when a different, free slot was found.
+    """
+    hour, minute = (int(part) for part in template["start"].split(":"))
+    planned_start = dt.datetime.combine(day, dt.time(hour, minute)).astimezone()
+    planned_end = planned_start + dt.timedelta(minutes=duration_min)
+    busy = _busy_intervals(service, calendar_id, day)
+
+    def overlaps(start: dt.datetime, end: dt.datetime) -> bool:
+        return any(start < b_end and end > b_start for b_start, b_end in busy)
+
+    if not overlaps(planned_start, planned_end):
+        return template["start"], False
+
+    day_end_limit = dt.datetime.combine(
+        day, dt.time(RESCHEDULE_DAY_END_HOUR, 0)
+    ).astimezone()
+    candidate = planned_start
+    step = dt.timedelta(minutes=RESCHEDULE_STEP_MIN)
+    while candidate + dt.timedelta(minutes=duration_min) <= day_end_limit:
+        candidate_end = candidate + dt.timedelta(minutes=duration_min)
+        if not overlaps(candidate, candidate_end):
+            return candidate.strftime("%H:%M"), True
+        candidate += step
+    return template["start"], False  # no free slot -- keep the original
+
+
 def _search_window(day: dt.date, template: dict) -> tuple[str, str]:
     """Compute the [timeMin, timeMax) RFC3339 search window.
 
@@ -236,4 +323,57 @@ if __name__ == "__main__":
     assert (end - start).total_seconds() / 60 == (
         WINDOW_BEFORE_MIN + WINDOW_AFTER_MIN
     )
+
+    # find_available_start: no conflict -> keeps the planned time.
+    day = dt.date(2026, 7, 13)
+    template = {"start": "20:00", "duration_min": 30}
+
+    class _FakeFreebusy:
+        def __init__(self, busy):
+            self._busy = busy
+
+        def query(self, body):
+            return self
+
+        def execute(self):
+            return {"calendars": {"cal-1": {"busy": self._busy}}}
+
+    class _FakeService:
+        def __init__(self, busy):
+            self._freebusy = _FakeFreebusy(busy)
+
+        def freebusy(self):
+            return self._freebusy
+
+    def _iso(hour: int, minute: int = 0) -> str:
+        return dt.datetime.combine(
+            day, dt.time(hour, minute)
+        ).astimezone().isoformat()
+
+    free_service = _FakeService([])
+    assert find_available_start(
+        free_service, "cal-1", day, template, 30,
+    ) == ("20:00", False)
+
+    # A meeting exactly over the planned slot -> pushed to the next
+    # free 30-min slot after it ends.
+    busy_service = _FakeService(
+        [{"start": _iso(20, 0), "end": _iso(20, 45)}]
+    )
+    new_start, moved = find_available_start(
+        busy_service, "cal-1", day, template, 30,
+    )
+    assert moved is True
+    assert new_start == "20:45", new_start
+
+    # Booked solid until the day-end limit -> no slot, original kept.
+    packed_service = _FakeService(
+        [{"start": _iso(0, 0), "end": _iso(RESCHEDULE_DAY_END_HOUR, 0)}]
+    )
+    kept_start, kept_moved = find_available_start(
+        packed_service, "cal-1", day, template, 30,
+    )
+    assert kept_moved is False
+    assert kept_start == "20:00"
+
     print("gcal.py: all checks passed (no live Calendar call made)")

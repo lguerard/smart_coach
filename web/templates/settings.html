@@ -65,9 +65,26 @@
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
     <label class="block text-sm">
+      Calendrier verifie pour les conflits (optionnel -- vide = calendrier
+      principal du compte)
+      <input name="busy_calendar_name" value="{{ settings.busy_calendar_name }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
       Sujet ntfy (notifications)
       <input name="ntfy_topic" value="{{ settings.ntfy_topic }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
+      Ville (meteo du jour -- optionnel, ex. "Lyon,FR")
+      <input name="city" value="{{ settings.city }}"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="flex items-center justify-between text-sm">
+      Suivre le cycle menstruel (donnee Garmin, contexte coach uniquement)
+      <input name="track_menstrual_cycle" type="checkbox" value="1"
+        {{ "checked" if settings.track_menstrual_cycle == "1" }}
+        class="rounded border" style="border-color: var(--border);">
     </label>
   </div>
 

@@ -27,6 +27,7 @@ import notify
 import progress
 import training
 import training_load
+import weather
 from ingest import garmin_api
 
 
@@ -113,10 +114,39 @@ def run_for_user(conn, user: dict) -> None:
                 "les Reglages)"
             )
         else:
+            push_template = template
+            try:
+                # Real life first: if tonight's usual slot conflicts
+                # with something already on the user's day (a
+                # meeting, travel...), move the session rather than
+                # silently double-booking. Best-effort -- a failure
+                # here just keeps the original template time.
+                service = gcal.get_calendar_service(username)
+                busy_calendar = (
+                    db.get_setting(conn, user_id, "busy_calendar_name")
+                    or "primary"
+                )
+                new_start, moved = gcal.find_available_start(
+                    service, busy_calendar,
+                    dt.date.fromisoformat(today), template,
+                    values.get("duration_min") or template["duration_min"],
+                )
+                if moved:
+                    push_template = {**template, "start": new_start}
+                    moved_note = (
+                        f"(Horaire deplace a {new_start} -- journee "
+                        "chargee)" if language == "fr"
+                        else f"(Moved to {new_start} -- busy day)"
+                    )
+                    calendar_description = (
+                        f"{calendar_description}\n{moved_note}"
+                    )
+            except Exception:
+                pass
             try:
                 gcal.push_description(
                     username, calendar_name,
-                    dt.date.fromisoformat(today), template,
+                    dt.date.fromisoformat(today), push_template,
                     calendar_description,
                     duration_min=values.get("duration_min"),
                 )
@@ -132,6 +162,16 @@ def run_for_user(conn, user: dict) -> None:
         except Exception as error:
             workout_note = f"(Entrainement non envoye a la montre: {error})"
 
+    weather_today = None
+    city = db.get_setting(conn, user_id, "city")
+    if city:
+        try:
+            weather_today = weather.today_weather(
+                city, tz=metrics.local_tz(conn, user_id).key,
+            )
+        except Exception:
+            weather_today = None  # best-effort context only
+
     payload = {
         "date": today,
         "language": language,
@@ -140,6 +180,7 @@ def run_for_user(conn, user: dict) -> None:
         "weekly_progress": weekly,
         "today_session": today_session,
         "today_targets": progress.macro_targets(conn, user_id, today),
+        **({"weather_today": weather_today} if weather_today else {}),
         **metrics.history_snapshot(conn, user_id, today),
     }
 

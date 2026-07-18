@@ -25,6 +25,11 @@ just you, your numbers, and a plan.
 - **Talks like a coach.** Claude turns the numbers into a short,
   personal morning message, pushed to your phone and written into
   tonight's calendar event.
+- **Fits your real day.** If tonight's usual slot conflicts with
+  something already on your calendar, it moves the session instead
+  of ignoring your life. A quick check mid-afternoon and again in
+  the evening nudges you only when you're actually falling behind on
+  hydration, steps or sleep — silent the rest of the time.
 - **Shows the big picture.** A dashboard you can pin to your home
   screen tracks progress, trends, sessions and achievements — and
   lets you tweak tonight's plan with one tap.

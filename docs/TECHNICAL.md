@@ -67,13 +67,37 @@ Ceiling: per-exercise step labels ride an unofficial `description`
 field with no confirmed on-watch display — verify against a real
 account; the mechanism (upload/schedule/cleanup) is solid regardless.
 
+Three more life-integration pieces:
+
+- **Calendar-aware scheduling** (`gcal.py:find_available_start`):
+  before pushing tonight's event, a freebusy query checks a real
+  calendar (Settings → "calendrier vérifié pour les conflits",
+  `busy_calendar_name`, "primary" if unset) for the planned slot. A
+  conflict moves the session to the next free slot before 22:00; no
+  free slot keeps the original time rather than picking something
+  unreasonable.
+- **Weather context** (`weather.py`, Open-Meteo — free, no API key):
+  if a city is set, today's forecast rides in `weather_today` and
+  the prompt may mention it (e.g. suggesting an outdoor alternative
+  on a nice day) — it never changes the prescribed session, since
+  none of this project's session types have an outdoor equivalent.
+- **Menstrual cycle** (`ingest/garmin_api.py:upsert_menstrual_cycle`,
+  Settings → "suivre le cycle menstruel", opt-in and off by
+  default): like Garmin badges, `get_menstrual_data_for_date` has no
+  typed wrapper or test fixture upstream, so the phase is a
+  best-effort field guess — never fetched unless opted in, surfaced
+  as LLM context only, never a hard training/nutrition rule.
+
 **Output**: every morning, one concrete plan — tonight's session
 (level-adapted numbers, also pushed to the watch) plus the day's
 calorie/macro/hydration budget — delivered as an ntfy push and
 Google Calendar event update, phrased by Claude from your full
 history (last 7 days of real sessions with HR/RPE/calories,
 planned-vs-done adherence, daily status streak, CTL/ATL/TSB training
-load, weight/nutrition trends). Plus a dashboard at
+load, weight/nutrition trends). Plus two optional daily nudges
+(`run_checkin.py`, 16:00 and 21:00) if hydration/steps fall behind
+pace or recent sleep is running short — silent when you're on track.
+Plus a dashboard at
 `http://<host>:8080` with Today (targets card with live progress
 bars; tonight's level is editable inline and the edit is pushed
 straight to the calendar event), Progress, Trends (including a
@@ -101,19 +125,29 @@ worker container cron
                            applies the deload guardrail (3 reds in a
                            row, OR a single critically negative TSB
                            reading -> forced lighter week) on top of
-                           the daily status/level; gcal.py updates
-                           tonight's event; garmin_api.py pushes
+                           the daily status/level; gcal.py checks the
+                           user's real calendar for conflicts and
+                           moves tonight's slot if needed before
+                           updating the event; garmin_api.py pushes
                            tonight's session to the watch as a
-                           scheduled workout; llm.py (claude -p)
-                           phrases the message; achievements.py
-                           checks/announces unlocks; notify.py
-                           pushes it; logged to coach_log
+                           scheduled workout; weather.py adds today's
+                           forecast as context if a city is set;
+                           llm.py (claude -p) phrases the message
+                           (folding in cycle phase/weather if
+                           relevant); achievements.py checks/
+                           announces unlocks; notify.py pushes it;
+                           logged to coach_log
+  16:00  run_checkin.py   afternoon: nudges if hydration/steps are
+                           meaningfully behind pace -- silent if on
+                           track (no running commentary)
+  21:00  run_checkin.py   evening: nudges to wind down early if the
+                           last 3 nights are meaningfully short on
+                           sleep -- silent otherwise
 
-Note: no same-day/afternoon check-in -- the Health Connect export
-syncs once a day (overnight), so "today's" data doesn't exist until
-tomorrow's 05:30 ingest. All coaching is necessarily a day in arrears
-(today's plan, informed by yesterday's fully-logged data), not
-real-time.
+Note: exercise/sleep/wellness are Garmin-API-fresh (same day), but
+Health-Connect-only fields (steps, weight, nutrition, ...) still lag
+a day -- that export syncs once overnight, so those numbers reflect
+yesterday until the next 05:30 ingest.
 
 web container (always on)
   web/app.py               FastAPI reads the same db read-mostly;
