@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Derive a daily wellness dict from smart_sport's ingested tables.
+"""Derive a daily wellness dict from smart_coach's ingested tables.
 
 Replaces garmin-coach's coach.fetch_wellness()/fetch_nutrition(),
 which called the Garmin Connect API directly for every value. Most
-signals here now come from smart_sport's own Health-Connect-sourced
+signals here now come from smart_coach's own Health-Connect-sourced
 database instead; HRV/training-readiness/body-battery (see
 ``garmin_wellness``) are the exception -- they're ingested from the
 Garmin API too (ingest/garmin_api.py), just staged through the db
@@ -39,7 +39,7 @@ def local_tz(conn: sqlite3.Connection, user_id: int) -> ZoneInfo:
     """The configured local timezone for day-boundary calculations.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
 
     Returns:
@@ -121,7 +121,7 @@ def sleep_for_date(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Sleep score for the night that ended on ``date`` (wake-up day).
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date, the morning readiness is computed
             for.
@@ -165,7 +165,7 @@ def steps_for_range(
     """Daily step totals for a trailing window ending on ``end_date``.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         end_date (str): ISO local date, last day of the window.
         days (int): Window length in days (inclusive of end_date).
@@ -191,7 +191,7 @@ def resting_hr_for_date(
     """Resting heart rate reading for a specific local date.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date.
 
@@ -216,7 +216,7 @@ def activity_load(
     read the same way a red training-readiness score would be.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         end_date (str): ISO local date, last day of the window.
 
@@ -261,7 +261,7 @@ def nutrition_for_date(
     """Sum logged nutrition for a local date.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date.
 
@@ -294,7 +294,7 @@ def sum_for_date(
     HC interval tables with one value column, ingested the same shape.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         table (str): Table name.
         column (str): Column to sum.
@@ -316,7 +316,7 @@ def latest_body_comp(
     """Most recent weight/body-fat readings up to a date.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         on_or_before (str): ISO local date ceiling.
 
@@ -348,7 +348,7 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     ingestion step has run for this date.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date.
 
@@ -407,7 +407,7 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Full daily wellness dict for a date, in garmin-coach's shape.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date (today, in the run's timezone).
 
@@ -478,7 +478,7 @@ def estimated_max_hr(conn: sqlite3.Connection, user_id: int) -> int | None:
     """Age-based max-HR estimate (220-age), or None if age isn't set.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
 
     Returns:
@@ -502,7 +502,7 @@ def hr_zone_pct(
     the watch samples very unevenly.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         uuid (str): exercise_sessions uuid.
         max_hr (int): Estimated or known max HR (see
@@ -547,7 +547,7 @@ def all_route_polylines(
     on the Sessions map to show that session's info.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
 
     Returns:
@@ -580,7 +580,7 @@ def history_snapshot(
     speak to consistency instead of just today's snapshot.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date (today).
 
@@ -693,7 +693,7 @@ if __name__ == "__main__":
     import tempfile
     from pathlib import Path
 
-    tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
+    tmp = Path(tempfile.mkdtemp()) / "smart_coach.db"
     conn = db.connect(tmp)
     db.init_db(conn)
     uid = db.create_user(conn, "test", "password1234")

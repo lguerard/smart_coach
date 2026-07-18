@@ -28,7 +28,7 @@ def _build_request(
     )
 
 
-def notify(text: str, title: str = "Smart Sport", topic: str | None = None) -> None:
+def notify(text: str, title: str = "Smart Coach", topic: str | None = None) -> None:
     """Send a push notification via ntfy.
 
     Parameters:

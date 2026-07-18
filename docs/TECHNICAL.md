@@ -1,6 +1,6 @@
 # Technical guide
 
-Setup, architecture and operations for Smart Sport. For the short
+Setup, architecture and operations for Smart Coach. For the short
 overview, see the [README](../README.md).
 
 ## Requirements
@@ -120,7 +120,7 @@ worker container cron
                            trailing GARMIN_LOOKBACK_DAYS window),
                            then rclone-sync the Drive export,
                            extract, upsert the rest into
-                           data/db/smart_sport.db (idempotent --
+                           data/db/smart_coach.db (idempotent --
                            full snapshot each time)
   06:00  run_coach.py     metrics.py + progress.py compute today's
                            wellness + weekly trends; training.py
@@ -169,28 +169,28 @@ mkdir -p data/gcal-config
 cp /path/to/client_secret.json data/gcal-config/calendar_client_secret.json
 
 # 1. rclone remote pointing at the Drive folder the phone exports into
-docker compose run --rm -it smart_sport-worker rclone config
+docker compose run --rm -it smart_coach-worker rclone config
 
 # 2. Claude subscription token
-docker compose run --rm -it smart_sport-worker claude setup-token
+docker compose run --rm -it smart_coach-worker claude setup-token
 #    -> copy the printed token into .env (CLAUDE_CODE_OAUTH_TOKEN)
 
 # 3. Calendar consent -- do this on the host, not in Docker (the OAuth
 #    flow opens a local browser port):
 .venv/bin/python -c "import gcal; gcal.get_calendar_service()"
-cp ~/.config/smart_sport/calendar_token.json data/gcal-config/
+cp ~/.config/smart_coach/calendar_token.json data/gcal-config/
 
 # 3b. Garmin login (email/password + possible MFA prompt; tokens land
 #     in data/garmin-tokens/<username>, valid ~1 year). Use your
-#     smart_sport account name:
-docker compose run --rm -it smart_sport-worker python -c \
+#     smart_coach account name:
+docker compose run --rm -it smart_coach-worker python -c \
   "from ingest import garmin_api; garmin_api.get_client('<username>')"
 #     First run only: backfill history further than the default
 #     30-day window with GARMIN_LOOKBACK_DAYS=365 python run_ingest.py
 
 # 4. End-to-end test before trusting the cron
-docker compose run --rm -it smart_sport-worker python run_ingest.py
-docker compose run --rm -it smart_sport-worker python run_coach.py
+docker compose run --rm -it smart_coach-worker python run_ingest.py
+docker compose run --rm -it smart_coach-worker python run_coach.py
 
 # 5. Start both services
 docker compose up -d --build
@@ -217,18 +217,18 @@ The CLI alternative still works (creates pre-approved accounts):
 
 ```bash
 # 1. Create the account
-docker compose run --rm -it smart_sport-worker python manage_users.py alice
+docker compose run --rm -it smart_coach-worker python manage_users.py alice
 
 # 2. Point ingestion at their own Health Connect export
-docker compose run --rm -it smart_sport-worker rclone config   # new remote
+docker compose run --rm -it smart_coach-worker rclone config   # new remote
 # then set rclone_remote for that user (Settings page, or sqlite3)
 
 # 3. Calendar consent for that account (host, not Docker):
 .venv/bin/python -c "import gcal; gcal.get_calendar_service('alice')"
-cp ~/.config/smart_sport/calendar_token_alice.json data/gcal-config/
+cp ~/.config/smart_coach/calendar_token_alice.json data/gcal-config/
 
 # 4. Garmin login for that account:
-docker compose run --rm -it smart_sport-worker python -c \
+docker compose run --rm -it smart_coach-worker python -c \
   "from ingest import garmin_api; garmin_api.get_client('alice')"
 ```
 
@@ -266,7 +266,7 @@ failed logins are throttled per client IP (5 tries / 15 min).
 
 ## Migrating from garmin-coach
 
-Run smart_sport alongside garmin-coach for 1-2 weeks and compare the
+Run smart_coach alongside garmin-coach for 1-2 weeks and compare the
 daily status calls (the vote set is smaller -- 3 signals instead of
 4 -- so behavior will genuinely differ) before retiring garmin-coach:
 

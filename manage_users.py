@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Create a smart_sport user account.
+"""Create a smart_coach user account.
 
 No public signup form -- accounts are created from the command line,
 same operational posture as this project's other one-off admin steps
 (rclone config, claude setup-token): run once per person via
-``docker compose run --rm -it smart_sport-worker python manage_users.py``.
+``docker compose run --rm -it smart_coach-worker python manage_users.py``.
 """
 
 import getpass

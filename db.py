@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""smart_sport's own SQLite store.
+"""smart_coach's own SQLite store.
 
 Multi-user: every table carries a ``user_id``, one row per person
 sharing this deployment (e.g. a family). uuid-keyed HC tables (steps,
@@ -22,8 +22,8 @@ from pathlib import Path
 
 # Relative to cwd by default, matching the docker-compose bind mount
 # (./data/db/ on the host -> /app/data/db/ in the container). Override
-# with SMART_SPORT_DB for tests/dev.
-DB_PATH = Path(os.environ.get("SMART_SPORT_DB", "data/db/smart_sport.db"))
+# with SMART_COACH_DB for tests/dev.
+DB_PATH = Path(os.environ.get("SMART_COACH_DB", "data/db/smart_coach.db"))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -514,7 +514,7 @@ DEFAULT_SETTINGS = {
 
 
 def connect(path: Path = DB_PATH) -> sqlite3.Connection:
-    """Open (creating if needed) the smart_sport SQLite database.
+    """Open (creating if needed) the smart_coach SQLite database.
 
     Parameters:
         path (Path): Database file location.
@@ -839,7 +839,7 @@ if __name__ == "__main__":
     print(f"db.py: schema OK ({len(tables)} tables) at {DB_PATH}")
 
     # Self-check against an isolated scratch db (never the real one).
-    tmp = Path(tempfile.mkdtemp()) / "smart_sport_selfcheck.db"
+    tmp = Path(tempfile.mkdtemp()) / "smart_coach_selfcheck.db"
     test_conn = connect(tmp)
     init_db(test_conn)
 

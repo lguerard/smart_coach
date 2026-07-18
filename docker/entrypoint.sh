@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# One-off commands (`docker compose run --rm -it smart_sport-worker
+# One-off commands (`docker compose run --rm -it smart_coach-worker
 # rclone config`, `claude setup-token`, an interactive first run of
 # run_coach.py for the Calendar OAuth consent, etc.) just get exec'd
 # directly, skipping the dispatch below.

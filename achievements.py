@@ -2,7 +2,7 @@
 """Xbox-Gamerscore-style achievement system.
 
 Every achievement is a deterministic check over data already in
-smart_sport's db -- same "never invent it" posture as training.py/
+smart_coach's db -- same "never invent it" posture as training.py/
 progress.py, just turned into unlock conditions instead of coaching
 numbers. Achievements never re-lock once earned (unlocked_keys is
 checked before running each check), and only genuinely-verifiable
@@ -1209,7 +1209,7 @@ def grant_daily_status_xp(
     safe to call even if run_coach.py's pipeline is re-run).
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date.
         status (str | None): Today's ``compute_status`` result, or
@@ -1443,7 +1443,7 @@ if __name__ == "__main__":
     import tempfile
     from pathlib import Path
 
-    tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
+    tmp = Path(tempfile.mkdtemp()) / "smart_coach.db"
     conn = db.connect(tmp)
     db.init_db(conn)
     uid = db.create_user(conn, "test", "password1234")

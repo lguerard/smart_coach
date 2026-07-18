@@ -2,7 +2,7 @@
 """Fitness/Fatigue/Form (CTL/ATL/TSB), intervals.icu/TrainingPeaks-style.
 
 Daily training stress has no power-meter data behind it, so load is
-approximated per session: minutes weighted by smart_sport's own
+approximated per session: minutes weighted by smart_coach's own
 prescribed level for that date (0-10, from ``coach_log``, level 0 ->
 factor 1.0, level 10 -> 2.0), raised to rpe/5 when the session
 carries a cleaned RPE -- so unplanned efforts (weekend rides) count
@@ -42,7 +42,7 @@ def _daily_load(
     prescription.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         local_date (str): ISO local date.
 
@@ -84,7 +84,7 @@ def compute_training_load(
     formula ever changes.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         through_date (str): ISO local date, last day to compute.
         window_days (int): Lookback length feeding the EWMA seed.
@@ -123,7 +123,7 @@ def training_load_history(
     """Chart-ready CTL/ATL/TSB series for the last ``days`` days.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         days (int): Lookback length.
 
@@ -145,7 +145,7 @@ def latest_training_load(
     """Most recent CTL/ATL/TSB snapshot, or ``None`` if none computed.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
 
     Returns:
@@ -164,7 +164,7 @@ if __name__ == "__main__":
 
     import db as db_module
 
-    tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
+    tmp = Path(tempfile.mkdtemp()) / "smart_coach.db"
     conn = db_module.connect(tmp)
     db_module.init_db(conn)
     uid = db_module.create_user(conn, "test", "password1234")

@@ -1,7 +1,9 @@
-# Smart Sport
+# Smart Coach
 
-Your own AI sports coach, running on your own machine, built on the
-health data your phone already collects.
+Your own AI coach for training, food, sleep and your real schedule —
+running on your own machine, built on the health data your phone
+already collects. Not just a workout tracker: it fits around your
+actual day.
 
 Every morning it sends you one short message: how recovered your body
 is, exactly what tonight's workout should look like, and what to eat
@@ -38,7 +40,7 @@ just you, your numbers, and a plan.
 
 1. Overnight, your phone backs up its Health Connect data to Google
    Drive — automatically, like it already does.
-2. Early morning, Smart Sport asks Garmin for your latest workouts
+2. Early morning, Smart Coach asks Garmin for your latest workouts
    and sleep, pulls the Drive backup for the rest, and updates its
    local database.
 3. It scores your recovery, picks tonight's training level, and

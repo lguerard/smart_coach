@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""smart_sport dashboard: FastAPI + Jinja2 + HTMX + Chart.js (CDN).
+"""smart_coach dashboard: FastAPI + Jinja2 + HTMX + Chart.js (CDN).
 
 Six pages -- Home (today), Progress (weight/calorie/protein +
 plateau), Trends (steps/RHR/sleep/level history), Sessions (exercise
@@ -49,7 +49,7 @@ import training_load
 from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
 
 APP_DIR = Path(__file__).parent
-app = FastAPI(title="smart_sport")
+app = FastAPI(title="smart_coach")
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 
@@ -284,7 +284,7 @@ def passkey_register_options(request: Request) -> Response:
     user_id = current_user_id(request)
     rp_id, _ = _relying_party(request)
     options = webauthn.generate_registration_options(
-        rp_id=rp_id, rp_name="Smart Sport",
+        rp_id=rp_id, rp_name="Smart Coach",
         user_id=str(user_id).encode(),
         user_name=request.session.get("username", str(user_id)),
         exclude_credentials=[
@@ -760,7 +760,7 @@ def _route_svg_points(
     swap for a proper projection if that ever matters here.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         uuid (str): exercise_sessions uuid.
 

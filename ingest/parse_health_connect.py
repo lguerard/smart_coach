@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Parse a Health Connect export (raw internal SQLite backup) and
-upsert its records into smart_sport's own database.
+upsert its records into smart_coach's own database.
 
 Each export is a full on-device snapshot, not an incremental diff, so
 ingestion is idempotent by design: HC records are upserted by their
@@ -12,7 +12,7 @@ would double-count across runs.
 Exercise type / sleep stage constants below are taken verbatim from
 androidx.health.connect.client.records (ExerciseSessionRecord,
 SleepSessionRecord) -- Health Connect itself stores only the int, no
-lookup table, so smart_sport ships its own copy for display purposes.
+lookup table, so smart_coach ships its own copy for display purposes.
 """
 
 import datetime as dt
@@ -103,7 +103,7 @@ def _upsert(
     conflicting key.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user -- every ingested row belongs to
             whoever's Health Connect export this is.
         table (str): Target table name.
@@ -406,12 +406,12 @@ def _parse_heart_rate_daily(
 def parse_and_upsert(
     hc_export_path: Path, conn: sqlite3.Connection, user_id: int,
 ) -> dict[str, int]:
-    """Parse a Health Connect export and upsert it into smart_sport's db.
+    """Parse a Health Connect export and upsert it into smart_coach's db.
 
     Parameters:
         hc_export_path (Path): Path to the extracted
             ``health_connect_export.db`` file.
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): The account this export belongs to -- every
             ingested row is tagged with it.
 
@@ -523,12 +523,12 @@ if __name__ == "__main__":
     import db
 
     if len(sys.argv) >= 2:
-        smart_sport_conn = db.connect()
-        db.init_db(smart_sport_conn)
+        smart_coach_conn = db.connect()
+        db.init_db(smart_coach_conn)
         if len(sys.argv) >= 3:
             cli_user_id = int(sys.argv[2])
         else:
-            users = db.all_users(smart_sport_conn)
+            users = db.all_users(smart_coach_conn)
             if not users:
                 sys.exit(
                     "No users exist yet -- run manage_users.py first, or "
@@ -536,7 +536,7 @@ if __name__ == "__main__":
                 )
             cli_user_id = users[0]["id"]
         counts = parse_and_upsert(
-            Path(sys.argv[1]), smart_sport_conn, cli_user_id,
+            Path(sys.argv[1]), smart_coach_conn, cli_user_id,
         )
         for table, count in sorted(counts.items()):
             print(f"{table}: {count}")
@@ -603,7 +603,7 @@ if __name__ == "__main__":
         hc.commit()
         hc.close()
 
-        test_db_path = tmp / "smart_sport.db"
+        test_db_path = tmp / "smart_coach.db"
         conn = db.connect(test_db_path)
         db.init_db(conn)
         uid = db.create_user(conn, "test", "password1234")

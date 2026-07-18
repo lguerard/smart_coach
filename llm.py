@@ -6,7 +6,7 @@ numbers, this module only narrates around them -- the prompt
 explicitly forbids inventing figures. Differences from garmin-coach's
 coach.py:
 
-1. The payload carries everything smart_sport can compute: today's
+1. The payload carries everything smart_coach can compute: today's
    full wellness snapshot (sleep, RHR, steps, distance, floors,
    hydration, calories burned), yesterday's nutrition/hydration vs
    computed targets with the gap, and weekly_progress (weight/body-fat

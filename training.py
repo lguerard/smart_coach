@@ -5,9 +5,9 @@ Ported from garmin-coach/training.py: same per-session-type level
 (0-10), same green/yellow/red daily status, same level -> concrete
 workout numbers. Changes from the original:
 
-1. State lives in smart_sport's db (``levels`` table) instead of a
+1. State lives in smart_coach's db (``levels`` table) instead of a
    flat JSON file.
-2. Resting-HR baseline is computed directly from smart_sport's own
+2. Resting-HR baseline is computed directly from smart_coach's own
    ingested history (no more manual rolling-window bookkeeping -- the
    full history is already in the db), plus a NEW activity-load vote
    with no garmin-coach equivalent.
@@ -64,7 +64,7 @@ def get_level(
     """Current level for a session type (0 if never set).
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         session_type (str): One of ``SESSION_LABEL_FR``'s
             values.
@@ -85,7 +85,7 @@ def set_level(
     """Persist a session type's new level.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         session_type (str): Session type key.
         level (int): New level.
@@ -164,7 +164,7 @@ def _trigger_deload(
     """Force the level cut + deload window, shared by both triggers.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         session_type (str): Session type key.
         level (int): Current level, before the cut.
@@ -210,7 +210,7 @@ def apply_deload_guardrail(
     red never reaches 3 in a row while fatigue keeps climbing).
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         session_type (str): Session type key.
         status (str): Today's ``compute_status`` result.
@@ -274,7 +274,7 @@ def rhr_baseline(
     """Mean resting HR over the ``days`` before ``date``.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date (today), excluded from the window.
         days (int): Window length.
@@ -415,7 +415,7 @@ def schedule_for_user(
     ``duration_min`` -- the same shape as ``db.DEFAULT_SCHEDULE``.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
 
     Returns:
@@ -440,7 +440,7 @@ def session_type_for_weekday(
     """The user's session type for an ISO weekday (Monday=0).
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         weekday (int): ``date.weekday()`` result.
 
@@ -462,7 +462,7 @@ def session_cap_min(conn: sqlite3.Connection, user_id: int) -> int:
     """The user's max session duration in minutes (Settings).
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
 
     Returns:
@@ -668,7 +668,7 @@ if __name__ == "__main__":
         "lower_body", 4, lower_body_values(4), "green",
     )
 
-    tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
+    tmp = Path(tempfile.mkdtemp()) / "smart_coach.db"
     conn = db_module.connect(tmp)
     db_module.init_db(conn)
     uid = db_module.create_user(conn, "test", "password1234")

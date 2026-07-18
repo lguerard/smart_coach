@@ -5,7 +5,7 @@ every user account.
 
 Run after run_ingest.py. Structurally the same pipeline as
 garmin-coach's coach.py:main(), but every input now comes from
-smart_sport's own db (Health Connect derived, plus Garmin API for
+smart_coach's own db (Health Connect derived, plus Garmin API for
 exercise/sleep/wellness -- see ingest/garmin_api.py) instead of live
 Garmin Connect API calls at coaching time, and the payload
 additionally carries progress.weekly_progress() so the message can
@@ -250,7 +250,7 @@ def main() -> None:
                 ntfy_topic = db.get_setting(conn, user["id"], "ntfy_topic") or None
                 notify.notify(
                     f"Coach failed for {username}: {error}",
-                    title="Smart Sport ERROR", topic=ntfy_topic,
+                    title="Smart Coach ERROR", topic=ntfy_topic,
                 )
             except Exception:
                 pass

@@ -34,7 +34,7 @@ def _weight_like_trend(
     window to the average in the earlier half.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         table (str): ``weight`` or ``body_fat``.
         value_col (str): ``kg`` or ``percentage``.
@@ -114,7 +114,7 @@ def estimate_bmr(
     basal_metabolic_rate reading nor a manual override is available.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         weight_kg (float): Current weight.
 
@@ -139,7 +139,7 @@ def bmr_for_date(
     then formula estimate.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date.
         weight_kg (float | None): Current weight, for the formula
@@ -175,7 +175,7 @@ def _burn_for_date(
     TDEE directly.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date.
         weight_kg (float | None): For the BMR fallback formula.
@@ -202,7 +202,7 @@ def daily_calorie_balance(
     """Per-day calorie balance (intake minus burn) for charting.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         end_date (str): ISO local date, window end.
         days (int): Window length.
@@ -684,7 +684,7 @@ if __name__ == "__main__":
     import tempfile
     from pathlib import Path
 
-    tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
+    tmp = Path(tempfile.mkdtemp()) / "smart_coach.db"
     conn = db.connect(tmp)
     db.init_db(conn)
     uid = db.create_user(conn, "test", "password1234")

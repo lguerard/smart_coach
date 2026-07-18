@@ -35,7 +35,7 @@ def _recent_avg_sleep_hours(
     """Average sleep duration over the ``days`` nights before ``date``.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         date (str): ISO local date (today), excluded from the window.
         days (int): Window length.
@@ -61,7 +61,7 @@ def afternoon_checkin(
     pace -- silent otherwise.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user (dict): Account row (needs ``id``).
         date (str | None): ISO local date to check; defaults to the
             real current date in the user's timezone. Overridable so
@@ -105,7 +105,7 @@ def afternoon_checkin(
         if language == "fr" else
         "4pm check-in: " + ", ".join(gaps_en) + "."
     )
-    notify.notify(message, title="Smart Sport", topic=ntfy_topic)
+    notify.notify(message, title="Smart Coach", topic=ntfy_topic)
 
 
 def evening_checkin(
@@ -115,7 +115,7 @@ def evening_checkin(
     -- silent otherwise (including when there's not enough data yet).
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user (dict): Account row (needs ``id``).
         date (str | None): ISO local date to check from; defaults to
             the real current date in the user's timezone. Overridable
@@ -142,7 +142,7 @@ def evening_checkin(
         f"~{debt}h sleep debt over the last {SLEEP_DEBT_WINDOW_DAYS} "
         "days -- get to bed early tonight."
     )
-    notify.notify(message, title="Smart Sport", topic=ntfy_topic)
+    notify.notify(message, title="Smart Coach", topic=ntfy_topic)
 
 
 CHECKINS = {"afternoon": afternoon_checkin, "evening": evening_checkin}
@@ -167,14 +167,14 @@ if __name__ == "__main__":
     import tempfile
     from pathlib import Path
 
-    tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
+    tmp = Path(tempfile.mkdtemp()) / "smart_coach.db"
     conn = db.connect(tmp)
     db.init_db(conn)
     uid = db.create_user(conn, "test", "password1234")
     user = dict(db.get_user(conn, uid))
 
     sent = []
-    notify.notify = lambda text, title="Smart Sport", topic=None: sent.append(
+    notify.notify = lambda text, title="Smart Coach", topic=None: sent.append(
         (text, topic),
     )
 

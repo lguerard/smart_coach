@@ -111,7 +111,7 @@ def get_client(username: str) -> Garmin:
     first run (or after token expiry, ~1 year).
 
     Parameters:
-        username (str): smart_sport account name -- keys the token
+        username (str): smart_coach account name -- keys the token
             directory, one Garmin login per account.
 
     Returns:
@@ -179,7 +179,7 @@ def _overlaps_other(
     inserted alongside it.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         table (str): ``exercise_sessions`` or ``sleep_sessions``.
         start_utc (str): ISO UTC window start.
@@ -230,7 +230,7 @@ def _ingest_activity_details(
     common case for this project's bodyweight-circuit session types.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         activity_id (int): Garmin activityId.
@@ -297,7 +297,7 @@ def upsert_activities(
     """Fetch recent Garmin activities into exercise_sessions.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         tz (ZoneInfo): User timezone for local_date day boundaries.
@@ -356,7 +356,7 @@ def upsert_sleep(
     """Fetch recent Garmin sleep into sleep_sessions/sleep_stages.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         tz (ZoneInfo): User timezone for local_date day boundaries.
@@ -420,7 +420,7 @@ def upsert_hrv(
     """Fetch today's HRV summary into garmin_hrv.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         date (str): ISO local date to fetch.
@@ -458,7 +458,7 @@ def upsert_training_readiness(
     (e.g. one per wake-up event).
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         date (str): ISO local date to fetch.
@@ -496,7 +496,7 @@ def upsert_body_battery(
     a training.compute_status vote.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         date (str): ISO local date to fetch.
@@ -554,7 +554,7 @@ def upsert_stress(
     reflected in the readiness vote.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         date (str): ISO local date to fetch.
@@ -610,7 +610,7 @@ def upsert_badges(
     instead of a separate section -- one unified Trophees page.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
 
@@ -659,7 +659,7 @@ def upsert_menstrual_cycle(
     """Fetch one day's menstrual cycle phase, opt-in only.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         date (str): ISO local date to fetch.
@@ -691,7 +691,7 @@ def fetch_and_upsert(
     inputs for today's coaching run, not historical training data.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         username (str): Account name (keys the Garmin token dir).
         days (int): Trailing fetch window for activities/sleep
@@ -764,7 +764,7 @@ def _treadmill_workout(level: int, values: dict) -> WalkingWorkout:
         workoutSteps=[create_interval_step(duration_s, step_order=1)],
     )
     return WalkingWorkout(
-        workoutName=f"Smart Sport - Tapis niveau {level}",
+        workoutName=f"Smart Coach - Tapis niveau {level}",
         estimatedDurationInSecs=int(duration_s),
         description=(
             f"{values['speed_kmh']} km/h, inclinaison "
@@ -854,7 +854,7 @@ def _circuit_workout(
         for key, value in values.items() if key not in _NON_STEP_KEYS
     )
     return FitnessEquipmentWorkout(
-        workoutName=f"Smart Sport - {label} niveau {level}",
+        workoutName=f"Smart Coach - {label} niveau {level}",
         estimatedDurationInSecs=values["duration_min"] * 60,
         description=f"{values['rounds']} tours - {description}",
         workoutSegments=[segment],
@@ -891,7 +891,7 @@ def push_workout_for_session(
     day forever.
 
     Parameters:
-        conn (sqlite3.Connection): smart_sport db connection.
+        conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
         session_type (str): One of ``training.SESSION_LABEL_FR``'s keys.
@@ -1067,7 +1067,7 @@ if __name__ == "__main__":
                 ],
             }]
 
-    tmp = Path(tempfile.mkdtemp()) / "smart_sport.db"
+    tmp = Path(tempfile.mkdtemp()) / "smart_coach.db"
     conn = db.connect(tmp)
     db.init_db(conn)
     uid = db.create_user(conn, "test", "password1234")
@@ -1269,7 +1269,7 @@ if __name__ == "__main__":
 
     td_values = training.treadmill_values(5)
     treadmill_workout = build_workout("treadmill", 5, td_values).to_dict()
-    assert treadmill_workout["workoutName"] == "Smart Sport - Tapis niveau 5"
+    assert treadmill_workout["workoutName"] == "Smart Coach - Tapis niveau 5"
     assert (
         treadmill_workout["estimatedDurationInSecs"]
         == td_values["duration_min"] * 60

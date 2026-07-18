@@ -1,19 +1,19 @@
 # =============================================================================
-#  smart_sport — dashboard + coach (replaces garmin-coach)
+#  smart_coach — dashboard + coach (replaces garmin-coach)
 #  Setup (interactive first run, see README.md #Deploiement) :
-#    1. docker compose run --rm -it smart_sport-worker rclone config
-#    2. docker compose run --rm -it smart_sport-worker claude setup-token
-#    3. docker compose run --rm -it smart_sport-worker python run_coach.py
+#    1. docker compose run --rm -it smart_coach-worker rclone config
+#    2. docker compose run --rm -it smart_coach-worker claude setup-token
+#    3. docker compose run --rm -it smart_coach-worker python run_coach.py
 #       (grants Google Calendar access; drop calendar_client_secret.json
 #       into ./data/gcal-config/ first, see README)
 # =============================================================================
 
-name: smart_sport
+name: smart_coach
 
 services:
-  smart_sport-web:
+  smart_coach-web:
     build: .
-    container_name: smart_sport-web
+    container_name: smart_coach-web
     command: ["web"]
     restart: unless-stopped
     env_file: .env
@@ -27,18 +27,18 @@ services:
     volumes:
       - ./data/db:/app/data/db
       - ./data/rclone:/root/.config/rclone
-      - ./data/gcal-config:/root/.config/smart_sport
+      - ./data/gcal-config:/root/.config/smart_coach
 
   # Public HTTPS front (optional):
   #   docker compose --profile public up -d
   # Needs DOMAIN in .env, DNS pointing here, ports 80/443 forwarded.
   caddy:
     image: caddy:2-alpine
-    container_name: smart_sport-caddy
+    container_name: smart_coach-caddy
     profiles: ["public"]
     restart: unless-stopped
     depends_on:
-      - smart_sport-web
+      - smart_coach-web
     environment:
       # Required for the public profile -- Caddy refuses to start on
       # the localhost default, which is the failure mode we want.
@@ -50,9 +50,9 @@ services:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy:/data
 
-  smart_sport-worker:
+  smart_coach-worker:
     build: .
-    container_name: smart_sport-worker
+    container_name: smart_coach-worker
     command: ["cron-foreground"]
     restart: unless-stopped
     env_file: .env
@@ -63,4 +63,4 @@ services:
       - ./data/inbox:/app/data/inbox
       - ./data/garmin-tokens:/app/data/garmin-tokens
       - ./data/rclone:/root/.config/rclone
-      - ./data/gcal-config:/root/.config/smart_sport
+      - ./data/gcal-config:/root/.config/smart_coach

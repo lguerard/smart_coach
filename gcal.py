@@ -3,7 +3,7 @@
 
 Near-verbatim port of garmin-coach/gcal.py -- same OAuth/Calendar API
 plumbing, isolated from training.py's pure logic and llm.py/notify.py.
-Config lives under ~/.config/smart_sport/ instead of
+Config lives under ~/.config/smart_coach/ instead of
 ~/.config/garmin-coach/ so the two projects can run in parallel during
 the migration period without clobbering each other's tokens.
 """
@@ -23,9 +23,9 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 # admin registers it once in Google Cloud Console); the token is
 # per-user since each person consents to their own calendar access.
 CLIENT_SECRET_FILE = (
-    Path.home() / ".config/smart_sport/calendar_client_secret.json"
+    Path.home() / ".config/smart_coach/calendar_client_secret.json"
 )
-CONFIG_DIR = Path.home() / ".config/smart_sport"
+CONFIG_DIR = Path.home() / ".config/smart_coach"
 
 WINDOW_BEFORE_MIN = 30
 WINDOW_AFTER_MIN = 90
@@ -39,7 +39,7 @@ def get_calendar_service(username: str):
     falls back to interactive browser consent on first run.
 
     Parameters:
-        username (str): The smart_sport account requesting access --
+        username (str): The smart_coach account requesting access --
             keys the cached token file.
 
     Returns:
