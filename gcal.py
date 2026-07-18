@@ -105,6 +105,30 @@ def resolve_calendar_id(service, name: str) -> str:
     raise RuntimeError(f"No calendar named {name!r} on this account.")
 
 
+def get_or_create_calendar_id(service, name: str) -> str:
+    """Find a calendar by display name, creating it if missing.
+
+    Lets tonight's session live in its own calendar (e.g. "Sport")
+    instead of the account's primary one, with no manual setup in
+    the Google Calendar web UI -- the calendar is provisioned the
+    first time this account pushes a session.
+
+    Parameters:
+        service: Authenticated Calendar API service.
+        name (str): Calendar display name to find or create.
+
+    Returns:
+        str: Calendar id (existing, or newly created).
+    """
+    try:
+        return resolve_calendar_id(service, name)
+    except RuntimeError:
+        created = service.calendars().insert(
+            body={"summary": name}
+        ).execute()
+        return created["id"]
+
+
 # How far into the evening find_available_start will look for a free
 # slot before giving up and keeping the original (conflicting) time.
 RESCHEDULE_DAY_END_HOUR = 22
@@ -291,7 +315,8 @@ def push_description(
     username: str, calendar_name: str, day: dt.date, template: dict,
     description: str, duration_min: Optional[int] = None,
 ) -> str:
-    """Authenticate, resolve the calendar, and upsert the day's event.
+    """Authenticate, resolve (or create) the calendar, and upsert the
+    day's event.
 
     Shared by the daily cron and the dashboard's level editor. No
     error handling here on purpose: callers wrap failures into their
@@ -299,7 +324,9 @@ def push_description(
 
     Parameters:
         username (str): Account whose token file to use.
-        calendar_name (str): Calendar display name (user setting).
+        calendar_name (str): Calendar display name (user setting) --
+            created automatically if it doesn't exist yet, so a
+            dedicated calendar (e.g. "Sport") needs no manual setup.
         day (date): Day of the session.
         template (dict): The user's weekday template.
         description (str): New event description.
@@ -308,7 +335,7 @@ def push_description(
         str: The event id that was updated or created.
     """
     service = get_calendar_service(username)
-    calendar_id = resolve_calendar_id(service, calendar_name)
+    calendar_id = get_or_create_calendar_id(service, calendar_name)
     return upsert_session_event(
         service, calendar_id, day, template, description, duration_min,
     )
@@ -375,5 +402,54 @@ if __name__ == "__main__":
     )
     assert kept_moved is False
     assert kept_start == "20:00"
+
+    # get_or_create_calendar_id: found by name -> no creation call;
+    # not found -> auto-created, id returned.
+    class _FakeCalendarList:
+        def __init__(self, entries):
+            self._entries = entries
+
+        def list(self, pageToken=None):
+            return self
+
+        def execute(self):
+            return {"items": self._entries}
+
+    class _FakeCalendars:
+        def __init__(self):
+            self.created = []
+
+        def insert(self, body):
+            self._pending = body
+            return self
+
+        def execute(self):
+            self.created.append(self._pending["summary"])
+            return {"id": f"created-{self._pending['summary']}"}
+
+    class _FakeCalendarService:
+        def __init__(self, entries):
+            self._calendar_list = _FakeCalendarList(entries)
+            self.calendars_api = _FakeCalendars()
+
+        def calendarList(self):
+            return self._calendar_list
+
+        def calendars(self):
+            return self.calendars_api
+
+    found_service = _FakeCalendarService(
+        [{"summary": "Sport", "id": "existing-sport-id"}]
+    )
+    assert get_or_create_calendar_id(found_service, "Sport") == (
+        "existing-sport-id"
+    )
+    assert found_service.calendars_api.created == []  # never created
+
+    missing_service = _FakeCalendarService([])
+    assert get_or_create_calendar_id(missing_service, "Sport") == (
+        "created-Sport"
+    )
+    assert missing_service.calendars_api.created == ["Sport"]
 
     print("gcal.py: all checks passed (no live Calendar call made)")

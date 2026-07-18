@@ -20,8 +20,10 @@ overview, see the [README](../README.md).
   auth, no API key) — or set `LLM_PROVIDER=anthropic_api` +
   `ANTHROPIC_API_KEY` to use the Anthropic API instead
 - The ntfy app on your phone, subscribed to a secret topic
-- A Google account with a target calendar (any name — set it per
-  user in Settings > "Calendrier Google") and a Google Cloud OAuth
+- A Google account with a target calendar (any name, e.g. "Sport" —
+  set it per user in Settings > "Calendrier Google"; created
+  automatically on first push if it doesn't exist yet, so a
+  dedicated calendar needs no manual setup) and a Google Cloud OAuth
   client (see garmin-coach's README for the one-time Calendar API
   setup — same steps, new config path below)
 
