@@ -9,8 +9,9 @@
 {% block content %}
 
 <div class="card p-4">
-  <h2 class="font-semibold text-sm mb-3">Tous les trajets -- toute activite</h2>
-  {% if route_polylines %}
+  <h2 class="font-semibold text-sm mb-1">Tous les trajets -- toute activite</h2>
+  {% if route_features %}
+  <p class="text-xs mb-3" style="color: var(--muted);">Clique un trajet pour voir la seance.</p>
   <div id="routesMap" style="height: 320px; border-radius: 0.75rem;"></div>
   {% else %}
   <p class="text-sm text-center py-8" style="color: var(--muted);">
@@ -27,7 +28,7 @@
 
 <div class="card divide-y" style="border-color: var(--border);">
   {% for s in sessions %}
-  <div class="p-4 relative" style="border-color: var(--border);">
+  <div id="session-{{ s.uuid }}" class="p-4 relative" style="border-color: var(--border); scroll-margin-top: 1rem;">
     <div class="flex items-center justify-between gap-3">
       <div class="min-w-0">
         <p class="text-sm font-medium truncate">
@@ -86,17 +87,26 @@
 {% endblock %}
 
 {% block scripts %}
-{% if route_polylines %}
+{% if route_features %}
 <script>
-const polylines = {{ route_polylines|tojson }};
+const routeFeatures = {{ route_features|tojson }};
 const map = L.map('routesMap');
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
 }).addTo(map);
-const layers = polylines.map(points => L.polyline(points, {
-  color: getComputedStyle(document.documentElement).getPropertyValue('--blue'),
-  weight: 3, opacity: 0.55,
-}).addTo(map));
+const routeColor = getComputedStyle(document.documentElement).getPropertyValue('--blue');
+const layers = routeFeatures.map(f => {
+  const line = L.polyline(f.points, { color: routeColor, weight: 3, opacity: 0.55 }).addTo(map);
+  const parts = [`<strong>${f.label}</strong> -- ${f.date}`];
+  if (f.duration_min) parts.push(`${f.duration_min} min`);
+  if (f.avg_hr) parts.push(`${f.avg_hr} bpm moy / ${f.max_hr} max`);
+  if (f.kcal) parts.push(`${f.kcal} kcal`);
+  parts.push(`<a href="#session-${f.uuid}">Voir la seance -&gt;</a>`);
+  line.bindPopup(parts.join('<br>'));
+  line.on('mouseover', () => line.setStyle({ opacity: 1, weight: 5 }));
+  line.on('mouseout', () => line.setStyle({ opacity: 0.55, weight: 3 }));
+  return line;
+});
 map.fitBounds(L.featureGroup(layers).getBounds(), { padding: [16, 16] });
 </script>
 {% endif %}

@@ -531,20 +531,22 @@ def hr_zone_pct(
 
 def all_route_polylines(
     conn: sqlite3.Connection, user_id: int,
-) -> list[list[list[float]]]:
+) -> dict[str, list[list[float]]]:
     """Every exercise session's GPS track, across all history.
 
-    One polyline per session that has a route -- sessions with none
-    (the common case for this project's bodyweight-circuit types) are
-    simply absent, not an empty entry.
+    Keyed by session uuid (not just a bare list) so callers can join
+    each route back to its session's details -- e.g. clicking a route
+    on the Sessions map to show that session's info.
 
     Parameters:
         conn (sqlite3.Connection): smart_sport db connection.
         user_id (int): Owning user.
 
     Returns:
-        list[list[[lat, lon]]]: One ``[lat, lon]`` list per session,
-        points in chronological order.
+        dict[str, list[[lat, lon]]]: ``{exercise_uuid: points}`` for
+        every session with a GPS track, points in chronological
+        order. Sessions with none (the common case for this
+        project's bodyweight-circuit types) are simply absent.
     """
     rows = conn.execute(
         "SELECT exercise_uuid, latitude, longitude FROM "
@@ -556,7 +558,7 @@ def all_route_polylines(
         polylines.setdefault(row["exercise_uuid"], []).append(
             [row["latitude"], row["longitude"]]
         )
-    return list(polylines.values())
+    return polylines
 
 
 def history_snapshot(
@@ -864,9 +866,8 @@ if __name__ == "__main__":
     conn.commit()
     polylines = all_route_polylines(conn, uid)
     assert len(polylines) == 2, polylines  # e1 + e-old, e-other excluded
-    e1_line = next(p for p in polylines if p[0] == [45.75, 4.85])
-    assert e1_line == [[45.75, 4.85], [45.76, 4.86]], e1_line
-    assert all_route_polylines(conn, other_uid) == [[[1.0, 1.0]]]
+    assert polylines["e1"] == [[45.75, 4.85], [45.76, 4.86]], polylines
+    assert all_route_polylines(conn, other_uid) == {"e-other": [[1.0, 1.0]]}
 
     snap = history_snapshot(conn, uid, "2026-07-13")
     acts = snap["activities_last_7_days"]

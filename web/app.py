@@ -842,10 +842,56 @@ def sessions(request: Request) -> HTMLResponse:
             ),
             "route_points": _route_svg_points(conn, user_id, row["uuid"]),
         })
+
+    # Join every GPS-tracked session (all history) back to its own
+    # details, so clicking a route on the map can show them -- the
+    # common case (already in `items`, the 60 most recent) is free;
+    # only a route older than that falls back to a small extra
+    # lookup, with no HR/kcal (out of scope for that batch above).
+    polylines = metrics.all_route_polylines(conn, user_id)
+    items_by_uuid = {item["uuid"]: item for item in items}
+    missing_uuids = [uuid for uuid in polylines if uuid not in items_by_uuid]
+    extra_meta = {}
+    if missing_uuids:
+        marks = ",".join("?" * len(missing_uuids))
+        extra_meta = {
+            r["uuid"]: r
+            for r in conn.execute(
+                f"SELECT uuid, local_date, start_utc, end_utc, "
+                f"exercise_type, label_override FROM exercise_sessions "
+                f"WHERE user_id = ? AND uuid IN ({marks})",
+                (user_id, *missing_uuids),
+            ).fetchall()
+        }
+    route_features = []
+    for uuid, points in polylines.items():
+        item = items_by_uuid.get(uuid)
+        if item:
+            route_features.append({
+                "uuid": uuid, "points": points, "date": item["date"],
+                "label": item["label"], "duration_min": item["duration_min"],
+                "avg_hr": item["avg_hr"], "max_hr": item["max_hr"],
+                "kcal": item["kcal"],
+            })
+            continue
+        row = extra_meta.get(uuid)
+        if not row:
+            continue
+        start = dt.datetime.fromisoformat(row["start_utc"])
+        end = dt.datetime.fromisoformat(row["end_utc"])
+        auto_label = EXERCISE_TYPE_LABELS.get(
+            row["exercise_type"], "autre"
+        ).replace("_", " ")
+        route_features.append({
+            "uuid": uuid, "points": points, "date": row["local_date"],
+            "label": row["label_override"] or auto_label,
+            "duration_min": round((end - start).total_seconds() / 60),
+            "avg_hr": None, "max_hr": None, "kcal": None,
+        })
+
     return templates.TemplateResponse(
         request, "sessions.html", {
-            "sessions": items,
-            "route_polylines": metrics.all_route_polylines(conn, user_id),
+            "sessions": items, "route_features": route_features,
         },
     )
 
