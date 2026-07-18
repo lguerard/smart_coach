@@ -843,7 +843,10 @@ def sessions(request: Request) -> HTMLResponse:
             "route_points": _route_svg_points(conn, user_id, row["uuid"]),
         })
     return templates.TemplateResponse(
-        request, "sessions.html", {"sessions": items},
+        request, "sessions.html", {
+            "sessions": items,
+            "route_polylines": metrics.all_route_polylines(conn, user_id),
+        },
     )
 
 

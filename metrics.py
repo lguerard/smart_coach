@@ -529,6 +529,36 @@ def hr_zone_pct(
     return [round(100 * s / total, 1) for s in zone_seconds]
 
 
+def all_route_polylines(
+    conn: sqlite3.Connection, user_id: int,
+) -> list[list[list[float]]]:
+    """Every exercise session's GPS track, across all history.
+
+    One polyline per session that has a route -- sessions with none
+    (the common case for this project's bodyweight-circuit types) are
+    simply absent, not an empty entry.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_sport db connection.
+        user_id (int): Owning user.
+
+    Returns:
+        list[list[[lat, lon]]]: One ``[lat, lon]`` list per session,
+        points in chronological order.
+    """
+    rows = conn.execute(
+        "SELECT exercise_uuid, latitude, longitude FROM "
+        "exercise_route_points WHERE user_id = ? ORDER BY "
+        "exercise_uuid, epoch_utc", (user_id,),
+    ).fetchall()
+    polylines: dict[str, list[list[float]]] = {}
+    for row in rows:
+        polylines.setdefault(row["exercise_uuid"], []).append(
+            [row["latitude"], row["longitude"]]
+        )
+    return list(polylines.values())
+
+
 def history_snapshot(
     conn: sqlite3.Connection, user_id: int, date: str,
 ) -> dict:
@@ -819,6 +849,24 @@ if __name__ == "__main__":
     zones = hr_zone_pct(conn, uid, "e1", 190)
     assert zones == [0.0, 33.3, 33.3, 33.3, 0.0], zones
     assert hr_zone_pct(conn, uid, "no-such-uuid", 190) == []
+
+    # All-history route polylines: e1 has a track, e-other (other
+    # user) must never leak into uid's polylines.
+    conn.executemany(
+        "INSERT INTO exercise_route_points VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("e1", uid, "2026-07-12T18:05:00+00:00", 45.75, 4.85, 200.0),
+            ("e1", uid, "2026-07-12T18:15:00+00:00", 45.76, 4.86, None),
+            ("e-old", uid, "2026-07-01T18:05:00+00:00", 45.70, 4.80, None),
+            ("e-other", other_uid, "2026-07-12T18:05:00+00:00", 1.0, 1.0, None),
+        ],
+    )
+    conn.commit()
+    polylines = all_route_polylines(conn, uid)
+    assert len(polylines) == 2, polylines  # e1 + e-old, e-other excluded
+    e1_line = next(p for p in polylines if p[0] == [45.75, 4.85])
+    assert e1_line == [[45.75, 4.85], [45.76, 4.86]], e1_line
+    assert all_route_polylines(conn, other_uid) == [[[1.0, 1.0]]]
 
     snap = history_snapshot(conn, uid, "2026-07-13")
     acts = snap["activities_last_7_days"]

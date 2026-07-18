@@ -77,10 +77,11 @@ load, weight/nutrition trends). Plus a dashboard at
 `http://<host>:8080` with Today (targets card with live progress
 bars; tonight's level is editable inline and the edit is pushed
 straight to the calendar event), Progress, Trends (including a
-30-day HRV/training-readiness chart), Sessions (per-workout avg/max
-HR, an HR-zone breakdown bar, and a GPS route-shape preview when
-available), Achievements, and Settings (goals, weekly plan editor,
-ingestion health check).
+30-day HRV/training-readiness chart), Sessions (a Leaflet map of
+every GPS-tracked route across all activity types, plus per-workout
+avg/max HR, an HR-zone breakdown bar, and a small route-shape
+preview per session), Achievements, and Settings (goals, weekly plan
+editor, ingestion health check).
 
 ## Architecture
 

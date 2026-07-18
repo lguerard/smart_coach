@@ -1,6 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Seances - Smart Sport{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% endblock %}
+
 {% block content %}
+
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-3">Tous les trajets -- toute activite</h2>
+  {% if route_polylines %}
+  <div id="routesMap" style="height: 320px; border-radius: 0.75rem;"></div>
+  {% else %}
+  <p class="text-sm text-center py-8" style="color: var(--muted);">
+    Aucun trajet GPS enregistre pour l'instant.
+  </p>
+  {% endif %}
+</div>
 
 <p class="text-xs px-1" style="color: var(--muted);">
   La categorie vient de l'auto-detection Garmin (parfois peu fiable pour
@@ -66,4 +83,21 @@
   {% endfor %}
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+{% if route_polylines %}
+<script>
+const polylines = {{ route_polylines|tojson }};
+const map = L.map('routesMap');
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
+}).addTo(map);
+const layers = polylines.map(points => L.polyline(points, {
+  color: getComputedStyle(document.documentElement).getPropertyValue('--blue'),
+  weight: 3, opacity: 0.55,
+}).addTo(map));
+map.fitBounds(L.featureGroup(layers).getBounds(), { padding: [16, 16] });
+</script>
+{% endif %}
 {% endblock %}
