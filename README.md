@@ -1,3 +1,5 @@
+<img src="web/static/icon-192.png" width="96" height="96" alt="Smart Coach icon">
+
 # Smart Coach
 
 Your own AI coach for training, food, sleep and your real schedule —
