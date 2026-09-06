@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Google Calendar sync for tonight's adapted session.
 
-Near-verbatim port of garmin-coach/gcal.py -- same OAuth/Calendar API
-plumbing, isolated from training.py's pure logic and llm.py/notify.py.
-Config lives under ~/.config/smart_coach/ instead of
-~/.config/garmin-coach/ so the two projects can run in parallel during
-the migration period without clobbering each other's tokens.
+OAuth consent, token cache and event plumbing, kept apart from
+training.py's pure logic and from llm.py/notify.py. Credentials live
+under ~/.config/smart_coach/, with one token file per account so that
+two people sharing a deployment never share calendar access.
+
+First-time consent is not done here: run setup_calendar.py once per
+account (see docs/TECHNICAL.md #Setup).
 """
 
 import datetime as dt

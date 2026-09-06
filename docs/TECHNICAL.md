@@ -23,9 +23,8 @@ overview, see the [README](../README.md).
 - A Google account with a target calendar (any name, e.g. "Sport" —
   set it per user in Settings > "Calendrier Google"; created
   automatically on first push if it doesn't exist yet, so a
-  dedicated calendar needs no manual setup) and a Google Cloud OAuth
-  client (see garmin-coach's README for the one-time Calendar API
-  setup — same steps, new config path below)
+  dedicated calendar needs no manual setup). The one-time Google
+  Cloud setup is step 3 below — nothing to prepare beforehand.
 
 ## Input and expected output
 
@@ -157,46 +156,152 @@ web container (always on)
                             the LLM phrasing step, live
 ```
 
-## Setup (Docker)
+## Setup
+
+Everything runs through `docker compose` — there is no virtualenv to
+create and no file to copy by hand. Count about twenty minutes, most of
+it waiting on Google and Garmin.
+
+### 1. Settings
 
 ```bash
 cp .env.example .env
-nano .env   # NTFY_TOPIC, TZ, RCLONE_REMOTE (CLAUDE_CODE_OAUTH_TOKEN filled in step 2)
+nano .env
+```
 
-# 0. Google Calendar OAuth client (see garmin-coach README for how to
-#    create one) -- drop it in before the first interactive run:
-mkdir -p data/gcal-config
-cp /path/to/client_secret.json data/gcal-config/calendar_client_secret.json
+Four values matter now; the fifth comes back in step 4.
 
-# 1. rclone remote pointing at the Drive folder the phone exports into
+| Variable | What it is |
+|---|---|
+| `TZ` | your timezone, e.g. `Europe/Paris` — the whole schedule keys off it |
+| `NTFY_TOPIC` | a secret topic name of your choosing. Install the **ntfy** app and subscribe to the same name: that is where the coaching message lands |
+| `RCLONE_REMOTE` | where your phone drops its Health Connect export, e.g. `gdrive:HealthConnectExports`. The remote itself is created in step 2 |
+| `SESSION_SECRET` | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `CLAUDE_CODE_OAUTH_TOKEN` | filled in at step 4 |
+
+### 2. Access to your phone's export
+
+Your Android phone backs Health Connect up to Google Drive on its own
+(Settings > Health Connect > backup/export). Point rclone at that
+folder:
+
+```bash
 docker compose run --rm -it smart_coach-worker rclone config
+```
 
-# 2. Claude subscription token
+Pick `drive`, follow the prompts, and name the remote exactly as in
+`RCLONE_REMOTE`. The configuration is kept in `data/rclone/`.
+
+### 3. Google Calendar
+
+**a. Create the credentials, once, in the Google Cloud Console.**
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → create
+   or pick a project
+2. **APIs & Services → Library** → enable **Google Calendar API**
+3. **APIs & Services → Credentials → Create credentials → OAuth client
+   ID**
+4. *Which API are you using?* → **Google Calendar API**;
+   *what data will you be accessing?* → **User data**.
+   Not "Application data": that creates a service account, which has
+   its own empty calendar and cannot see yours
+5. *Application type* → **Desktop app**. This is the one that matters —
+   a "Web application" client rejects the local redirect used below
+6. **Download JSON**, then on the server:
+
+```bash
+mkdir -p data/gcal-config
+cp ~/Downloads/client_secret_*.json data/gcal-config/calendar_client_secret.json
+```
+
+If the consent screen stays in **Testing** mode, add your own address
+under **Test users** — otherwise Google refuses the approval in the next
+step.
+
+**b. Approve the access, once per account.**
+
+```bash
+docker compose run --rm -it -p 8765:8765 \
+    smart_coach-worker python setup_calendar.py <your-account>
+```
+
+It prints a URL: open it in a browser, approve, done. The token is
+written straight where the containers read it — nothing to copy.
+
+> **Working over SSH.** Google redirects back to
+> `http://localhost:8765`, which has to reach the server. Open the
+> session with that port forwarded and the browser on your own machine
+> will do:
+>
+> ```bash
+> ssh -L 8765:localhost:8765 you@your-server
+> ```
+
+`<your-account>` is the Smart Coach account name — you create it in step
+6 at `/signup`, or now with `manage_users.py` (see *Adding a user*). Its
+Garmin and Calendar credentials are keyed by that name, so two people on
+one deployment never share either.
+
+### 4. Claude
+
+```bash
 docker compose run --rm -it smart_coach-worker claude setup-token
-#    -> copy the printed token into .env (CLAUDE_CODE_OAUTH_TOKEN)
+```
 
-# 3. Calendar consent -- do this on the host, not in Docker (the OAuth
-#    flow opens a local browser port):
-.venv/bin/python -c "import gcal; gcal.get_calendar_service()"
-cp ~/.config/smart_coach/calendar_token.json data/gcal-config/
+Copy the printed token into `.env` as `CLAUDE_CODE_OAUTH_TOKEN`. This
+uses a Claude subscription; to use the Anthropic API instead, set
+`LLM_PROVIDER=anthropic_api` and `ANTHROPIC_API_KEY`.
 
-# 3b. Garmin login (email/password + possible MFA prompt; tokens land
-#     in data/garmin-tokens/<username>, valid ~1 year). Use your
-#     smart_coach account name:
-docker compose run --rm -it smart_coach-worker python -c \
-  "from ingest import garmin_api; garmin_api.get_client('<username>')"
-#     First run only: backfill history further than the default
-#     30-day window with GARMIN_LOOKBACK_DAYS=365 python run_ingest.py
+### 5. Garmin
 
-# 4. End-to-end test before trusting the cron
+```bash
+docker compose run --rm -it smart_coach-worker python setup_garmin.py <your-account>
+```
+
+E-mail, password, and the MFA code if your account has one. The tokens
+land in `data/garmin-tokens/<account>` and last about a year.
+
+### 6. Check it end to end, then start
+
+```bash
 docker compose run --rm -it smart_coach-worker python run_ingest.py
 docker compose run --rm -it smart_coach-worker python run_coach.py
-
-# 5. Start both services
 docker compose up -d --build
 ```
 
-Dashboard: `http://<host>:8080`.
+`run_ingest.py` pulls the data, `run_coach.py` produces the day's message
+— run both once before trusting the schedule, so a failure shows up in
+front of you rather than at 6 a.m.
+
+Any time something feels off afterwards, one command answers most of it:
+
+```bash
+docker compose run --rm smart_coach-worker python doctor.py
+```
+
+It checks disk space, the rclone remote, the Claude token, ntfy, that
+every module the cron jobs need is actually importable, the age of each
+ingestion source, the Garmin tokens and the calendar consent — and exits
+non-zero if anything is broken, so it also works from cron.
+
+To backfill more than the default 30 days, once:
+
+```bash
+docker compose run --rm -e GARMIN_LOOKBACK_DAYS=365 \
+    smart_coach-worker python run_ingest.py
+```
+
+Dashboard: `http://<host>:8080`. Create your account at `/signup` — the
+first account ever created is the admin.
+
+### What runs on its own afterwards
+
+| Time | What happens |
+|---|---|
+| 05:30 | ingestion: Garmin + the phone's export |
+| 06:00 | readiness, tonight's session, calendar, coaching message |
+| 16:00 | afternoon check-in — silent unless you are falling behind |
+| 21:00 | evening check-in, same rule |
 
 ## Adding a user
 
@@ -213,23 +318,24 @@ key, Settings > Passkeys) and sign in without a password from the
 login page. Passkeys need HTTPS (or localhost) — the public profile
 below provides exactly that.
 
-The CLI alternative still works (creates pre-approved accounts):
+The CLI alternative still works (creates pre-approved accounts), and the
+per-account credentials are exactly the same three commands as the first
+setup:
 
 ```bash
 # 1. Create the account
 docker compose run --rm -it smart_coach-worker python manage_users.py alice
 
-# 2. Point ingestion at their own Health Connect export
+# 2. Their own Health Connect export
 docker compose run --rm -it smart_coach-worker rclone config   # new remote
-# then set rclone_remote for that user (Settings page, or sqlite3)
+# then set rclone_remote for that user (Settings page)
 
-# 3. Calendar consent for that account (host, not Docker):
-.venv/bin/python -c "import gcal; gcal.get_calendar_service('alice')"
-cp ~/.config/smart_coach/calendar_token_alice.json data/gcal-config/
+# 3. Their calendar
+docker compose run --rm -it -p 8765:8765 \
+    smart_coach-worker python setup_calendar.py alice
 
-# 4. Garmin login for that account:
-docker compose run --rm -it smart_coach-worker python -c \
-  "from ingest import garmin_api; garmin_api.get_client('alice')"
+# 4. Their Garmin account
+docker compose run --rm -it smart_coach-worker python setup_garmin.py alice
 ```
 
 Then the user logs in and fills in Settings: goals and macro ratios,
@@ -261,27 +367,43 @@ failed logins are throttled per client IP (5 tries / 15 min).
 ## Testing
 
 ```bash
-.venv/bin/python tests/run_all.py   # every module's plain-assert self-check
+docker compose run --rm smart_coach-worker python tests/run_all.py
 ```
 
-## Migrating from garmin-coach
-
-Run smart_coach alongside garmin-coach for 1-2 weeks and compare the
-daily status calls (the vote set is smaller -- 3 signals instead of
-4 -- so behavior will genuinely differ) before retiring garmin-coach:
-
-```bash
-systemctl --user disable --now garmin-coach.timer   # or: docker compose down (old deployment)
-```
+Every module's plain-assert self-check, no framework.
 
 ## Troubleshooting
+
+Start here:
+
+```bash
+docker compose run --rm smart_coach-worker python doctor.py
+```
+
+Every failure this project has actually suffered was silent — a module
+missing from the image, a full disk, an ingestion stopped for days,
+expired tokens. Nothing crashed, nothing restarted, the dashboard kept
+serving yesterday's numbers. `doctor.py` asks the questions nobody
+thinks to ask until something is already wrong, and names the command
+that fixes each one.
 
 - A "Coach failed: ..." ntfy notification means the ingest/coach
   pipeline itself failed and sent you the error; a silent morning
   means cron/rclone trouble, not a swallowed exception.
 - A "(Calendrier non mis a jour: ...)" note appended to an otherwise
-  normal message means only the Calendar step failed — rerun the
-  Calendar consent step above.
+  normal message means only the Calendar step failed — rerun
+  `setup_calendar.py` for that account (delete the existing
+  `data/gcal-config/calendar_token_<account>.json` first, the script
+  refuses to overwrite one).
+- `setup_calendar.py` prints a URL and then seems to hang: that is it
+  waiting for the approval. If the browser says the page cannot be
+  reached after you approve, the redirect never got back — open the SSH
+  session with `-L 8765:localhost:8765` and try again.
+- Google refuses the approval with "app is blocked" or "not verified":
+  the consent screen is in Testing mode and your address is not in
+  **Test users**.
+- `ModuleNotFoundError` or "can't open file" in the worker's logs means
+  the image is older than the code: `docker compose up -d --build`.
 - `nutrition_today` / Progress page empty: nutrition logging is new
   and sparse by design — Progress degrades to "pas assez de donnees"
   rather than a misleading chart until enough history accumulates.

@@ -27,6 +27,9 @@ import sqlite3
 from typing import Optional
 
 import db
+# For the sleep window in calibration_report(). metrics imports db and
+# training_load, never training, so this stays acyclic.
+import metrics
 
 LEVEL_MIN, LEVEL_MAX = 0, 10
 
@@ -349,7 +352,145 @@ def _training_readiness_vote(wellness: dict) -> Optional[str]:
     return "yellow"
 
 
-def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
+# Two sessions in a row felt too hard means the level is wrong, whatever
+# this morning's recovery says -- one bad evening is noise, two is a
+# pattern. Same, mirrored, for a level that has become too easy.
+FEEDBACK_STREAK = 2
+
+_FEEDBACK_LABEL_FR = {
+    "easy": "trop facile", "right": "au bon niveau", "hard": "trop dure",
+}
+
+
+def recent_feedback(
+    conn: sqlite3.Connection, user_id: int, session_type: str,
+    limit: int = FEEDBACK_STREAK,
+) -> list[str]:
+    """The last ratings given for one session type, most recent first.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        session_type (str): Session type the ratings belong to.
+        limit (int): How many to look back on.
+
+    Returns:
+        list[str]: ``"easy"`` / ``"right"`` / ``"hard"``, newest first.
+    """
+    return [
+        row["rating"] for row in conn.execute(
+            "SELECT rating FROM session_feedback WHERE user_id = ? AND "
+            "session_type = ? ORDER BY local_date DESC LIMIT ?",
+            (user_id, session_type, limit),
+        )
+    ]
+
+
+def _feedback_vote(feedback: Optional[list[str]]) -> Optional[str]:
+    if not feedback or len(feedback) < FEEDBACK_STREAK:
+        return None
+    streak = feedback[:FEEDBACK_STREAK]
+    if all(r == "hard" for r in streak):
+        return "red"
+    if all(r == "easy" for r in streak):
+        return "green"
+    return None
+
+
+_HRV_STATUS_LABEL_FR = {
+    "BALANCED": "equilibree", "UNBALANCED": "desequilibree", "LOW": "basse",
+}
+
+
+def _all_votes(
+    wellness: dict, baseline_rhr: Optional[float],
+    feedback: Optional[list[str]] = None,
+) -> list[tuple[str, str, str]]:
+    """Every signal that has data today, as (label, vote, detail).
+
+    One list, used both to decide the day's status and to explain it on
+    the dashboard -- so the explanation can never drift from the verdict
+    it explains.
+
+    Parameters:
+        wellness (dict): Today's metrics (``metrics.daily_wellness``).
+        baseline_rhr (float | None): Rolling personal resting-HR baseline.
+
+    Returns:
+        list[tuple[str, str, str]]: Signals with data, in reading order.
+    """
+    sleep_score = wellness.get("sleep_score")
+    recent = wellness.get("recent_minutes")
+    previous = wellness.get("previous_minutes")
+    resting_hr = wellness.get("resting_hr")
+    readiness = wellness.get("training_readiness_score")
+    hrv_status = wellness.get("hrv_status")
+
+    rhr_detail = ""
+    if resting_hr is not None and baseline_rhr is not None:
+        rhr_detail = (
+            f"{resting_hr:.0f} bpm, "
+            f"{resting_hr - baseline_rhr:+.0f} vs ta base "
+            f"({baseline_rhr:.0f})"
+        )
+
+    load_detail = ""
+    if recent is not None and previous is not None:
+        load_detail = f"{recent:.0f} min cette semaine contre {previous:.0f}"
+
+    candidates = (
+        ("Sommeil", _sleep_vote(wellness),
+         "" if sleep_score is None else f"score {sleep_score:.0f}"),
+        ("Charge recente", _activity_load_vote(wellness), load_detail),
+        ("FC de repos", _resting_hr_vote(wellness, baseline_rhr), rhr_detail),
+        ("VFC", _hrv_vote(wellness),
+         _HRV_STATUS_LABEL_FR.get(hrv_status or "", "")),
+        ("Recuperation", _training_readiness_vote(wellness),
+         "" if readiness is None else f"{readiness:.0f}/100"),
+        ("Ressenti", _feedback_vote(feedback),
+         ", ".join(
+             _FEEDBACK_LABEL_FR.get(r, r)
+             for r in (feedback or [])[:FEEDBACK_STREAK]
+         )),
+    )
+    return [
+        (label, vote, detail)
+        for label, vote, detail in candidates
+        if vote is not None
+    ]
+
+
+def explain_status(
+    wellness: dict, baseline_rhr: Optional[float],
+    feedback: Optional[list[str]] = None,
+) -> list[dict]:
+    """The signals behind today's status, for display.
+
+    A green/yellow/red chip on its own asks to be trusted blindly; the
+    same chip with "FC de repos +5 vs ta base" under it can be argued
+    with, which is the point of a coach you self-host.
+
+    Parameters:
+        wellness (dict): Today's metrics (``metrics.daily_wellness``).
+        baseline_rhr (float | None): Rolling personal resting-HR baseline.
+
+    Returns:
+        list[dict]: ``{"label", "vote", "detail"}`` per signal with data.
+        Empty when nothing was measured -- the caller shows nothing
+        rather than a table of dashes.
+    """
+    return [
+        {"label": label, "vote": vote, "detail": detail}
+        for label, vote, detail in _all_votes(
+            wellness, baseline_rhr, feedback,
+        )
+    ]
+
+
+def compute_status(
+    wellness: dict, baseline_rhr: Optional[float],
+    feedback: Optional[list[str]] = None,
+) -> str:
     """Combine wellness signals into a green/yellow/red daily status.
 
     Parameters:
@@ -365,14 +506,7 @@ def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
         to be green.
     """
     votes = [
-        vote for vote in (
-            _sleep_vote(wellness),
-            _activity_load_vote(wellness),
-            _resting_hr_vote(wellness, baseline_rhr),
-            _hrv_vote(wellness),
-            _training_readiness_vote(wellness),
-        )
-        if vote is not None
+        vote for _, vote, _ in _all_votes(wellness, baseline_rhr, feedback)
     ]
     if not votes:
         return "yellow"
@@ -381,6 +515,102 @@ def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
     if all(v == "green" for v in votes):
         return "green"
     return "yellow"
+
+
+CALIBRATION_MIN_DAYS = 30
+
+
+def _share(values: list[float], predicate) -> int:
+    return round(100 * sum(1 for v in values if predicate(v)) / len(values))
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def calibration_report(
+    conn: sqlite3.Connection, user_id: int, date: str, days: int = 90,
+) -> list[dict]:
+    """Do the built-in thresholds describe THIS body, or someone else's?
+
+    SLEEP_SCORE_GOOD, TRAINING_READINESS_GOOD and the resting-HR spike
+    are the same numbers for everyone, and the code has always carried a
+    "retune against real mornings" note that nobody ever acts on. This
+    reports how often each threshold is actually cleared, next to the
+    person's own median -- someone green 8 % of the time is not lazy,
+    their thresholds are simply set for another body.
+
+    Deliberately a report and not an auto-tune: silently moving the
+    goalposts under someone would make every past status unreadable and
+    every future one unfalsifiable.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date, end of the window.
+        days (int): Window length.
+
+    Returns:
+        list[dict]: ``{"label", "median", "threshold", "share", "unit",
+        "note"}`` per signal with at least CALIBRATION_MIN_DAYS of data.
+        Empty early on -- a verdict drawn from three nights would be
+        worse than none.
+    """
+    start = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=days)
+    ).isoformat()
+    out: list[dict] = []
+
+    sleep = [
+        v for v in metrics.sleep_scores_for_range(
+            conn, user_id, date, days,
+        ).values() if v is not None
+    ]
+    if len(sleep) >= CALIBRATION_MIN_DAYS:
+        share = _share(sleep, lambda v: v >= SLEEP_SCORE_GOOD)
+        out.append({
+            "label": "Sommeil", "median": round(_median(sleep)),
+            "threshold": SLEEP_SCORE_GOOD, "share": share, "unit": "",
+            "days": len(sleep),
+            "note": _calibration_note(share, "SLEEP_SCORE_GOOD"),
+        })
+
+    readiness = [
+        row["score"] for row in conn.execute(
+            "SELECT score FROM garmin_training_readiness WHERE "
+            "user_id = ? AND local_date >= ? AND score IS NOT NULL",
+            (user_id, start),
+        )
+    ]
+    if len(readiness) >= CALIBRATION_MIN_DAYS:
+        share = _share(readiness, lambda v: v >= TRAINING_READINESS_GOOD)
+        out.append({
+            "label": "Recuperation", "median": round(_median(readiness)),
+            "threshold": TRAINING_READINESS_GOOD, "share": share,
+            "unit": "/100", "days": len(readiness),
+            "note": _calibration_note(share, "TRAINING_READINESS_GOOD"),
+        })
+
+    return out
+
+
+def _calibration_note(share: int, constant: str) -> Optional[str]:
+    """One line, only when the numbers actually say something."""
+    if share < 15:
+        return (
+            f"Seuil franchi {share} % du temps : {constant} est probablement "
+            "trop haut pour toi."
+        )
+    if share > 85:
+        return (
+            f"Seuil franchi {share} % du temps : {constant} ne discrimine "
+            "plus grand-chose."
+        )
+    return None
 
 
 def adjust_level(

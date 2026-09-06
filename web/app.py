@@ -23,6 +23,7 @@ import sqlite3
 import time
 import urllib.parse
 from pathlib import Path
+from typing import Optional
 
 import webauthn
 from fastapi import FastAPI, Request
@@ -83,15 +84,22 @@ app.add_middleware(
 )
 
 
+# The schema is ensured once, at import, instead of on every request:
+# init_db() runs 60-odd CREATE TABLE/INDEX statements plus its migration
+# probes, and paying that on each page load bought nothing -- the schema
+# cannot change between two requests of the same process.
+_schema_conn = db.connect()
+db.init_db(_schema_conn)
+_schema_conn.close()
+
+
 def get_conn() -> sqlite3.Connection:
-    """Open a request-scoped db connection with the schema ensured.
+    """Open a request-scoped db connection.
 
     Returns:
         sqlite3.Connection: Ready-to-query connection.
     """
-    conn = db.connect()
-    db.init_db(conn)
-    return conn
+    return db.connect()
 
 
 def current_user_id(request: Request) -> int:
@@ -424,6 +432,33 @@ def admin_reject(user_id: int, request: Request):
 
 # --- Home ---
 
+def _freshness(ran_at: Optional[str], tz) -> dict:
+    """One ingestion source's last run, ready to display.
+
+    Ingestion stopping in silence is this project's worst failure mode:
+    the dashboard keeps showing yesterday's numbers as if they were
+    today's. Flagged past 30 h -- ingestion runs daily, so beyond that a
+    run was missed.
+
+    Parameters:
+        ran_at (str | None): Last run, ISO UTC, or None if never.
+        tz (ZoneInfo): The user's timezone.
+
+    Returns:
+        dict: ``{"when": str | None, "stale": bool}``.
+    """
+    if not ran_at:
+        return {"when": None, "stale": True}
+    when = dt.datetime.fromisoformat(ran_at)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    age_h = (dt.datetime.now(dt.timezone.utc) - when).total_seconds() / 3600
+    return {
+        "when": when.astimezone(tz).strftime("%d/%m a %H:%M"),
+        "stale": age_h > 30,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
     """Today: readiness chip, tonight's session, the coaching message."""
@@ -443,11 +478,48 @@ def home(request: Request) -> HTMLResponse:
             entry["session_type"], entry["level"], session_values,
             entry["status"],
         )
-    last_sync = conn.execute(
-        "SELECT MAX(ran_at) AS ran_at FROM ingest_runs WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()["ran_at"]
+    # Per source, not one global date: the two feeds fail independently
+    # -- Garmin tokens expire, the phone stops exporting to Drive -- and
+    # a single "last sync" line hides whichever one is stuck behind the
+    # one that still works.
+    sync = conn.execute(
+        "SELECT "
+        "  MAX(CASE WHEN table_name LIKE 'garmin:%' THEN ran_at END) AS garmin, "
+        "  MAX(CASE WHEN table_name NOT LIKE 'garmin:%' THEN ran_at END) AS phone "
+        "FROM ingest_runs WHERE user_id = ?", (user_id,),
+    ).fetchone()
     wellness = metrics.daily_wellness(conn, user_id, date)
+    # Why today is green/yellow/red. Same vote functions the decision
+    # uses, so the two can never disagree.
+    feedback = (
+        training.recent_feedback(conn, user_id, entry["session_type"])
+        if entry and entry["session_type"] else []
+    )
+    status_signals = training.explain_status(
+        wellness, training.rhr_baseline(conn, user_id, date), feedback,
+    )
+    # Asked the evening of a session day, once. Yesterday's session
+    # counts too: the question usually gets answered the next morning.
+    yesterday = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    ).isoformat()
+    pending_feedback = conn.execute(
+        "SELECT local_date, session_type FROM coach_log "
+        "WHERE user_id = ? AND local_date IN (?, ?) "
+        "AND session_type IS NOT NULL AND local_date NOT IN "
+        "(SELECT local_date FROM session_feedback WHERE user_id = ?) "
+        "ORDER BY local_date DESC LIMIT 1",
+        (user_id, date, yesterday, user_id),
+    ).fetchone()
+    # Ingestion silently stopping is the failure mode that hurts most:
+    # the dashboard keeps showing yesterday's numbers as if they were
+    # today's. Shown in the user's own timezone, flagged past 30 h --
+    # ingest runs daily, so 30 h means a run was missed.
+    tz = metrics.local_tz(conn, user_id)
+    sources = [
+        {"label": label, **_freshness(sync[column], tz)}
+        for label, column in (("Garmin", "garmin"), ("Telephone", "phone"))
+    ]
     nutrition = metrics.nutrition_for_date(conn, user_id, date)
     targets = progress.macro_targets(conn, user_id, date)
     # Today's budget vs what's logged so far -- rows with no target
@@ -494,7 +566,11 @@ def home(request: Request) -> HTMLResponse:
             "description": description,
             "session_label_fr": training.SESSION_LABEL_FR,
             "status_label_fr": training.STATUS_LABEL_FR,
-            "last_sync": last_sync, "wellness": wellness,
+            "sync_sources": sources,
+            "status_signals": status_signals,
+            "pending_feedback": pending_feedback,
+            "session_label_fr_map": training.SESSION_LABEL_FR,
+            "wellness": wellness,
             "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
             "new_achievements_today": new_today, "in_deload": in_deload,
@@ -502,6 +578,43 @@ def home(request: Request) -> HTMLResponse:
             "username": request.session.get("username"),
         },
     )
+
+
+@app.post("/feedback")
+async def submit_feedback(request: Request):
+    """Record how a session felt: the loop's only human-sourced signal.
+
+    Levels used to move on the morning's readiness alone and never
+    learned whether the session that followed was too hard, too easy or
+    right. Two identical answers in a row now weigh as much as a low HRV
+    (``training._feedback_vote``).
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    rating = str(form.get("rating", ""))
+    date = str(form.get("date", ""))
+    if rating not in ("easy", "right", "hard") or not date:
+        return RedirectResponse("/", status_code=303)
+
+    row = conn.execute(
+        "SELECT session_type FROM coach_log WHERE user_id = ? AND "
+        "local_date = ? AND session_type IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1", (user_id, date),
+    ).fetchone()
+    # No session that day means nothing to rate -- a crafted form post
+    # should not be able to invent one.
+    if row:
+        conn.execute(
+            "INSERT INTO session_feedback (user_id, local_date, "
+            "session_type, rating, created_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, local_date) DO UPDATE SET "
+            "rating = excluded.rating, created_at = excluded.created_at",
+            (user_id, date, row["session_type"], rating,
+             dt.datetime.now(dt.timezone.utc).isoformat()),
+        )
+        conn.commit()
+    return RedirectResponse("/", status_code=303)
 
 
 @app.post("/regenerate", response_class=HTMLResponse)
@@ -679,16 +792,21 @@ def trends(request: Request) -> HTMLResponse:
     rhr_by_date = {r["local_date"]: r["bpm"] for r in rhr_rows}
     baseline = training.rhr_baseline(conn, user_id, date)
 
-    sleep_scores = []
-    for d in dates:
-        sleep = metrics.sleep_for_date(conn, user_id, d)
-        sleep_scores.append(sleep.get("sleep_score"))
+    # One pass for the whole window: sleep_for_date() reads every sleep
+    # session the account ever recorded, so calling it per day made the
+    # chart cost thirty full scans of a table that only grows.
+    scores_by_date = metrics.sleep_scores_for_range(conn, user_id, date, days)
+    sleep_scores = [scores_by_date.get(d) for d in dates]
 
     levels = conn.execute(
         "SELECT local_date, session_type, level FROM coach_log WHERE "
         "user_id = ? AND session_type IS NOT NULL ORDER BY local_date",
         (user_id,),
     ).fetchall()
+
+    # Do the built-in thresholds describe this body? Empty until there is
+    # enough history to answer honestly.
+    calibration = training.calibration_report(conn, user_id, date)
 
     load_history = training_load.training_load_history(
         conn, user_id, days=days,
@@ -719,6 +837,7 @@ def trends(request: Request) -> HTMLResponse:
             "rhr_values": [rhr_by_date.get(d) for d in dates],
             "rhr_baseline": round(baseline, 1) if baseline else None,
             "sleep_values": sleep_scores,
+            "calibration": calibration,
             "level_labels": [r["local_date"] for r in levels],
             "level_series": {
                 session_type: [

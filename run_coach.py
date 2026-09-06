@@ -61,7 +61,10 @@ def run_for_user(conn, user: dict) -> None:
 
     if session_type is not None:
         baseline = training.rhr_baseline(conn, user_id, today)
-        status = training.compute_status(wellness, baseline)
+        # How the last sessions of this type actually felt: the only
+        # signal that comes from the person rather than a sensor.
+        feedback = training.recent_feedback(conn, user_id, session_type)
+        status = training.compute_status(wellness, baseline, feedback)
         # Yesterday's TSB (today's isn't computed until after this
         # pipeline runs, see the training_load call below) -- lets
         # the guardrail force a deload on accumulated fatigue alone,

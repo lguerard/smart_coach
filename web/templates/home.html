@@ -86,6 +86,53 @@
 </div>
 {% endif %}
 
+{% if pending_feedback %}
+<div class="card p-4" style="border-color: var(--blue);">
+  <p class="text-sm font-semibold">
+    Comment etait la seance
+    {{ session_label_fr_map.get(pending_feedback.session_type, pending_feedback.session_type) | lower }}
+    du {{ pending_feedback.local_date[8:10] }}/{{ pending_feedback.local_date[5:7] }} ?
+  </p>
+  <p class="text-xs mt-1" style="color: var(--muted);">
+    Ta reponse pese sur le niveau des prochaines seances de ce type —
+    c'est le seul signal qui vienne de toi et pas d'un capteur.
+  </p>
+  <form method="post" action="/feedback" class="flex gap-2 mt-3">
+    <input type="hidden" name="date" value="{{ pending_feedback.local_date }}">
+    <button name="rating" value="easy" class="flex-1 text-xs px-3 py-2 rounded-lg border"
+      style="border-color: var(--border); color: var(--text-secondary);">Trop facile</button>
+    <button name="rating" value="right" class="flex-1 text-xs px-3 py-2 rounded-lg text-white"
+      style="background: var(--blue);">Au bon niveau</button>
+    <button name="rating" value="hard" class="flex-1 text-xs px-3 py-2 rounded-lg border"
+      style="border-color: var(--border); color: var(--text-secondary);">Trop dure</button>
+  </form>
+</div>
+{% endif %}
+
+{% if status_signals %}
+<div class="card p-4">
+  <h2 class="text-sm font-semibold mb-2">Signaux du jour</h2>
+  {% for s in status_signals %}
+  <div class="flex items-center justify-between text-xs {{ 'mt-2' if not loop.first }}">
+    <span class="flex items-center gap-2">
+      <span style="color: var(--{{ 'green' if s.vote == 'green' else 'yellow' if s.vote == 'yellow' else 'red' }});">●</span>
+      {{ s.label }}
+    </span>
+    <span style="color: var(--muted);">{{ s.detail }}</span>
+  </div>
+  {% endfor %}
+  <p class="text-xs mt-3" style="color: var(--muted);">
+    Le statut du jour est vert seulement si tous ces signaux le sont ;
+    un seul rouge suffit a le passer en rouge.
+    {% if status_signals | length < 5 %}
+    <br>Calcule sur {{ status_signals | length }} signal{{ "s" if status_signals | length > 1 }}
+    sur 5 — les autres n'ont pas de donnee aujourd'hui, le verdict est
+    donc moins sur qu'a l'accoutumee.
+    {% endif %}
+  </p>
+</div>
+{% endif %}
+
 {% if target_rows %}
 <div class="card p-4">
   <h2 class="text-sm font-semibold mb-2">Objectifs du jour</h2>
@@ -174,9 +221,18 @@
   {% endif %}
 </div>
 
-{% if last_sync %}
-<p class="text-xs text-center" style="color: var(--muted);">
-  Derniere synchro Health Connect : {{ last_sync[:16].replace('T', ' a ') }} UTC
+<div class="flex items-center justify-center gap-4 text-xs">
+  {% for src in sync_sources %}
+  <span style="color: var({{ '--yellow' if src.stale else '--muted' }});">
+    {% if src.stale %}⚠ {% endif %}{{ src.label }} :
+    {{ src.when if src.when else "jamais" }}
+  </span>
+  {% endfor %}
+</div>
+{% if sync_sources | selectattr('stale') | list %}
+<p class="text-xs text-center" style="color: var(--yellow);">
+  Une source n'a pas ete mise a jour depuis plus de 30 h — les chiffres
+  ci-dessus peuvent dater.
 </p>
 {% endif %}
 

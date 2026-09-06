@@ -2,6 +2,38 @@
 {% block title %}Tendances - Smart Coach{% endblock %}
 {% block content %}
 
+{% if calibration %}
+<div class="card p-4">
+  <h2 class="text-sm font-semibold">Tes seuils, tes chiffres</h2>
+  <p class="text-xs mt-1" style="color: var(--muted);">
+    Les seuils du coach sont les memes pour tout le monde. Voici a quelle
+    frequence tu les franchis reellement, sur 90 jours.
+  </p>
+  {% for c in calibration %}
+  <div class="mt-3">
+    <div class="flex items-center justify-between text-xs">
+      <span>{{ c.label }}</span>
+      <span style="color: var(--muted);">
+        mediane {{ c.median }}{{ c.unit }} · seuil {{ c.threshold }}{{ c.unit }} ·
+        franchi {{ c.share }} % ({{ c.days }} j)
+      </span>
+    </div>
+    <div class="mt-1 rounded-full overflow-hidden" style="height: 5px; background: var(--grid);">
+      <div class="h-full rounded-full" style="width: {{ c.share }}%; background: {{ 'var(--yellow)' if c.note else 'var(--green)' }};"></div>
+    </div>
+    {% if c.note %}
+    <p class="text-xs mt-1" style="color: var(--yellow);">{{ c.note }}</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <p class="text-xs mt-3" style="color: var(--muted);">
+    Rien n'est ajuste automatiquement : deplacer les seuils en douce
+    rendrait illisible tout l'historique. Les constantes se changent dans
+    training.py, en connaissance de cause.
+  </p>
+</div>
+{% endif %}
+
 <div class="card p-4">
   <h2 class="font-semibold text-sm mb-3">Pas -- 30 jours</h2>
   <div style="height: 200px;"><canvas id="stepsChart"></canvas></div>

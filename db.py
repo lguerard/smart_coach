@@ -372,6 +372,22 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_ingest_runs_user ON ingest_runs(user_id);
 
+-- How the session actually felt, asked the evening after it.
+-- The leveling loop was open until this table existed: levels moved on
+-- the MORNING's readiness alone and never learned whether the session
+-- that followed was too hard, too easy or right. One row per day, so
+-- answering twice corrects rather than duplicates.
+CREATE TABLE IF NOT EXISTS session_feedback (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    session_type TEXT NOT NULL,
+    rating TEXT NOT NULL CHECK (rating IN ('easy', 'right', 'hard')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
+);
+CREATE INDEX IF NOT EXISTS idx_session_feedback_type
+    ON session_feedback(user_id, session_type, local_date);
+
 -- Rule-engine state, replacing garmin-coach's levels.json.
 -- red_streak/deload_until back the deload guardrail (training.py):
 -- 3 reds in a row forces a deload week, tracked per session type.
@@ -523,9 +539,17 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
         sqlite3.Connection: Connection with row access by column name.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Two processes share this file: the web app reads while the worker
+    # writes (05:30 ingest, 06:00 coach). With the default rollback
+    # journal they lock each other out and the dashboard answers
+    # "database is locked" mid-ingest; WAL lets readers work through a
+    # write. busy_timeout covers the brief exclusive moments that remain
+    # -- waiting 10 s beats failing a page load.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
     return conn
 
 
