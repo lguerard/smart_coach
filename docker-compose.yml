@@ -1,11 +1,16 @@
 # =============================================================================
-#  smart_coach — dashboard + coach (replaces garmin-coach)
-#  Setup (interactive first run, see README.md #Deploiement) :
-#    1. docker compose run --rm -it smart_coach-worker rclone config
-#    2. docker compose run --rm -it smart_coach-worker claude setup-token
-#    3. docker compose run --rm -it smart_coach-worker python run_coach.py
-#       (grants Google Calendar access; drop calendar_client_secret.json
-#       into ./data/gcal-config/ first, see README)
+#  smart_coach — dashboard + coach
+#
+#  First run, once (full walkthrough in docs/TECHNICAL.md #Setup) :
+#    1. cp .env.example .env  &&  fill TZ, NTFY_TOPIC, RCLONE_REMOTE,
+#       SESSION_SECRET
+#    2. docker compose run --rm -it smart_coach-worker rclone config
+#    3. docker compose run --rm -it -p 8765:8765 \
+#           smart_coach-worker python setup_calendar.py <account>
+#    4. docker compose run --rm -it smart_coach-worker claude setup-token
+#       -> paste the token into .env as CLAUDE_CODE_OAUTH_TOKEN
+#    5. docker compose run --rm -it smart_coach-worker python setup_garmin.py <account>
+#    6. docker compose up -d --build
 # =============================================================================
 
 name: smart_coach
