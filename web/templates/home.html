@@ -193,10 +193,18 @@
   {% endif %}
 </div>
 
-{% if last_sync_local %}
-<p class="text-xs text-center" style="color: var({{ '--yellow' if last_sync_stale else '--muted' }});">
-  {% if last_sync_stale %}⚠ {% endif %}Derniere synchro : {{ last_sync_local }}
-  {%- if last_sync_stale %} — plus de 30 h, l'ingestion n'est pas passee{% endif %}
+<div class="flex items-center justify-center gap-4 text-xs">
+  {% for src in sync_sources %}
+  <span style="color: var({{ '--yellow' if src.stale else '--muted' }});">
+    {% if src.stale %}⚠ {% endif %}{{ src.label }} :
+    {{ src.when if src.when else "jamais" }}
+  </span>
+  {% endfor %}
+</div>
+{% if sync_sources | selectattr('stale') | list %}
+<p class="text-xs text-center" style="color: var(--yellow);">
+  Une source n'a pas ete mise a jour depuis plus de 30 h — les chiffres
+  ci-dessus peuvent dater.
 </p>
 {% endif %}
 

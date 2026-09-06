@@ -159,6 +159,75 @@ def sleep_for_date(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     return score_sleep(stages)
 
 
+def sleep_scores_for_range(
+    conn: sqlite3.Connection, user_id: int, end_date: str, days: int,
+) -> dict[str, Optional[float]]:
+    """Sleep score per wake-up day over a trailing window.
+
+    Same rule as ``sleep_for_date`` (longest session ending that local
+    day), but the whole window in one pass: the Trends page used to call
+    ``sleep_for_date`` once per day, and each of those calls read *every*
+    sleep session the account ever recorded before filtering in Python.
+    Thirty days of chart meant thirty full scans of a table that only
+    grows.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        end_date (str): ISO local date, last day of the window.
+        days (int): Window length, ``end_date`` included.
+
+    Returns:
+        dict[str, float | None]: Score per ISO date; a day with no
+        usable session is absent rather than ``None``, so callers can
+        tell "no data" from "scored zero".
+    """
+    tz = local_tz(conn, user_id)
+    last = dt.date.fromisoformat(end_date)
+    wanted = {
+        (last - dt.timedelta(days=n)).isoformat() for n in range(days)
+    }
+    longest: dict[str, sqlite3.Row] = {}
+    spans: dict[str, dt.timedelta] = {}
+    for row in conn.execute(
+        "SELECT uuid, start_utc, end_utc FROM sleep_sessions "
+        "WHERE user_id = ?", (user_id,),
+    ):
+        # Corrupt rows (end <= start) are dropped outright, as in
+        # sleep_for_date: they would poison the max() below.
+        if row["end_utc"] <= row["start_utc"]:
+            continue
+        day = _local_date_of(row["end_utc"], tz)
+        if day not in wanted:
+            continue
+        span = (
+            dt.datetime.fromisoformat(row["end_utc"])
+            - dt.datetime.fromisoformat(row["start_utc"])
+        )
+        if day not in spans or span > spans[day]:
+            longest[day], spans[day] = row, span
+
+    if not longest:
+        return {}
+
+    # One query for every night's stages instead of one per night.
+    by_uuid: dict[str, list] = {}
+    placeholders = ",".join("?" * len(longest))
+    for stage in conn.execute(
+        "SELECT parent_uuid, stage_type, stage_start_utc, stage_end_utc "
+        f"FROM sleep_stages WHERE user_id = ? AND parent_uuid IN ({placeholders})",
+        (user_id, *[row["uuid"] for row in longest.values()]),
+    ):
+        by_uuid.setdefault(stage["parent_uuid"], []).append(stage)
+
+    scores: dict[str, Optional[float]] = {}
+    for day, row in longest.items():
+        score = score_sleep(by_uuid.get(row["uuid"], [])).get("sleep_score")
+        if score is not None:
+            scores[day] = score
+    return scores
+
+
 def steps_for_range(
     conn: sqlite3.Connection, user_id: int, end_date: str, days: int,
 ) -> dict[str, int]:

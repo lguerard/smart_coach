@@ -23,6 +23,7 @@ import sqlite3
 import time
 import urllib.parse
 from pathlib import Path
+from typing import Optional
 
 import webauthn
 from fastapi import FastAPI, Request
@@ -431,6 +432,33 @@ def admin_reject(user_id: int, request: Request):
 
 # --- Home ---
 
+def _freshness(ran_at: Optional[str], tz) -> dict:
+    """One ingestion source's last run, ready to display.
+
+    Ingestion stopping in silence is this project's worst failure mode:
+    the dashboard keeps showing yesterday's numbers as if they were
+    today's. Flagged past 30 h -- ingestion runs daily, so beyond that a
+    run was missed.
+
+    Parameters:
+        ran_at (str | None): Last run, ISO UTC, or None if never.
+        tz (ZoneInfo): The user's timezone.
+
+    Returns:
+        dict: ``{"when": str | None, "stale": bool}``.
+    """
+    if not ran_at:
+        return {"when": None, "stale": True}
+    when = dt.datetime.fromisoformat(ran_at)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    age_h = (dt.datetime.now(dt.timezone.utc) - when).total_seconds() / 3600
+    return {
+        "when": when.astimezone(tz).strftime("%d/%m a %H:%M"),
+        "stale": age_h > 30,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
     """Today: readiness chip, tonight's session, the coaching message."""
@@ -450,10 +478,16 @@ def home(request: Request) -> HTMLResponse:
             entry["session_type"], entry["level"], session_values,
             entry["status"],
         )
-    last_sync = conn.execute(
-        "SELECT MAX(ran_at) AS ran_at FROM ingest_runs WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()["ran_at"]
+    # Per source, not one global date: the two feeds fail independently
+    # -- Garmin tokens expire, the phone stops exporting to Drive -- and
+    # a single "last sync" line hides whichever one is stuck behind the
+    # one that still works.
+    sync = conn.execute(
+        "SELECT "
+        "  MAX(CASE WHEN table_name LIKE 'garmin:%' THEN ran_at END) AS garmin, "
+        "  MAX(CASE WHEN table_name NOT LIKE 'garmin:%' THEN ran_at END) AS phone "
+        "FROM ingest_runs WHERE user_id = ?", (user_id,),
+    ).fetchone()
     wellness = metrics.daily_wellness(conn, user_id, date)
     # Why today is green/yellow/red. Same vote functions the decision
     # uses, so the two can never disagree.
@@ -464,17 +498,11 @@ def home(request: Request) -> HTMLResponse:
     # the dashboard keeps showing yesterday's numbers as if they were
     # today's. Shown in the user's own timezone, flagged past 30 h --
     # ingest runs daily, so 30 h means a run was missed.
-    last_sync_local, last_sync_stale = None, False
-    if last_sync:
-        when = dt.datetime.fromisoformat(last_sync)
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=dt.timezone.utc)
-        local = when.astimezone(metrics.local_tz(conn, user_id))
-        last_sync_local = local.strftime("%d/%m a %H:%M")
-        age_h = (
-            dt.datetime.now(dt.timezone.utc) - when
-        ).total_seconds() / 3600
-        last_sync_stale = age_h > 30
+    tz = metrics.local_tz(conn, user_id)
+    sources = [
+        {"label": label, **_freshness(sync[column], tz)}
+        for label, column in (("Garmin", "garmin"), ("Telephone", "phone"))
+    ]
     nutrition = metrics.nutrition_for_date(conn, user_id, date)
     targets = progress.macro_targets(conn, user_id, date)
     # Today's budget vs what's logged so far -- rows with no target
@@ -521,9 +549,7 @@ def home(request: Request) -> HTMLResponse:
             "description": description,
             "session_label_fr": training.SESSION_LABEL_FR,
             "status_label_fr": training.STATUS_LABEL_FR,
-            "last_sync": last_sync,
-            "last_sync_local": last_sync_local,
-            "last_sync_stale": last_sync_stale,
+            "sync_sources": sources,
             "status_signals": status_signals,
             "wellness": wellness,
             "target_rows": target_rows,
@@ -710,10 +736,11 @@ def trends(request: Request) -> HTMLResponse:
     rhr_by_date = {r["local_date"]: r["bpm"] for r in rhr_rows}
     baseline = training.rhr_baseline(conn, user_id, date)
 
-    sleep_scores = []
-    for d in dates:
-        sleep = metrics.sleep_for_date(conn, user_id, d)
-        sleep_scores.append(sleep.get("sleep_score"))
+    # One pass for the whole window: sleep_for_date() reads every sleep
+    # session the account ever recorded, so calling it per day made the
+    # chart cost thirty full scans of a table that only grows.
+    scores_by_date = metrics.sleep_scores_for_range(conn, user_id, date, days)
+    sleep_scores = [scores_by_date.get(d) for d in dates]
 
     levels = conn.execute(
         "SELECT local_date, session_type, level FROM coach_log WHERE "
