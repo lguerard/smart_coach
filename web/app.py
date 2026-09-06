@@ -491,9 +491,26 @@ def home(request: Request) -> HTMLResponse:
     wellness = metrics.daily_wellness(conn, user_id, date)
     # Why today is green/yellow/red. Same vote functions the decision
     # uses, so the two can never disagree.
-    status_signals = training.explain_status(
-        wellness, training.rhr_baseline(conn, user_id, date),
+    feedback = (
+        training.recent_feedback(conn, user_id, entry["session_type"])
+        if entry and entry["session_type"] else []
     )
+    status_signals = training.explain_status(
+        wellness, training.rhr_baseline(conn, user_id, date), feedback,
+    )
+    # Asked the evening of a session day, once. Yesterday's session
+    # counts too: the question usually gets answered the next morning.
+    yesterday = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    ).isoformat()
+    pending_feedback = conn.execute(
+        "SELECT local_date, session_type FROM coach_log "
+        "WHERE user_id = ? AND local_date IN (?, ?) "
+        "AND session_type IS NOT NULL AND local_date NOT IN "
+        "(SELECT local_date FROM session_feedback WHERE user_id = ?) "
+        "ORDER BY local_date DESC LIMIT 1",
+        (user_id, date, yesterday, user_id),
+    ).fetchone()
     # Ingestion silently stopping is the failure mode that hurts most:
     # the dashboard keeps showing yesterday's numbers as if they were
     # today's. Shown in the user's own timezone, flagged past 30 h --
@@ -551,6 +568,8 @@ def home(request: Request) -> HTMLResponse:
             "status_label_fr": training.STATUS_LABEL_FR,
             "sync_sources": sources,
             "status_signals": status_signals,
+            "pending_feedback": pending_feedback,
+            "session_label_fr_map": training.SESSION_LABEL_FR,
             "wellness": wellness,
             "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
@@ -559,6 +578,43 @@ def home(request: Request) -> HTMLResponse:
             "username": request.session.get("username"),
         },
     )
+
+
+@app.post("/feedback")
+async def submit_feedback(request: Request):
+    """Record how a session felt: the loop's only human-sourced signal.
+
+    Levels used to move on the morning's readiness alone and never
+    learned whether the session that followed was too hard, too easy or
+    right. Two identical answers in a row now weigh as much as a low HRV
+    (``training._feedback_vote``).
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    rating = str(form.get("rating", ""))
+    date = str(form.get("date", ""))
+    if rating not in ("easy", "right", "hard") or not date:
+        return RedirectResponse("/", status_code=303)
+
+    row = conn.execute(
+        "SELECT session_type FROM coach_log WHERE user_id = ? AND "
+        "local_date = ? AND session_type IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1", (user_id, date),
+    ).fetchone()
+    # No session that day means nothing to rate -- a crafted form post
+    # should not be able to invent one.
+    if row:
+        conn.execute(
+            "INSERT INTO session_feedback (user_id, local_date, "
+            "session_type, rating, created_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, local_date) DO UPDATE SET "
+            "rating = excluded.rating, created_at = excluded.created_at",
+            (user_id, date, row["session_type"], rating,
+             dt.datetime.now(dt.timezone.utc).isoformat()),
+        )
+        conn.commit()
+    return RedirectResponse("/", status_code=303)
 
 
 @app.post("/regenerate", response_class=HTMLResponse)

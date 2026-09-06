@@ -372,6 +372,22 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_ingest_runs_user ON ingest_runs(user_id);
 
+-- How the session actually felt, asked the evening after it.
+-- The leveling loop was open until this table existed: levels moved on
+-- the MORNING's readiness alone and never learned whether the session
+-- that followed was too hard, too easy or right. One row per day, so
+-- answering twice corrects rather than duplicates.
+CREATE TABLE IF NOT EXISTS session_feedback (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    session_type TEXT NOT NULL,
+    rating TEXT NOT NULL CHECK (rating IN ('easy', 'right', 'hard')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
+);
+CREATE INDEX IF NOT EXISTS idx_session_feedback_type
+    ON session_feedback(user_id, session_type, local_date);
+
 -- Rule-engine state, replacing garmin-coach's levels.json.
 -- red_streak/deload_until back the deload guardrail (training.py):
 -- 3 reds in a row forces a deload week, tracked per session type.

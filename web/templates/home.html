@@ -86,6 +86,29 @@
 </div>
 {% endif %}
 
+{% if pending_feedback %}
+<div class="card p-4" style="border-color: var(--blue);">
+  <p class="text-sm font-semibold">
+    Comment etait la seance
+    {{ session_label_fr_map.get(pending_feedback.session_type, pending_feedback.session_type) | lower }}
+    du {{ pending_feedback.local_date[8:10] }}/{{ pending_feedback.local_date[5:7] }} ?
+  </p>
+  <p class="text-xs mt-1" style="color: var(--muted);">
+    Ta reponse pese sur le niveau des prochaines seances de ce type —
+    c'est le seul signal qui vienne de toi et pas d'un capteur.
+  </p>
+  <form method="post" action="/feedback" class="flex gap-2 mt-3">
+    <input type="hidden" name="date" value="{{ pending_feedback.local_date }}">
+    <button name="rating" value="easy" class="flex-1 text-xs px-3 py-2 rounded-lg border"
+      style="border-color: var(--border); color: var(--text-secondary);">Trop facile</button>
+    <button name="rating" value="right" class="flex-1 text-xs px-3 py-2 rounded-lg text-white"
+      style="background: var(--blue);">Au bon niveau</button>
+    <button name="rating" value="hard" class="flex-1 text-xs px-3 py-2 rounded-lg border"
+      style="border-color: var(--border); color: var(--text-secondary);">Trop dure</button>
+  </form>
+</div>
+{% endif %}
+
 {% if status_signals %}
 <div class="card p-4">
   <h2 class="text-sm font-semibold mb-2">Signaux du jour</h2>

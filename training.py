@@ -349,6 +349,51 @@ def _training_readiness_vote(wellness: dict) -> Optional[str]:
     return "yellow"
 
 
+# Two sessions in a row felt too hard means the level is wrong, whatever
+# this morning's recovery says -- one bad evening is noise, two is a
+# pattern. Same, mirrored, for a level that has become too easy.
+FEEDBACK_STREAK = 2
+
+_FEEDBACK_LABEL_FR = {
+    "easy": "trop facile", "right": "au bon niveau", "hard": "trop dure",
+}
+
+
+def recent_feedback(
+    conn: sqlite3.Connection, user_id: int, session_type: str,
+    limit: int = FEEDBACK_STREAK,
+) -> list[str]:
+    """The last ratings given for one session type, most recent first.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        session_type (str): Session type the ratings belong to.
+        limit (int): How many to look back on.
+
+    Returns:
+        list[str]: ``"easy"`` / ``"right"`` / ``"hard"``, newest first.
+    """
+    return [
+        row["rating"] for row in conn.execute(
+            "SELECT rating FROM session_feedback WHERE user_id = ? AND "
+            "session_type = ? ORDER BY local_date DESC LIMIT ?",
+            (user_id, session_type, limit),
+        )
+    ]
+
+
+def _feedback_vote(feedback: Optional[list[str]]) -> Optional[str]:
+    if not feedback or len(feedback) < FEEDBACK_STREAK:
+        return None
+    streak = feedback[:FEEDBACK_STREAK]
+    if all(r == "hard" for r in streak):
+        return "red"
+    if all(r == "easy" for r in streak):
+        return "green"
+    return None
+
+
 _HRV_STATUS_LABEL_FR = {
     "BALANCED": "equilibree", "UNBALANCED": "desequilibree", "LOW": "basse",
 }
@@ -356,6 +401,7 @@ _HRV_STATUS_LABEL_FR = {
 
 def _all_votes(
     wellness: dict, baseline_rhr: Optional[float],
+    feedback: Optional[list[str]] = None,
 ) -> list[tuple[str, str, str]]:
     """Every signal that has data today, as (label, vote, detail).
 
@@ -398,6 +444,11 @@ def _all_votes(
          _HRV_STATUS_LABEL_FR.get(hrv_status or "", "")),
         ("Recuperation", _training_readiness_vote(wellness),
          "" if readiness is None else f"{readiness:.0f}/100"),
+        ("Ressenti", _feedback_vote(feedback),
+         ", ".join(
+             _FEEDBACK_LABEL_FR.get(r, r)
+             for r in (feedback or [])[:FEEDBACK_STREAK]
+         )),
     )
     return [
         (label, vote, detail)
@@ -408,6 +459,7 @@ def _all_votes(
 
 def explain_status(
     wellness: dict, baseline_rhr: Optional[float],
+    feedback: Optional[list[str]] = None,
 ) -> list[dict]:
     """The signals behind today's status, for display.
 
@@ -426,11 +478,16 @@ def explain_status(
     """
     return [
         {"label": label, "vote": vote, "detail": detail}
-        for label, vote, detail in _all_votes(wellness, baseline_rhr)
+        for label, vote, detail in _all_votes(
+            wellness, baseline_rhr, feedback,
+        )
     ]
 
 
-def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
+def compute_status(
+    wellness: dict, baseline_rhr: Optional[float],
+    feedback: Optional[list[str]] = None,
+) -> str:
     """Combine wellness signals into a green/yellow/red daily status.
 
     Parameters:
@@ -445,7 +502,9 @@ def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
         wins over green/yellow; green requires all available votes
         to be green.
     """
-    votes = [vote for _, vote, _ in _all_votes(wellness, baseline_rhr)]
+    votes = [
+        vote for _, vote, _ in _all_votes(wellness, baseline_rhr, feedback)
+    ]
     if not votes:
         return "yellow"
     if "red" in votes:
