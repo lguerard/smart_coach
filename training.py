@@ -27,6 +27,9 @@ import sqlite3
 from typing import Optional
 
 import db
+# For the sleep window in calibration_report(). metrics imports db and
+# training_load, never training, so this stays acyclic.
+import metrics
 
 LEVEL_MIN, LEVEL_MAX = 0, 10
 
@@ -512,6 +515,102 @@ def compute_status(
     if all(v == "green" for v in votes):
         return "green"
     return "yellow"
+
+
+CALIBRATION_MIN_DAYS = 30
+
+
+def _share(values: list[float], predicate) -> int:
+    return round(100 * sum(1 for v in values if predicate(v)) / len(values))
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def calibration_report(
+    conn: sqlite3.Connection, user_id: int, date: str, days: int = 90,
+) -> list[dict]:
+    """Do the built-in thresholds describe THIS body, or someone else's?
+
+    SLEEP_SCORE_GOOD, TRAINING_READINESS_GOOD and the resting-HR spike
+    are the same numbers for everyone, and the code has always carried a
+    "retune against real mornings" note that nobody ever acts on. This
+    reports how often each threshold is actually cleared, next to the
+    person's own median -- someone green 8 % of the time is not lazy,
+    their thresholds are simply set for another body.
+
+    Deliberately a report and not an auto-tune: silently moving the
+    goalposts under someone would make every past status unreadable and
+    every future one unfalsifiable.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date, end of the window.
+        days (int): Window length.
+
+    Returns:
+        list[dict]: ``{"label", "median", "threshold", "share", "unit",
+        "note"}`` per signal with at least CALIBRATION_MIN_DAYS of data.
+        Empty early on -- a verdict drawn from three nights would be
+        worse than none.
+    """
+    start = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=days)
+    ).isoformat()
+    out: list[dict] = []
+
+    sleep = [
+        v for v in metrics.sleep_scores_for_range(
+            conn, user_id, date, days,
+        ).values() if v is not None
+    ]
+    if len(sleep) >= CALIBRATION_MIN_DAYS:
+        share = _share(sleep, lambda v: v >= SLEEP_SCORE_GOOD)
+        out.append({
+            "label": "Sommeil", "median": round(_median(sleep)),
+            "threshold": SLEEP_SCORE_GOOD, "share": share, "unit": "",
+            "days": len(sleep),
+            "note": _calibration_note(share, "SLEEP_SCORE_GOOD"),
+        })
+
+    readiness = [
+        row["score"] for row in conn.execute(
+            "SELECT score FROM garmin_training_readiness WHERE "
+            "user_id = ? AND local_date >= ? AND score IS NOT NULL",
+            (user_id, start),
+        )
+    ]
+    if len(readiness) >= CALIBRATION_MIN_DAYS:
+        share = _share(readiness, lambda v: v >= TRAINING_READINESS_GOOD)
+        out.append({
+            "label": "Recuperation", "median": round(_median(readiness)),
+            "threshold": TRAINING_READINESS_GOOD, "share": share,
+            "unit": "/100", "days": len(readiness),
+            "note": _calibration_note(share, "TRAINING_READINESS_GOOD"),
+        })
+
+    return out
+
+
+def _calibration_note(share: int, constant: str) -> Optional[str]:
+    """One line, only when the numbers actually say something."""
+    if share < 15:
+        return (
+            f"Seuil franchi {share} % du temps : {constant} est probablement "
+            "trop haut pour toi."
+        )
+    if share > 85:
+        return (
+            f"Seuil franchi {share} % du temps : {constant} ne discrimine "
+            "plus grand-chose."
+        )
+    return None
 
 
 def adjust_level(

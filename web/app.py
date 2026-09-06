@@ -804,6 +804,10 @@ def trends(request: Request) -> HTMLResponse:
         (user_id,),
     ).fetchall()
 
+    # Do the built-in thresholds describe this body? Empty until there is
+    # enough history to answer honestly.
+    calibration = training.calibration_report(conn, user_id, date)
+
     load_history = training_load.training_load_history(
         conn, user_id, days=days,
     )
@@ -833,6 +837,7 @@ def trends(request: Request) -> HTMLResponse:
             "rhr_values": [rhr_by_date.get(d) for d in dates],
             "rhr_baseline": round(baseline, 1) if baseline else None,
             "sleep_values": sleep_scores,
+            "calibration": calibration,
             "level_labels": [r["local_date"] for r in levels],
             "level_series": {
                 session_type: [
