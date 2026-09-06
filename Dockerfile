@@ -15,9 +15,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY db.py metrics.py training.py training_load.py progress.py \
-     achievements.py llm.py notify.py gcal.py run_ingest.py run_coach.py \
-     manage_users.py ./
+# Every module at the root, not a hand-kept list. The explicit list silently
+# dropped weather.py and run_checkin.py when they were added: the image built
+# fine, and the failure only showed up hours later in cron output --
+# "ModuleNotFoundError: No module named 'weather'" at 06:00 and
+# "can't open file '/app/run_checkin.py'" at 16:00 and 21:00.
+COPY *.py ./
 COPY ingest/ ./ingest/
 COPY web/ ./web/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
