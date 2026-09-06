@@ -101,6 +101,11 @@
   <p class="text-xs mt-3" style="color: var(--muted);">
     Le statut du jour est vert seulement si tous ces signaux le sont ;
     un seul rouge suffit a le passer en rouge.
+    {% if status_signals | length < 5 %}
+    <br>Calcule sur {{ status_signals | length }} signal{{ "s" if status_signals | length > 1 }}
+    sur 5 — les autres n'ont pas de donnee aujourd'hui, le verdict est
+    donc moins sur qu'a l'accoutumee.
+    {% endif %}
   </p>
 </div>
 {% endif %}
