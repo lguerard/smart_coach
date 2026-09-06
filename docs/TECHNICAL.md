@@ -273,6 +273,17 @@ docker compose up -d --build
 — run both once before trusting the schedule, so a failure shows up in
 front of you rather than at 6 a.m.
 
+Any time something feels off afterwards, one command answers most of it:
+
+```bash
+docker compose run --rm smart_coach-worker python doctor.py
+```
+
+It checks disk space, the rclone remote, the Claude token, ntfy, that
+every module the cron jobs need is actually importable, the age of each
+ingestion source, the Garmin tokens and the calendar consent — and exits
+non-zero if anything is broken, so it also works from cron.
+
 To backfill more than the default 30 days, once:
 
 ```bash
@@ -362,6 +373,19 @@ docker compose run --rm smart_coach-worker python tests/run_all.py
 Every module's plain-assert self-check, no framework.
 
 ## Troubleshooting
+
+Start here:
+
+```bash
+docker compose run --rm smart_coach-worker python doctor.py
+```
+
+Every failure this project has actually suffered was silent — a module
+missing from the image, a full disk, an ingestion stopped for days,
+expired tokens. Nothing crashed, nothing restarted, the dashboard kept
+serving yesterday's numbers. `doctor.py` asks the questions nobody
+thinks to ask until something is already wrong, and names the command
+that fixes each one.
 
 - A "Coach failed: ..." ntfy notification means the ingest/coach
   pipeline itself failed and sent you the error; a silent morning
