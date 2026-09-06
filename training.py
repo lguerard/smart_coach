@@ -349,6 +349,87 @@ def _training_readiness_vote(wellness: dict) -> Optional[str]:
     return "yellow"
 
 
+_HRV_STATUS_LABEL_FR = {
+    "BALANCED": "equilibree", "UNBALANCED": "desequilibree", "LOW": "basse",
+}
+
+
+def _all_votes(
+    wellness: dict, baseline_rhr: Optional[float],
+) -> list[tuple[str, str, str]]:
+    """Every signal that has data today, as (label, vote, detail).
+
+    One list, used both to decide the day's status and to explain it on
+    the dashboard -- so the explanation can never drift from the verdict
+    it explains.
+
+    Parameters:
+        wellness (dict): Today's metrics (``metrics.daily_wellness``).
+        baseline_rhr (float | None): Rolling personal resting-HR baseline.
+
+    Returns:
+        list[tuple[str, str, str]]: Signals with data, in reading order.
+    """
+    sleep_score = wellness.get("sleep_score")
+    recent = wellness.get("recent_minutes")
+    previous = wellness.get("previous_minutes")
+    resting_hr = wellness.get("resting_hr")
+    readiness = wellness.get("training_readiness_score")
+    hrv_status = wellness.get("hrv_status")
+
+    rhr_detail = ""
+    if resting_hr is not None and baseline_rhr is not None:
+        rhr_detail = (
+            f"{resting_hr:.0f} bpm, "
+            f"{resting_hr - baseline_rhr:+.0f} vs ta base "
+            f"({baseline_rhr:.0f})"
+        )
+
+    load_detail = ""
+    if recent is not None and previous is not None:
+        load_detail = f"{recent:.0f} min cette semaine contre {previous:.0f}"
+
+    candidates = (
+        ("Sommeil", _sleep_vote(wellness),
+         "" if sleep_score is None else f"score {sleep_score:.0f}"),
+        ("Charge recente", _activity_load_vote(wellness), load_detail),
+        ("FC de repos", _resting_hr_vote(wellness, baseline_rhr), rhr_detail),
+        ("VFC", _hrv_vote(wellness),
+         _HRV_STATUS_LABEL_FR.get(hrv_status or "", "")),
+        ("Recuperation", _training_readiness_vote(wellness),
+         "" if readiness is None else f"{readiness:.0f}/100"),
+    )
+    return [
+        (label, vote, detail)
+        for label, vote, detail in candidates
+        if vote is not None
+    ]
+
+
+def explain_status(
+    wellness: dict, baseline_rhr: Optional[float],
+) -> list[dict]:
+    """The signals behind today's status, for display.
+
+    A green/yellow/red chip on its own asks to be trusted blindly; the
+    same chip with "FC de repos +5 vs ta base" under it can be argued
+    with, which is the point of a coach you self-host.
+
+    Parameters:
+        wellness (dict): Today's metrics (``metrics.daily_wellness``).
+        baseline_rhr (float | None): Rolling personal resting-HR baseline.
+
+    Returns:
+        list[dict]: ``{"label", "vote", "detail"}`` per signal with data.
+        Empty when nothing was measured -- the caller shows nothing
+        rather than a table of dashes.
+    """
+    return [
+        {"label": label, "vote": vote, "detail": detail}
+        for label, vote, detail in _all_votes(wellness, baseline_rhr)
+    ]
+
+
 def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
     """Combine wellness signals into a green/yellow/red daily status.
 
@@ -364,16 +445,7 @@ def compute_status(wellness: dict, baseline_rhr: Optional[float]) -> str:
         wins over green/yellow; green requires all available votes
         to be green.
     """
-    votes = [
-        vote for vote in (
-            _sleep_vote(wellness),
-            _activity_load_vote(wellness),
-            _resting_hr_vote(wellness, baseline_rhr),
-            _hrv_vote(wellness),
-            _training_readiness_vote(wellness),
-        )
-        if vote is not None
-    ]
+    votes = [vote for _, vote, _ in _all_votes(wellness, baseline_rhr)]
     if not votes:
         return "yellow"
     if "red" in votes:

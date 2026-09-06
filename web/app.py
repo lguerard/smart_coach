@@ -83,15 +83,22 @@ app.add_middleware(
 )
 
 
+# The schema is ensured once, at import, instead of on every request:
+# init_db() runs 60-odd CREATE TABLE/INDEX statements plus its migration
+# probes, and paying that on each page load bought nothing -- the schema
+# cannot change between two requests of the same process.
+_schema_conn = db.connect()
+db.init_db(_schema_conn)
+_schema_conn.close()
+
+
 def get_conn() -> sqlite3.Connection:
-    """Open a request-scoped db connection with the schema ensured.
+    """Open a request-scoped db connection.
 
     Returns:
         sqlite3.Connection: Ready-to-query connection.
     """
-    conn = db.connect()
-    db.init_db(conn)
-    return conn
+    return db.connect()
 
 
 def current_user_id(request: Request) -> int:
@@ -448,6 +455,26 @@ def home(request: Request) -> HTMLResponse:
         (user_id,),
     ).fetchone()["ran_at"]
     wellness = metrics.daily_wellness(conn, user_id, date)
+    # Why today is green/yellow/red. Same vote functions the decision
+    # uses, so the two can never disagree.
+    status_signals = training.explain_status(
+        wellness, training.rhr_baseline(conn, user_id, date),
+    )
+    # Ingestion silently stopping is the failure mode that hurts most:
+    # the dashboard keeps showing yesterday's numbers as if they were
+    # today's. Shown in the user's own timezone, flagged past 30 h --
+    # ingest runs daily, so 30 h means a run was missed.
+    last_sync_local, last_sync_stale = None, False
+    if last_sync:
+        when = dt.datetime.fromisoformat(last_sync)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=dt.timezone.utc)
+        local = when.astimezone(metrics.local_tz(conn, user_id))
+        last_sync_local = local.strftime("%d/%m a %H:%M")
+        age_h = (
+            dt.datetime.now(dt.timezone.utc) - when
+        ).total_seconds() / 3600
+        last_sync_stale = age_h > 30
     nutrition = metrics.nutrition_for_date(conn, user_id, date)
     targets = progress.macro_targets(conn, user_id, date)
     # Today's budget vs what's logged so far -- rows with no target
@@ -494,7 +521,11 @@ def home(request: Request) -> HTMLResponse:
             "description": description,
             "session_label_fr": training.SESSION_LABEL_FR,
             "status_label_fr": training.STATUS_LABEL_FR,
-            "last_sync": last_sync, "wellness": wellness,
+            "last_sync": last_sync,
+            "last_sync_local": last_sync_local,
+            "last_sync_stale": last_sync_stale,
+            "status_signals": status_signals,
+            "wellness": wellness,
             "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
             "new_achievements_today": new_today, "in_deload": in_deload,

@@ -523,9 +523,17 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
         sqlite3.Connection: Connection with row access by column name.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Two processes share this file: the web app reads while the worker
+    # writes (05:30 ingest, 06:00 coach). With the default rollback
+    # journal they lock each other out and the dashboard answers
+    # "database is locked" mid-ingest; WAL lets readers work through a
+    # write. busy_timeout covers the brief exclusive moments that remain
+    # -- waiting 10 s beats failing a page load.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
     return conn
 
 

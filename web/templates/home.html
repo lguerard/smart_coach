@@ -86,6 +86,25 @@
 </div>
 {% endif %}
 
+{% if status_signals %}
+<div class="card p-4">
+  <h2 class="text-sm font-semibold mb-2">Signaux du jour</h2>
+  {% for s in status_signals %}
+  <div class="flex items-center justify-between text-xs {{ 'mt-2' if not loop.first }}">
+    <span class="flex items-center gap-2">
+      <span style="color: var(--{{ 'green' if s.vote == 'green' else 'yellow' if s.vote == 'yellow' else 'red' }});">●</span>
+      {{ s.label }}
+    </span>
+    <span style="color: var(--muted);">{{ s.detail }}</span>
+  </div>
+  {% endfor %}
+  <p class="text-xs mt-3" style="color: var(--muted);">
+    Le statut du jour est vert seulement si tous ces signaux le sont ;
+    un seul rouge suffit a le passer en rouge.
+  </p>
+</div>
+{% endif %}
+
 {% if target_rows %}
 <div class="card p-4">
   <h2 class="text-sm font-semibold mb-2">Objectifs du jour</h2>
@@ -174,9 +193,10 @@
   {% endif %}
 </div>
 
-{% if last_sync %}
-<p class="text-xs text-center" style="color: var(--muted);">
-  Derniere synchro Health Connect : {{ last_sync[:16].replace('T', ' a ') }} UTC
+{% if last_sync_local %}
+<p class="text-xs text-center" style="color: var({{ '--yellow' if last_sync_stale else '--muted' }});">
+  {% if last_sync_stale %}⚠ {% endif %}Derniere synchro : {{ last_sync_local }}
+  {%- if last_sync_stale %} — plus de 30 h, l'ingestion n'est pas passee{% endif %}
 </p>
 {% endif %}
 
