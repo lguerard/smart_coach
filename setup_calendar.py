@@ -21,10 +21,18 @@ server entirely and has you paste the redirect URL back in by hand.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-from google_auth_oauthlib.flow import Flow, InstalledAppFlow
+# oauthlib refuses to parse a non-https redirect URL by default. The
+# redirect here is always http://localhost -- the loopback address RFC
+# 8252 exempts from that rule -- and the actual token exchange with
+# Google still goes over HTTPS regardless; this only lifts the local
+# scheme check on the redirect URL itself.
+os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
+from google_auth_oauthlib.flow import Flow, InstalledAppFlow  # noqa: E402
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CONFIG_DIR = Path.home() / ".config/smart_coach"
