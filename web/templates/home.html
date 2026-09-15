@@ -51,7 +51,9 @@
 {% set battery_charged = wellness.get("body_battery_charged") %}
 {% set battery_drained = wellness.get("body_battery_drained") %}
 {% set stress_avg = wellness.get("stress_avg_level") %}
-<div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+<div class="card p-4">
+  <h2 class="text-sm font-semibold mb-3">Donnees du jour</h2>
+  <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
   <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--blue) 8%, var(--surface-1));">
     <div class="stat-icon">👣</div>
     <div class="stat-value">{{ steps if steps is not none else "-" }}</div>
@@ -108,6 +110,7 @@
     <div class="stat-label mt-1">Stress</div>
   </div>
   {% endif %}
+  </div>
 </div>
 
 {% if pending_feedback %}
@@ -193,20 +196,11 @@
 <div class="hero-card p-5" style="--hero-tint: color-mix(in srgb, var(--{{ status_var }}) 14%, transparent);">
   <div class="flex items-center justify-between mb-3">
     <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">{{ date }}</p>
-    <div class="flex items-center gap-2">
-      {% if entry.status %}
-      <span class="chip-{{ entry.status }} text-xs font-medium px-3 py-1.5 rounded-full">
-        {{ status_label_fr[entry.status] }}
-      </span>
-      {% endif %}
-      <button
-        hx-post="/regenerate" hx-target="#coach-message" hx-swap="outerHTML"
-        hx-indicator="#regen-spinner"
-        class="text-xs font-medium px-3 py-1.5 rounded-full border"
-        style="border-color: var(--border); color: var(--blue);">
-        ↻
-      </button>
-    </div>
+    {% if entry.status %}
+    <span class="chip-{{ entry.status }} text-xs font-medium px-3 py-1.5 rounded-full">
+      {{ status_label_fr[entry.status] }}
+    </span>
+    {% endif %}
   </div>
 
   <div class="flex items-center gap-4">
@@ -248,12 +242,20 @@
   {% if cal_note %}
   <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
   {% endif %}
+</div>
 
-  <hr class="my-4" style="border-color: var(--border);">
-
-  <div class="flex items-center gap-2 mb-3">
-    <span style="color: var(--blue);">●</span>
-    <h2 class="font-semibold">Coach</h2>
+<div class="card p-5">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="font-semibold flex items-center gap-2">
+      <span style="color: var(--blue);">●</span> Coach
+    </h2>
+    <button
+      hx-post="/regenerate" hx-target="#coach-message" hx-swap="outerHTML"
+      hx-indicator="#regen-spinner"
+      class="text-xs font-medium px-3 py-1.5 rounded-full border"
+      style="border-color: var(--border); color: var(--blue);">
+      ↻
+    </button>
   </div>
   {% include "_message.html" %}
   <p id="regen-spinner" class="htmx-indicator text-xs mt-2" style="color: var(--muted);">
