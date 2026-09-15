@@ -49,7 +49,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from garminconnect.workout import (
-    ConditionType,
     ExecutableStep,
     FitnessEquipmentWorkout,
     StepType,
@@ -804,13 +803,16 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
         (k, v) for k, v in values.items() if k not in _NON_STEP_KEYS
     ):
         is_time = key.endswith("_sec")
+        # Garmin's end-condition type IDs (2 = time, 10 = reps) -- hardcoded
+        # rather than read off garminconnect.workout.ConditionType, since
+        # older installed versions of that library don't define REPS yet.
         condition = (
             {
-                "conditionTypeId": ConditionType.TIME,
+                "conditionTypeId": 2,
                 "conditionTypeKey": "time", "displayOrder": 2,
                 "displayable": True,
             } if is_time else {
-                "conditionTypeId": ConditionType.REPS,
+                "conditionTypeId": 10,
                 "conditionTypeKey": "reps", "displayOrder": 10,
                 "displayable": True,
             }
