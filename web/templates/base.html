@@ -64,19 +64,51 @@
     box-shadow: var(--shadow);
   }
   .stat-tile {
-    background: var(--surface-1); border: 1px solid var(--border);
+    background: var(--tile-tint, var(--surface-1));
+    border: 1px solid var(--border);
     border-radius: 16px; backdrop-filter: blur(24px) saturate(140%);
     -webkit-backdrop-filter: blur(24px) saturate(140%);
-    padding: 0.65rem 0.4rem; text-align: center;
+    padding: 0.7rem 0.4rem; text-align: center;
   }
+  .stat-icon { font-size: 1.1rem; line-height: 1; }
   .stat-value {
-    font-size: clamp(1rem, 4vw, 1.25rem); font-weight: 600;
-    color: var(--text-primary); line-height: 1.1;
-    font-variant-numeric: tabular-nums;
+    font-size: clamp(1rem, 4vw, 1.25rem); font-weight: 700;
+    color: var(--text-primary); line-height: 1.15; margin-top: 0.15rem;
   }
   .stat-label {
-    font-size: 0.65rem; letter-spacing: 0.06em; text-transform: uppercase;
-    color: var(--muted); font-weight: 600; margin-top: 0.2rem;
+    font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; margin-top: 0.15rem;
+  }
+  /* Circular progress ring, pure CSS conic-gradient -- no canvas/JS.
+     --pct (0-100) and --ring-color set inline per use. */
+  .ring {
+    --size: 84px;
+    width: var(--size); height: var(--size); border-radius: 50%; flex-shrink: 0;
+    background: conic-gradient(var(--ring-color, var(--blue)) calc(var(--pct, 0) * 1%), var(--grid) 0);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .ring-inner {
+    width: calc(var(--size) - 13px); height: calc(var(--size) - 13px);
+    border-radius: 50%; background: var(--surface-1-solid);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .ring-value { font-size: 1.35rem; font-weight: 700; line-height: 1; }
+  .ring-label {
+    font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); font-weight: 600; margin-top: 0.15rem;
+  }
+  .ring-sm { --size: 42px; }
+  .ring-sm .ring-value { font-size: 0.8rem; }
+  .meter-track { height: 6px; border-radius: 999px; overflow: hidden; }
+  .meter-fill { height: 100%; border-radius: 999px; }
+  .hero-card {
+    border-radius: 24px; border: 1px solid var(--border);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    box-shadow: var(--shadow);
+    background:
+      linear-gradient(135deg, var(--hero-tint, transparent), transparent 60%),
+      var(--surface-1);
   }
   .chip-green { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
   .chip-yellow { background: color-mix(in srgb, var(--warning) 22%, transparent); color: #f0a80a; }
@@ -95,7 +127,7 @@
 {% block head %}{% endblock %}
 </head>
 <body class="min-h-screen font-sans" style="font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;">
-  <div class="max-w-3xl mx-auto pb-24 md:pb-8">
+  <div class="max-w-4xl mx-auto pb-24 md:pb-8">
     <header class="sticky top-0 z-10" style="background: color-mix(in srgb, var(--bg-0) 78%, transparent); backdrop-filter: blur(16px);">
       <div class="flex items-center justify-between px-4 py-3">
         <span class="font-semibold text-lg flex items-center gap-2">

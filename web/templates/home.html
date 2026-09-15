@@ -17,21 +17,28 @@
 </div>
 {% endif %}
 
-<a href="/achievements" class="card p-4 block">
-  <div class="flex items-center justify-between">
-    <span class="text-sm font-semibold flex items-center gap-2">
+{% set level_pct = (100 * player_level.xp_into_level / player_level.xp_for_next_level) | round %}
+<a href="/achievements" class="hero-card p-5 flex items-center gap-4 block" style="--hero-tint: color-mix(in srgb, var(--blue) 16%, transparent);">
+  <div class="ring" style="--pct: {{ level_pct }}; --ring-color: var(--blue);">
+    <div class="ring-inner">
+      <span class="ring-value">{{ player_level.level }}</span>
+      <span class="ring-label">niveau</span>
+    </div>
+  </div>
+  <div class="flex-1 min-w-0">
+    <p class="text-sm font-semibold flex items-center gap-2">
       <span class="text-lg">⚡</span> Niveau {{ player_level.level }}
-    </span>
-    <span class="text-xs" style="color: var(--muted);">
-      {{ player_level.xp_into_level }} / {{ player_level.xp_for_next_level }} XP
-    </span>
-  </div>
-  <div class="mt-2 rounded-full overflow-hidden" style="height: 6px; background: var(--grid);">
-    <div class="h-full rounded-full" style="width: {{ (100 * player_level.xp_into_level / player_level.xp_for_next_level) | round }}%; background: var(--blue);"></div>
-  </div>
-  <div class="flex items-center justify-between mt-2 text-xs" style="color: var(--muted);">
-    <span>🏆 Coach Score {{ coach_score.unlocked_points }}/{{ coach_score.total_points }}</span>
-    <span>{{ coach_score.unlocked_count }}/{{ coach_score.total_count }} succes</span>
+      <span class="text-xs font-normal ml-auto" style="color: var(--muted);">
+        {{ player_level.xp_into_level }} / {{ player_level.xp_for_next_level }} XP
+      </span>
+    </p>
+    <div class="mt-2 meter-track" style="background: color-mix(in srgb, var(--blue) 16%, var(--grid));">
+      <div class="meter-fill" style="width: {{ level_pct }}%; background: var(--blue);"></div>
+    </div>
+    <div class="flex items-center gap-4 mt-2 text-xs" style="color: var(--muted);">
+      <span>🏆 Coach Score {{ coach_score.unlocked_points }}/{{ coach_score.total_points }}</span>
+      <span>{{ coach_score.unlocked_count }}/{{ coach_score.total_count }} succes</span>
+    </div>
   </div>
 </a>
 
@@ -39,52 +46,69 @@
 {% set rhr = wellness.get("resting_hr") %}
 {% set sleep_score = wellness.get("sleep_score") %}
 {% set hydration = wellness.get("hydration_ml_today") %}
-<div class="grid grid-cols-4 gap-2">
-  <div class="stat-tile">
-    <div class="stat-value">{{ steps if steps is not none else "-" }}</div>
-    <div class="stat-label">Pas</div>
-  </div>
-  <div class="stat-tile">
-    <div class="stat-value">{{ rhr if rhr is not none else "-" }}</div>
-    <div class="stat-label">FC repos</div>
-  </div>
-  <div class="stat-tile">
-    <div class="stat-value">{{ sleep_score if sleep_score is not none else "-" }}</div>
-    <div class="stat-label">Sommeil</div>
-  </div>
-  <div class="stat-tile">
-    <div class="stat-value">{{ (hydration / 1000) | round(1) ~ "L" if hydration is not none else "-" }}</div>
-    <div class="stat-label">Hydratation</div>
-  </div>
-</div>
-
 {% set readiness = wellness.get("training_readiness_score") %}
 {% set hrv = wellness.get("hrv_last_night_avg") %}
 {% set battery_charged = wellness.get("body_battery_charged") %}
 {% set battery_drained = wellness.get("body_battery_drained") %}
 {% set stress_avg = wellness.get("stress_avg_level") %}
-{% if readiness is not none or hrv is not none or battery_charged is not none or stress_avg is not none %}
-<div class="grid grid-cols-4 gap-2">
-  <div class="stat-tile">
+<div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--blue) 8%, var(--surface-1));">
+    <div class="stat-icon">👣</div>
+    <div class="stat-value">{{ steps if steps is not none else "-" }}</div>
+    <div class="stat-label">Pas</div>
+  </div>
+  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--red) 8%, var(--surface-1));">
+    <div class="stat-icon">💓</div>
+    <div class="stat-value">{{ rhr if rhr is not none else "-" }}</div>
+    <div class="stat-label">FC repos</div>
+  </div>
+  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--violet) 8%, var(--surface-1));">
+    {% if sleep_score is not none %}
+    <div class="ring ring-sm mx-auto" style="--pct: {{ sleep_score }}; --ring-color: var(--violet);">
+      <div class="ring-inner"><span class="ring-value">{{ sleep_score }}</span></div>
+    </div>
+    {% else %}
+    <div class="stat-icon">😴</div>
+    <div class="stat-value">-</div>
+    {% endif %}
+    <div class="stat-label mt-1">Sommeil</div>
+  </div>
+  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--aqua) 8%, var(--surface-1));">
+    <div class="stat-icon">💧</div>
+    <div class="stat-value">{{ (hydration / 1000) | round(1) ~ "L" if hydration is not none else "-" }}</div>
+    <div class="stat-label">Hydratation</div>
+  </div>
+  {% if readiness is not none or hrv is not none or battery_charged is not none or stress_avg is not none %}
+  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--green) 8%, var(--surface-1));">
+    <div class="stat-icon">🔋</div>
     <div class="stat-value">{{ readiness if readiness is not none else "-" }}</div>
     <div class="stat-label">Recuperation</div>
   </div>
-  <div class="stat-tile">
+  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--aqua) 8%, var(--surface-1));">
+    <div class="stat-icon">🫀</div>
     <div class="stat-value">{{ (hrv | round | int) if hrv is not none else "-" }}</div>
     <div class="stat-label">VFC (ms)</div>
   </div>
-  <div class="stat-tile">
+  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--yellow) 8%, var(--surface-1));">
+    <div class="stat-icon">⚡</div>
     <div class="stat-value">
       {% if battery_charged is not none %}+{{ battery_charged }}/-{{ battery_drained or 0 }}{% else %}-{% endif %}
     </div>
     <div class="stat-label">Batterie corps</div>
   </div>
-  <div class="stat-tile">
-    <div class="stat-value">{{ stress_avg if stress_avg is not none else "-" }}</div>
-    <div class="stat-label">Stress</div>
+  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--orange) 8%, var(--surface-1));">
+    {% if stress_avg is not none %}
+    <div class="ring ring-sm mx-auto" style="--pct: {{ stress_avg }}; --ring-color: var(--orange);">
+      <div class="ring-inner"><span class="ring-value">{{ stress_avg }}</span></div>
+    </div>
+    {% else %}
+    <div class="stat-icon">🧠</div>
+    <div class="stat-value">-</div>
+    {% endif %}
+    <div class="stat-label mt-1">Stress</div>
   </div>
+  {% endif %}
 </div>
-{% endif %}
 
 {% if pending_feedback %}
 <div class="card p-4" style="border-color: var(--blue);">
@@ -109,45 +133,50 @@
 </div>
 {% endif %}
 
-{% if status_signals %}
-<div class="card p-4">
-  <h2 class="text-sm font-semibold mb-2">Signaux du jour</h2>
-  {% for s in status_signals %}
-  <div class="flex items-center justify-between text-xs {{ 'mt-2' if not loop.first }}">
-    <span class="flex items-center gap-2">
-      <span style="color: var(--{{ 'green' if s.vote == 'green' else 'yellow' if s.vote == 'yellow' else 'red' }});">●</span>
-      {{ s.label }}
-    </span>
-    <span style="color: var(--muted);">{{ s.detail }}</span>
+{% if status_signals or target_rows %}
+<div class="grid md:grid-cols-2 gap-4">
+  {% if status_signals %}
+  <div class="card p-4">
+    <h2 class="text-sm font-semibold mb-2">Signaux du jour</h2>
+    {% for s in status_signals %}
+    <div class="flex items-center justify-between text-xs {{ 'mt-2' if not loop.first }}">
+      <span class="flex items-center gap-2">
+        <span style="color: var(--{{ 'green' if s.vote == 'green' else 'yellow' if s.vote == 'yellow' else 'red' }});">●</span>
+        {{ s.label }}
+      </span>
+      <span style="color: var(--muted);">{{ s.detail }}</span>
+    </div>
+    {% endfor %}
+    <p class="text-xs mt-3" style="color: var(--muted);">
+      Le statut du jour est vert seulement si tous ces signaux le sont ;
+      un seul rouge suffit a le passer en rouge.
+      {% if status_signals | length < 5 %}
+      <br>Calcule sur {{ status_signals | length }} signal{{ "s" if status_signals | length > 1 }}
+      sur 5 — les autres n'ont pas de donnee aujourd'hui, le verdict est
+      donc moins sur qu'a l'accoutumee.
+      {% endif %}
+    </p>
   </div>
-  {% endfor %}
-  <p class="text-xs mt-3" style="color: var(--muted);">
-    Le statut du jour est vert seulement si tous ces signaux le sont ;
-    un seul rouge suffit a le passer en rouge.
-    {% if status_signals | length < 5 %}
-    <br>Calcule sur {{ status_signals | length }} signal{{ "s" if status_signals | length > 1 }}
-    sur 5 — les autres n'ont pas de donnee aujourd'hui, le verdict est
-    donc moins sur qu'a l'accoutumee.
-    {% endif %}
-  </p>
-</div>
-{% endif %}
+  {% endif %}
 
-{% if target_rows %}
-<div class="card p-4">
-  <h2 class="text-sm font-semibold mb-2">Objectifs du jour</h2>
-  {% for row in target_rows %}
-  {% set pct = (100 * row.actual / row.target) | round %}
-  <div class="{{ 'mt-2' if not loop.first }}">
-    <div class="flex items-center justify-between text-xs" style="color: var(--text-secondary);">
-      <span>{{ row.label }}</span>
-      <span>{{ row.actual | round | int }} / {{ row.target }} {{ row.unit }}</span>
+  {% if target_rows %}
+  <div class="card p-4">
+    <h2 class="text-sm font-semibold mb-2">Objectifs du jour</h2>
+    {% for row in target_rows %}
+    {% set pct = (100 * row.actual / row.target) | round %}
+    <div class="{{ 'mt-3' if not loop.first }}">
+      <div class="flex items-center justify-between text-xs" style="color: var(--text-secondary);">
+        <span>{{ row.label }}</span>
+        <span>{{ row.actual | round | int }} / {{ row.target }} {{ row.unit }}</span>
+      </div>
+      {% set fill_color = 'var(--green)' if pct >= 100 else 'var(--blue)' %}
+      <div class="mt-1 meter-track" style="background: color-mix(in srgb, {{ fill_color }} 16%, var(--grid));">
+        <div class="meter-fill" style="width: {{ [pct, 100] | min }}%; background: {{ fill_color }};"></div>
+      </div>
     </div>
-    <div class="mt-1 rounded-full overflow-hidden" style="height: 5px; background: var(--grid);">
-      <div class="h-full rounded-full" style="width: {{ [pct, 100] | min }}%; background: {{ 'var(--green)' if pct >= 100 else 'var(--blue)' }};"></div>
-    </div>
+    {% endfor %}
   </div>
-  {% endfor %}
+  {% endif %}
 </div>
 {% endif %}
 
@@ -160,11 +189,10 @@
 </div>
 {% else %}
 
-<div class="card p-5">
+{% set status_var = 'good' if entry.status == 'green' else 'warning' if entry.status == 'yellow' else 'critical' %}
+<div class="hero-card p-5" style="--hero-tint: color-mix(in srgb, var(--{{ status_var }}) 14%, transparent);">
   <div class="flex items-center justify-between mb-3">
-    <h2 class="font-semibold flex items-center gap-2">
-      <span style="color: var(--blue);">●</span> Coach
-    </h2>
+    <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">{{ date }}</p>
     <div class="flex items-center gap-2">
       {% if entry.status %}
       <span class="chip-{{ entry.status }} text-xs font-medium px-3 py-1.5 rounded-full">
@@ -180,17 +208,18 @@
       </button>
     </div>
   </div>
-  {% include "_message.html" %}
-  <p id="regen-spinner" class="htmx-indicator text-xs mt-2" style="color: var(--muted);">
-    Generation en cours...
-  </p>
-</div>
 
-<div class="card p-5">
-  <div class="flex items-center justify-between">
-    <div>
-      <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">{{ date }}</p>
-      <h1 class="text-lg font-semibold mt-0.5 flex items-center gap-2">
+  <div class="flex items-center gap-4">
+    {% if readiness is not none %}
+    <div class="ring" style="--pct: {{ readiness }}; --ring-color: var(--{{ status_var }});">
+      <div class="ring-inner">
+        <span class="ring-value">{{ readiness }}</span>
+        <span class="ring-label">forme</span>
+      </div>
+    </div>
+    {% endif %}
+    <div class="flex-1 min-w-0">
+      <h1 class="text-lg font-semibold flex items-center gap-2 flex-wrap">
         {{ session_label_fr.get(entry.session_type, off_title) }}
         {% if in_deload %}
         <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background: color-mix(in srgb, var(--violet) 20%, transparent); color: var(--violet);">
@@ -198,17 +227,17 @@
         </span>
         {% endif %}
       </h1>
+      {% if entry.level is not none %}
+      <form method="post" action="/today/level" class="flex items-center gap-1 text-sm mt-1" style="color: var(--text-secondary);">
+        Niveau
+        <input name="level" type="number" min="0" max="10" value="{{ entry.level }}"
+          class="w-14 rounded-lg border px-2 py-1 text-sm bg-transparent text-right font-semibold"
+          style="border-color: var(--border); color: var(--text-primary);">
+        /10
+        <button type="submit" class="text-xs px-2 py-1 rounded-lg text-white ml-1" style="background: var(--blue);">OK</button>
+      </form>
+      {% endif %}
     </div>
-    {% if entry.level is not none %}
-    <form method="post" action="/today/level" class="flex items-center gap-1 text-sm" style="color: var(--text-secondary);">
-      Niveau
-      <input name="level" type="number" min="0" max="10" value="{{ entry.level }}"
-        class="w-14 rounded-lg border px-2 py-1 text-sm bg-transparent text-right font-semibold"
-        style="border-color: var(--border); color: var(--text-primary);">
-      /10
-      <button type="submit" class="text-xs px-2 py-1 rounded-lg text-white ml-1" style="background: var(--blue);">OK</button>
-    </form>
-    {% endif %}
   </div>
 
   {% if description %}
@@ -219,6 +248,17 @@
   {% if cal_note %}
   <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
   {% endif %}
+
+  <hr class="my-4" style="border-color: var(--border);">
+
+  <div class="flex items-center gap-2 mb-3">
+    <span style="color: var(--blue);">●</span>
+    <h2 class="font-semibold">Coach</h2>
+  </div>
+  {% include "_message.html" %}
+  <p id="regen-spinner" class="htmx-indicator text-xs mt-2" style="color: var(--muted);">
+    Generation en cours...
+  </p>
 </div>
 
 <div class="flex items-center justify-center gap-4 text-xs">
