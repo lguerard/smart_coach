@@ -102,6 +102,30 @@ _EXERCISE_LABEL_FR = {
 }
 _NON_STEP_KEYS = {"rounds", "duration_min"}
 
+# training.session_values() key -> (Garmin exercise category, exercise
+# name), from garminconnect's own exercises.py catalog -- this is what
+# drives the on-watch exercise name + muscle diagram; the free-text
+# description field pushed alongside it (see _circuit_steps) is not
+# rendered on-device at all, which is why steps showed as a bare
+# "Allez"/"Go" prompt before this. "" for exercise_name means only the
+# category name shows -- no closer bodyweight-only catalog match
+# exists for that movement.
+_EXERCISE_CATALOG = {
+    "squats": ("SQUAT", "SQUAT"),
+    "lunges_per_leg": ("LUNGE", "LUNGE"),
+    "reverse_lunges_per_leg": ("LUNGE", ""),
+    "wall_sit_sec": ("SQUAT", "BODY_WEIGHT_WALL_SQUAT"),
+    "calf_raises": ("CALF_RAISE", "CALF_RAISE"),
+    "glute_bridge": ("HIP_RAISE", "HIP_RAISE"),
+    "pushups": ("PUSH_UP", "PUSH_UP"),
+    "dips": ("TRICEPS_EXTENSION", "BODY_WEIGHT_DIP"),
+    "superman": ("HYPEREXTENSION", "SUPERMAN_FROM_FLOOR"),
+    "plank_sec": ("PLANK", "PLANK"),
+    "side_plank_sec": ("PLANK", "SIDE_PLANK"),
+    "mountain_climbers": ("PLANK", "MOUNTAIN_CLIMBER"),
+    "jumping_jacks": ("CARDIO", "JUMPING_JACKS"),
+}
+
 
 def get_client(username: str) -> Garmin:
     """Return a logged-in Garmin client for one account.
@@ -817,6 +841,11 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
                 "displayable": True,
             }
         )
+        category, exercise_name = _EXERCISE_CATALOG.get(key, (None, None))
+        extra = (
+            {"category": category, "exerciseName": exercise_name}
+            if category else {}
+        )
         steps.append(ExecutableStep(
             stepOrder=order + 1,
             stepType={
@@ -829,9 +858,8 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
                 "workoutTargetTypeId": TargetType.NO_TARGET,
                 "workoutTargetTypeKey": "no.target", "displayOrder": 1,
             },
-            # Best-effort only -- not an officially typed field, see
-            # module docstring's ceiling note.
             description=_EXERCISE_LABEL_FR.get(key, key),
+            **extra,
         ))
     return steps
 
@@ -857,9 +885,12 @@ def _circuit_workout(
     )
     segment = WorkoutSegment(
         segmentOrder=1,
+        # 5/strength_training, not 6/cardio_training -- Garmin only
+        # shows the per-step exercise name + muscle diagram on watches
+        # for segments typed as strength training.
         sportType={
-            "sportTypeId": 6, "sportTypeKey": "cardio_training",
-            "displayOrder": 6,
+            "sportTypeId": 5, "sportTypeKey": "strength_training",
+            "displayOrder": 5,
         },
         workoutSteps=[group],
     )
@@ -874,6 +905,12 @@ def _circuit_workout(
         estimatedDurationInSecs=values["duration_min"] * 60,
         description=f"{values['rounds']} tours - {description}",
         workoutSegments=[segment],
+        # Match the segment's sportType above -- FitnessEquipmentWorkout
+        # defaults to cardio_training otherwise.
+        sportType={
+            "sportTypeId": 5, "sportTypeKey": "strength_training",
+            "displayOrder": 5,
+        },
     )
 
 
