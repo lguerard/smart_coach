@@ -78,7 +78,14 @@ def main() -> int:
     # open_browser=False: there is no browser inside the container, and a
     # server reached over SSH has no display either. Printing the URL works
     # in every case.
-    creds = flow.run_local_server(port=args.port, open_browser=False)
+    # bind_addr="0.0.0.0": the callback server must listen on every
+    # interface, not just the container's own loopback, or Docker's
+    # published port (-p 8765:8765) has nothing to forward to. host stays
+    # "localhost" so the redirect_uri sent to Google still matches what the
+    # OAuth client has registered and what the browser connects to.
+    creds = flow.run_local_server(
+        host="localhost", bind_addr="0.0.0.0", port=args.port, open_browser=False
+    )
 
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text(creds.to_json())
