@@ -236,6 +236,19 @@ written straight where the containers read it — nothing to copy.
 > ```bash
 > ssh -L 8765:localhost:8765 you@your-server
 > ```
+>
+> **Working through a jump host, or can't forward ports at all?** Add
+> `--manual` to the command:
+>
+> ```bash
+> docker compose run --rm -it -p 8765:8765 \
+>     smart_coach-worker python setup_calendar.py <your-account> --manual
+> ```
+>
+> It skips the local callback server. Open the printed URL, approve
+> access — the page it redirects to afterwards will fail to load, which
+> is fine; copy the full URL from the browser's address bar (it starts
+> with `http://localhost:8765/?...`) and paste it back at the prompt.
 
 `<your-account>` is the Smart Coach account name — you create it in step
 6 at `/signup`, or now with `manage_users.py` (see *Adding a user*). Its
@@ -398,7 +411,9 @@ that fixes each one.
 - `setup_calendar.py` prints a URL and then seems to hang: that is it
   waiting for the approval. If the browser says the page cannot be
   reached after you approve, the redirect never got back — open the SSH
-  session with `-L 8765:localhost:8765` and try again.
+  session with `-L 8765:localhost:8765` and try again, or rerun with
+  `--manual` if nothing can reach `localhost:8765` on the server at all
+  (e.g. you only reach it through a jump host).
 - Google refuses the approval with "app is blocked" or "not verified":
   the consent screen is in Testing mode and your address is not in
   **Test users**.

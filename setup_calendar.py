@@ -13,13 +13,18 @@ Why the fixed port: Google's consent redirects back to a local address,
 so that address has to be reachable. A random port could not be
 published out of the container, and could not be forwarded over SSH
 either. 8765 is used unless --port says otherwise.
+
+If nothing can reach http://localhost:<port> on this machine at all
+(e.g. the server is only reachable through a jump host that won't do
+port forwarding), use --manual instead: it skips the local callback
+server entirely and has you paste the redirect URL back in by hand.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow, InstalledAppFlow
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CONFIG_DIR = Path.home() / ".config/smart_coach"
@@ -40,6 +45,14 @@ def main() -> int:
         type=int,
         default=8765,
         help="local port Google redirects back to (default: 8765)",
+    )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="paste the redirect URL yourself instead of running a local "
+        "callback server -- use this when nothing on this machine can "
+        "reach http://localhost:<port> (e.g. only reachable through a "
+        "jump host with no port forwarding)",
     )
     args = parser.parse_args()
 
@@ -67,25 +80,49 @@ def main() -> int:
         print(f"{token_file} already exists — delete it to start over.")
         return 0
 
-    flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET), SCOPES)
-    print(
-        "\nOpen the URL below in a browser and approve the access.\n"
-        "The browser must be able to reach "
-        f"http://localhost:{args.port} on this machine.\n"
-        "Over SSH, open the session with:\n"
-        f"    ssh -L {args.port}:localhost:{args.port} you@your-server\n"
-    )
-    # open_browser=False: there is no browser inside the container, and a
-    # server reached over SSH has no display either. Printing the URL works
-    # in every case.
-    # bind_addr="0.0.0.0": the callback server must listen on every
-    # interface, not just the container's own loopback, or Docker's
-    # published port (-p 8765:8765) has nothing to forward to. host stays
-    # "localhost" so the redirect_uri sent to Google still matches what the
-    # OAuth client has registered and what the browser connects to.
-    creds = flow.run_local_server(
-        host="localhost", bind_addr="0.0.0.0", port=args.port, open_browser=False
-    )
+    if args.manual:
+        # No local server at all: Google still redirects the browser to
+        # this address whether or not anything is listening there. The
+        # code lands in the browser's address bar regardless, so it can
+        # be copied out by hand -- this needs no port published, forwarded
+        # or reachable anywhere.
+        redirect_uri = f"http://localhost:{args.port}/"
+        flow = Flow.from_client_secrets_file(
+            str(CLIENT_SECRET), scopes=SCOPES, redirect_uri=redirect_uri
+        )
+        auth_url, _ = flow.authorization_url()
+        print(
+            "\nOpen the URL below in a browser and approve the access.\n"
+            "The page it redirects to afterwards will fail to load --\n"
+            "ignore that error and copy the full URL from the address bar\n"
+            f"(it starts with {redirect_uri}?...).\n\n{auth_url}\n"
+        )
+        redirect_response = input("Paste that URL here: ").strip()
+        flow.fetch_token(authorization_response=redirect_response)
+        creds = flow.credentials
+    else:
+        flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET), SCOPES)
+        print(
+            "\nOpen the URL below in a browser and approve the access.\n"
+            "The browser must be able to reach "
+            f"http://localhost:{args.port} on this machine.\n"
+            "Over SSH, open the session with:\n"
+            f"    ssh -L {args.port}:localhost:{args.port} you@your-server\n"
+            "If nothing can reach that address at all, rerun this command\n"
+            "with --manual instead.\n"
+        )
+        # open_browser=False: there is no browser inside the container, and a
+        # server reached over SSH has no display either. Printing the URL
+        # works in every case.
+        # bind_addr="0.0.0.0": the callback server must listen on every
+        # interface, not just the container's own loopback, or Docker's
+        # published port (-p 8765:8765) has nothing to forward to. host
+        # stays "localhost" so the redirect_uri sent to Google still
+        # matches what the OAuth client has registered and what the
+        # browser connects to.
+        creds = flow.run_local_server(
+            host="localhost", bind_addr="0.0.0.0", port=args.port, open_browser=False
+        )
 
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text(creds.to_json())
