@@ -129,13 +129,27 @@ def get_client(username: str) -> Garmin:
                 "once in a terminal: python -c \"from ingest import "
                 f"garmin_api; garmin_api.get_client('{username}')\""
             )
-    # ponytail: login(tokenstore) both authenticates (MFA prompt on
-    # stdin) and persists tokens to token_dir (garminconnect >= 0.3)
+    # garminconnect's own login() tries several strategies to dodge
+    # Garmin's IP rate limiting, but its last one (the SSO "widget"
+    # flow) doesn't recognize the page Garmin now serves for its
+    # (as of 2025, effectively mandatory) email MFA -- title "GARMIN
+    # Authentication Application" instead of the "Enter MFA code for
+    # login" title it expects -- and throws instead of prompting.
+    # garmin-auth wraps the same login but handles that MFA page
+    # correctly, then hands the tokens to garminconnect's own
+    # Garmin.login(tokenstore=...), so they land in token_dir in the
+    # same format the cached-token path above already reads.
+    from garmin_auth import GarminAuth
+
     email = input(f"Garmin email for {username}: ")
     password = getpass.getpass("Garmin password: ")
-    client = Garmin(email=email, password=password)
-    client.login(token_dir)
-    return client
+    auth = GarminAuth(
+        email=email,
+        password=password,
+        prompt_mfa=lambda: input("Garmin MFA code (check your email): "),
+        token_dir=token_dir,
+    )
+    return auth.login()
 
 
 def _parse_gmt(value: str) -> dt.datetime:

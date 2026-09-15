@@ -419,6 +419,14 @@ that fixes each one.
   **Test users**.
 - `ModuleNotFoundError` or "can't open file" in the worker's logs means
   the image is older than the code: `docker compose up -d --build`.
+- `setup_garmin.py` fails with `429` from `mobile+cffi`/`mobile+requests`
+  then a `widget+cffi` error: the first two are Garmin's IP rate limit
+  (wait it out, don't keep retrying — that extends the block) and the
+  third is Garmin's now-mandatory email MFA, which `garminconnect`'s
+  bundled login can't complete. `get_client` (`ingest/garmin_api.py`)
+  hands the interactive login to `garmin-auth` instead, which prompts
+  for the emailed code correctly — this needs `docker compose build`
+  to pick up if the image predates it.
 - `nutrition_today` / Progress page empty: nutrition logging is new
   and sparse by design — Progress degrades to "pas assez de donnees"
   rather than a misleading chart until enough history accumulates.

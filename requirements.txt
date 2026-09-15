@@ -1,5 +1,6 @@
 fastapi
 garminconnect
+garmin-auth
 requests
 uvicorn[standard]
 jinja2
