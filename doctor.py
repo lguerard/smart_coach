@@ -172,14 +172,35 @@ def check_rclone_remote_setting(conn: sqlite3.Connection) -> None:
     Health Connect import (steps/nutrition/hydration/weight) for any
     account where this is unset, with no dashboard-visible sign of it.
     """
+    conf = Path.home() / ".config/rclone/rclone.conf"
+    known = conf.read_text() if conf.exists() else ""
     for user in conn.execute("SELECT id, username FROM users"):
+        name = f"Remote rclone ({user['username']})"
         remote = db.get_setting(conn, user["id"], "rclone_remote")
-        check(
-            f"Remote rclone ({user['username']})", OK if remote else FAIL,
-            "" if remote else
-            "non configure — Reglages > Remote rclone, sinon pas/"
-            "nutrition/hydratation/poids restent vides",
-        )
+        if not remote:
+            check(
+                name, FAIL,
+                "non configure — Reglages > Remote rclone, sinon pas/"
+                "nutrition/hydratation/poids restent vides",
+            )
+        elif ":" not in remote:
+            # Without a colon rclone treats it as a local path and
+            # fails with "directory not found", which points nowhere
+            # near the actual mistake.
+            check(
+                name, FAIL,
+                f"'{remote}' sans ':' — rclone y voit un dossier local. "
+                "Utilisez '<remote>:<dossier>', ex. "
+                "'gdrive:HealthConnectExports'",
+            )
+        elif f"[{remote.split(':', 1)[0]}]" not in known:
+            check(
+                name, FAIL,
+                f"remote '{remote.split(':', 1)[0]}' absent de "
+                "rclone.conf — rclone config",
+            )
+        else:
+            check(name, OK, remote)
 
 
 def check_llm() -> None:

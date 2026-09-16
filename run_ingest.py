@@ -39,13 +39,29 @@ def main() -> None:
         if not remote:
             print("  no rclone_remote configured, skipping HC export")
             continue
-        staging_dir = STAGING_ROOT / user["username"]
-        export_path = sync_drive.sync_and_extract(staging_dir, remote)
-        counts = parse_health_connect.parse_and_upsert(
-            export_path, conn, user["id"],
-        )
-        for table, count in sorted(counts.items()):
-            print(f"  {table}: {count}")
+        if ":" not in remote:
+            # rclone reads a colonless argument as a local path, so it
+            # fails with "directory not found" rather than anything
+            # that points at the real mistake.
+            print(
+                f"  rclone_remote '{remote}' has no ':' -- rclone reads "
+                "that as a local folder, not a remote. Use "
+                "'<remote>:<folder>', e.g. 'gdrive:HealthConnectExports' "
+                "(Reglages > Remote rclone)"
+            )
+            continue
+        # Guarded like the Garmin half above: one user's broken remote
+        # must not abort the loop before the others have ingested.
+        try:
+            staging_dir = STAGING_ROOT / user["username"]
+            export_path = sync_drive.sync_and_extract(staging_dir, remote)
+            counts = parse_health_connect.parse_and_upsert(
+                export_path, conn, user["id"],
+            )
+            for table, count in sorted(counts.items()):
+                print(f"  {table}: {count}")
+        except Exception as exc:
+            print(f"  health connect: FAILED: {exc}")
 
 
 if __name__ == "__main__":
