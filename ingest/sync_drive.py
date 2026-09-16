@@ -26,6 +26,12 @@ timestamp -- unrelated archives beside it are ignored even when
 newer, and a name that matches nothing falls back to the folder
 instead of failing the run.
 
+A glob is accepted wherever a filename is, and sidesteps the
+encoding question by not spelling the awkward part: "Connect" is the
+product name and survives localisation, so "gdrive:*Connect.zip"
+picks the export out of a shared folder whatever the locale put in
+front of it.
+
 To see what is actually there:
 `rclone lsf <remote> --max-depth 1 --include "*.zip"`. Note `rclone
 lsd` lists directories only, so it never shows the file.
@@ -297,6 +303,15 @@ if __name__ == "__main__":
     assert include_patterns("Health Connect.zip") == ["Health Connect.zip"]
     accented_args = _copy_args(f"gdrive:{accented_name}", tmp)
     assert accented_args.count("--include") == 2, accented_args
+
+    # A glob sidesteps the encoding question entirely by not spelling
+    # the accented part at all -- "Connect" is the product name and
+    # survives localisation, so *Connect.zip picks the export out
+    # while leaving unrelated archives alone.
+    glob_args = _copy_args("gdrive:*Connect.zip", tmp)
+    assert glob_args[2] == "gdrive:", glob_args
+    assert glob_args.count("--include") == 1, glob_args
+    assert "*Connect.zip" in glob_args, glob_args
 
     # A named zip is fetched via its parent + a filter, never as a
     # file source: rclone's Drive backend rejects that outright.
