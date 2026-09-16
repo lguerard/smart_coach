@@ -7,10 +7,18 @@ One-time setup (outside this script, done once interactively):
                      # ~/.config/rclone/rclone.conf
 
 Then RCLONE_REMOTE (e.g. "gdrive:HealthConnectExports") points at the
-Drive folder the phone's automated export writes into. Assumes that
-folder holds a single (repeatedly overwritten) export zip -- if the
-automation instead writes timestamped/rotating files, "newest by
-mtime" below still picks the right one.
+Drive folder the phone's automated export writes into. Only *.zip is
+copied, so a folder shared with unrelated files is fine; of the zips
+found, the newest by mtime wins, which handles both a single
+repeatedly-overwritten export and timestamped/rotating ones.
+
+The folder is whatever was picked in Android's file picker when the
+Health Connect export was set up, so it is often an existing folder
+rather than a dedicated one -- and the export is named after the
+phone's locale ("Sante Connect.zip" on a French device), not
+something predictable. `rclone lsf gdrive: -R --include "*.zip"`
+finds it. A dedicated folder is still worth creating: at a Drive
+root, even a filtered copy has to walk the whole account.
 """
 
 import os
@@ -37,8 +45,14 @@ def sync_remote(staging_dir: Path, remote: Optional[str] = None) -> None:
     if not remote:
         raise RuntimeError("RCLONE_REMOTE is not set.")
     staging_dir.mkdir(parents=True, exist_ok=True)
+    # Only the export zip is ever wanted, so filter server-side rather
+    # than mirroring whatever else shares the folder. Health Connect's
+    # export target is picked through Android's file picker, so it
+    # often lands somewhere shared with unrelated files -- without
+    # this, pointing at such a folder (or at a Drive root) drags all
+    # of it down every morning.
     result = subprocess.run(
-        ["rclone", "copy", remote, str(staging_dir)],
+        ["rclone", "copy", remote, str(staging_dir), "--include", "*.zip"],
         capture_output=True, text=True, timeout=600,
     )
     if result.returncode != 0:
