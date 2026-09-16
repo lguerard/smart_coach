@@ -6,33 +6,34 @@ One-time setup (outside this script, done once interactively):
                      # drive.readonly, config cached to
                      # ~/.config/rclone/rclone.conf
 
-Then RCLONE_REMOTE (e.g. "gdrive:HealthConnectExports") points at the
-Drive folder the phone's automated export writes into. Only *.zip is
-copied, so a folder shared with unrelated files is fine; of the zips
-found, the newest by mtime wins, which handles both a single
-repeatedly-overwritten export and timestamped/rotating ones.
+RCLONE_REMOTE names either the folder holding the export
+("gdrive:HealthConnectExports", or "gdrive:" for the Drive root) or
+the export file itself ("gdrive:Sante Connect.zip"). Either way only
+zips sitting directly in that folder are transferred -- never a
+recursive sweep -- which matters because the folder often can't be
+dedicated to the export: several Android builds give no choice of
+destination and always write to the Drive root, alongside whatever
+else lives there.
 
-RCLONE_REMOTE may name either the folder holding the export or the
-export file itself ("gdrive:Sante Connect.zip"). Naming the file is
-the better option whenever the folder isn't dedicated to the export
--- which it often can't be, since some Android builds give no choice
-of destination and always write to the Drive root. It fetches that
-one file and touches nothing else.
+Nothing here trusts the filename to identify the export. Health
+Connect names it from the phone's locale ("Sante Connect.zip" on a
+French device) and offers no way to change it, and such a name
+survives the trip through .env, a settings field and Drive only if
+everything agrees on how to encode its accent. So a configured name
+is matched in every Unicode form it can take, and the export is then
+recognised by looking inside the zip rather than at its name or
+timestamp -- unrelated archives beside it are ignored even when
+newer, and a name that matches nothing falls back to the folder
+instead of failing the run.
 
-Given a folder, only the zips directly inside it are fetched, and the
-export is then identified by its contents rather than by name or
-timestamp, so unrelated archives sharing the folder are ignored
-rather than mistaken for it.
-
-The file is named after the phone's locale ("Sante Connect.zip" on a
-French device), so don't go looking for a predictable name --
-`rclone lsf <remote> --max-depth 1 --include "*.zip"` shows what is
-actually there. Note `rclone lsd` lists directories only and will
-never show it.
+To see what is actually there:
+`rclone lsf <remote> --max-depth 1 --include "*.zip"`. Note `rclone
+lsd` lists directories only, so it never shows the file.
 """
 
 import os
 import subprocess
+import unicodedata
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -61,6 +62,33 @@ def sync_remote(staging_dir: Path, remote: Optional[str] = None) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(f"rclone copy failed: {result.stderr[:500]}")
+
+
+def include_patterns(filename: str) -> list[str]:
+    """rclone ``--include`` patterns matching a name however it's encoded.
+
+    Health Connect names the export from the phone's locale and gives
+    no way to change it, so on a French phone it is always "Sante
+    Connect.zip" with an acute accent -- and an accent has two equally
+    valid encodings: one codepoint (NFC) or a letter followed by a
+    combining mark (NFD). Whichever form the file was created with is
+    the form Drive reports, and a filter written in the other one
+    matches nothing at all, silently: the copy succeeds having
+    transferred no files. Sending every form the name can take removes
+    the guess.
+
+    Parameters:
+        filename (str): The export's filename as configured.
+
+    Returns:
+        list[str]: Distinct patterns, the name as given first.
+    """
+    patterns = [filename]
+    for form in ("NFC", "NFD"):
+        candidate = unicodedata.normalize(form, filename)
+        if candidate not in patterns:
+            patterns.append(candidate)
+    return patterns
 
 
 def folder_of(remote: str) -> str:
@@ -124,10 +152,10 @@ def _copy_args(remote: str, staging_dir: Path) -> list[str]:
         # parent folder with a filter for that one name is a plain
         # directory source, which every backend handles, and transfers
         # just as little.
-        return [
-            "rclone", "copy", folder_of(remote), str(staging_dir),
-            "--include", filename_of(remote), "--max-depth", "1",
-        ]
+        args = ["rclone", "copy", folder_of(remote), str(staging_dir)]
+        for pattern in include_patterns(filename_of(remote)):
+            args += ["--include", pattern]
+        return args + ["--max-depth", "1"]
     return [
         "rclone", "copy", remote, str(staging_dir),
         "--include", "*.zip", "--max-depth", "1",
@@ -259,6 +287,17 @@ if __name__ == "__main__":
 
     # Pointing straight at the export fetches it alone; pointing at a
     # folder stays inside it rather than sweeping the whole account.
+    # The accent in a locale-named export has two valid encodings and
+    # Drive reports whichever one the file was created with, so both
+    # have to be offered or the filter silently matches nothing.
+    accented_name = "Santé Connect.zip"          # NFC
+    decomposed = "Santé Connect.zip"            # NFD, same name
+    assert decomposed in include_patterns(accented_name)
+    assert accented_name in include_patterns(decomposed)
+    assert include_patterns("Health Connect.zip") == ["Health Connect.zip"]
+    accented_args = _copy_args(f"gdrive:{accented_name}", tmp)
+    assert accented_args.count("--include") == 2, accented_args
+
     # A named zip is fetched via its parent + a filter, never as a
     # file source: rclone's Drive backend rejects that outright.
     file_args = _copy_args("gdrive:Sante Connect.zip", tmp)
