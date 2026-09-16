@@ -179,6 +179,13 @@ def run_for_user(conn, user: dict) -> None:
         "date": today,
         "language": language,
         "wellness_today": wellness,
+        # The morning run fires just after wake-up, so wellness_today's
+        # movement counters are still ~0. Yesterday's are the ones that
+        # actually say something at this hour -- same reason
+        # weekly_progress.nutrition_yesterday exists.
+        "activity_yesterday": metrics.activity_yesterday(
+            conn, user_id, today,
+        ),
         "nutrition_today": nutrition,
         "weekly_progress": weekly,
         "today_session": today_session,

@@ -532,6 +532,61 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     return result
 
 
+def activity_yesterday(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict:
+    """Yesterday's movement totals, for the morning coaching message.
+
+    The morning run fires just after wake-up, so every "today"
+    counter in :func:`daily_wellness` is still near zero by
+    construction -- a few hundred steps, no hydration logged, no
+    distance. Judging the day's activity on those says nothing, and
+    asking the LLM to compare them against a daily goal produces
+    exactly the sort of line that reads as broken ("no step data to
+    go on"). Yesterday's totals are the number that actually carries
+    information at 07:45, which is the same reason
+    :func:`progress.nutrition_gap` reports on yesterday rather than
+    on an empty morning food log.
+
+    Built by running :func:`daily_wellness` for the previous day, so
+    it inherits the same Health-Connect-vs-Garmin reconciliation
+    rather than re-deriving totals from a second set of queries.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): Today's ISO local date -- yesterday is derived.
+
+    Returns:
+        dict: ``date`` plus whichever of ``steps``, ``distance_km``,
+        ``floors_climbed``, ``hydration_ml``, ``calories_burned``,
+        ``active_kcal``, ``intensity_moderate_min``,
+        ``intensity_vigorous_min``, ``active_seconds``,
+        ``sedentary_seconds`` and ``step_goal`` have data.
+    """
+    yesterday = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    ).isoformat()
+    full = daily_wellness(conn, user_id, yesterday)
+    result = {"date": yesterday}
+    for source, key in (
+        ("steps_today", "steps"),
+        ("step_goal", "step_goal"),
+        ("distance_km_today", "distance_km"),
+        ("floors_climbed_today", "floors_climbed"),
+        ("hydration_ml_today", "hydration_ml"),
+        ("total_calories_burned_today", "calories_burned"),
+        ("active_kcal", "active_kcal"),
+        ("intensity_moderate_min", "intensity_moderate_min"),
+        ("intensity_vigorous_min", "intensity_vigorous_min"),
+        ("active_seconds", "active_seconds"),
+        ("sedentary_seconds", "sedentary_seconds"),
+    ):
+        if source in full:
+            result[key] = full[source]
+    return result
+
+
 def garmin_daily_summary(
     conn: sqlite3.Connection, user_id: int, date: str,
 ) -> dict:
@@ -1040,6 +1095,15 @@ if __name__ == "__main__":
     assert filled["steps_today"] == 8200, filled
     assert filled["resting_hr"] == 51, filled
     assert filled["distance_km_today"] == 6.4, filled
+
+    # The morning message reports on yesterday, since today's counters
+    # are still ~0 when it runs.
+    yday = activity_yesterday(conn, uid, "2026-07-14")
+    assert yday["date"] == "2026-07-13", yday
+    assert yday["steps"] == 4000, yday
+    assert yday["hydration_ml"] == 500, yday
+    # ...and it inherits the rollup fallback for a day HC never synced.
+    assert activity_yesterday(conn, uid, "2026-07-15")["steps"] == 8200
 
     # HC stays authoritative where it has the day (it merges every app
     # writing to the phone, not just the watch)...

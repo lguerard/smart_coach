@@ -159,6 +159,18 @@ def check_rclone() -> None:
     if not conf.exists():
         check("rclone", FAIL, "aucune configuration — rclone config")
         return
+    if ":" not in remote:
+        # rclone reads a colonless value as a local path, so it fails
+        # with "directory not found" instead of anything that points
+        # at the real mistake.
+        check(
+            "rclone", FAIL,
+            f"RCLONE_REMOTE='{remote}' sans ':' — rclone y voit un "
+            "dossier local. Utilisez '<remote>:<dossier>', ex. "
+            "'gdrive:HealthConnectExports' ; "
+            "'rclone lsd gdrive:' liste les dossiers disponibles",
+        )
+        return
     name = remote.split(":", 1)[0]
     known = f"[{name}]" in conf.read_text()
     check(
