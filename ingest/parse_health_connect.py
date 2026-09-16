@@ -15,6 +15,7 @@ SleepSessionRecord) -- Health Connect itself stores only the int, no
 lookup table, so smart_coach ships its own copy for display purposes.
 """
 
+import bisect
 import datetime as dt
 import sqlite3
 from pathlib import Path
@@ -71,6 +72,138 @@ EXERCISE_TYPE_LABELS = {
     76: "tennis", 78: "volleyball", 79: "walking", 80: "water_polo",
     81: "weightlifting", 82: "wheelchair", 83: "yoga",
 }
+
+
+# Health Connect data categories, as used by its own app-priority
+# table (androidx.health.connect.client HealthDataCategory).
+CATEGORY_ACTIVITY = 1
+CATEGORY_BODY_MEASUREMENTS = 2
+CATEGORY_NUTRITION = 4
+
+
+def _priority_order(hc: sqlite3.Connection, category: int) -> list[int]:
+    """The user's app priority list for one data category.
+
+    Health Connect lets several apps write the same measurement and
+    resolves the overlap on read, using an order the user controls in
+    its settings ("app priority"). The raw export stores that order
+    but does nothing with it, so anything reading the tables directly
+    has to apply it too -- see :func:`_dedupe_by_priority` for why
+    ignoring it is not an option.
+
+    Parameters:
+        hc (sqlite3.Connection): Read-only HC export connection.
+        category (int): HealthDataCategory id.
+
+    Returns:
+        list[int]: ``app_info_id`` values, most preferred first; empty
+        if the export has no preference recorded for this category.
+    """
+    row = hc.execute(
+        "SELECT app_id_priority_order FROM "
+        "health_data_category_priority_table WHERE health_data_category = ?",
+        (category,),
+    ).fetchone()
+    if not row or not row[0]:
+        return []
+    return [int(part) for part in str(row[0]).split(",") if part.strip()]
+
+
+def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Sorted, non-overlapping union of ``(start, end)`` pairs.
+
+    Parameters:
+        intervals (list[tuple[int, int]]): Epoch-millis ranges.
+
+    Returns:
+        list[tuple[int, int]]: Merged ranges, ascending.
+    """
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            if end > merged[-1][1]:
+                merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _overlaps(
+    merged: list[tuple[int, int]], starts: list[int], start: int, end: int,
+) -> bool:
+    """Whether ``(start, end)`` touches an already-covered range.
+
+    Parameters:
+        merged (list[tuple[int, int]]): Output of _merge_intervals.
+        starts (list[int]): ``merged``'s start values, for bisect.
+        start (int): Candidate range start, epoch millis.
+        end (int): Candidate range end, epoch millis.
+
+    Returns:
+        bool: True if the candidate overlaps anything already covered.
+    """
+    if not merged:
+        return False
+    index = bisect.bisect_right(starts, start) - 1
+    if index >= 0 and merged[index][1] > start:
+        return True
+    following = index + 1
+    return following < len(merged) and merged[following][0] < end
+
+
+def _dedupe_by_priority(
+    rows: list[tuple], priority: list[int],
+) -> list[tuple]:
+    """Drop records a higher-priority app already covers in time.
+
+    Several apps commonly record the same activity: on a real phone,
+    Garmin Connect, the handset's own step counter and Health
+    Connect's phone module all log steps for the same walk. Summing
+    the raw rows counts it once per app -- a real export had 6068
+    steps from the watch and 5097 from the phone for one day, which
+    adds up to a wildly wrong 11165.
+
+    Health Connect's read API resolves this with the user's app
+    priority order, and this reproduces that: taking apps
+    best-first, a record is kept only when no already-accepted record
+    covers its time range, so a lower-priority app still fills the
+    gaps its betters didn't record (the phone keeps counting while the
+    watch is on the charger) without ever doubling what they did.
+
+    Parameters:
+        rows (list[tuple]): Records shaped ``(app_info_id, start_ms,
+            end_ms, ...)`` -- only the first three are read.
+        priority (list[int]): App ids, most preferred first; apps
+            missing from it sort last, in id order.
+
+    Returns:
+        list[tuple]: The surviving rows, unchanged.
+    """
+    rank = {app_id: index for index, app_id in enumerate(priority)}
+    unranked = len(priority)
+    by_app: dict[int, list[tuple]] = {}
+    for row in rows:
+        by_app.setdefault(row[0], []).append(row)
+
+    kept: list[tuple] = []
+    covered: list[tuple[int, int]] = []
+    starts: list[int] = []
+    for app_id in sorted(
+        by_app, key=lambda app: (rank.get(app, unranked), app or 0)
+    ):
+        accepted = [
+            row for row in by_app[app_id]
+            if not _overlaps(covered, starts, row[1], row[2])
+        ]
+        kept.extend(accepted)
+        # Merged once per app rather than per record: with a handful
+        # of apps and ~90k records, per-record insertion would be
+        # quadratic.
+        covered = _merge_intervals(
+            covered + [(row[1], row[2]) for row in accepted]
+        )
+        starts = [interval[0] for interval in covered]
+    return kept
 
 
 def _local_date(time_ms: int, zone_offset_s: int) -> str:
@@ -174,7 +307,7 @@ def _simple_point_table(
 
 def _simple_interval_table(
     hc: sqlite3.Connection, hc_table: str, value_col: str,
-    scale: float = 1.0,
+    scale: float = 1.0, category: int = CATEGORY_ACTIVITY,
 ) -> list[tuple]:
     """Pull a ``start_time``/``end_time`` interval HC record table.
 
@@ -190,15 +323,16 @@ def _simple_interval_table(
         value)`` rows, local_date derived from the start time.
     """
     rows = hc.execute(
-        f"SELECT uuid, start_time, start_zone_offset, end_time, "
-        f"{value_col} FROM {hc_table}"
+        f"SELECT app_info_id, start_time, end_time, uuid, "
+        f"start_zone_offset, {value_col} FROM {hc_table}"
     ).fetchall()
     return [
         (
             uuid.hex(), _iso_utc(start_ms), _iso_utc(end_ms),
             _local_date(start_ms, offset), value * scale,
         )
-        for uuid, start_ms, offset, end_ms, value in rows
+        for _, start_ms, end_ms, uuid, offset, value
+        in _dedupe_by_priority(rows, _priority_order(hc, category))
     ]
 
 
@@ -206,15 +340,16 @@ def _parse_steps(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
     rows = hc.execute(
-        "SELECT uuid, start_time, start_zone_offset, end_time, count "
-        "FROM steps_record_table"
+        "SELECT app_info_id, start_time, end_time, uuid, "
+        "start_zone_offset, count FROM steps_record_table"
     ).fetchall()
     data = [
         (
             uuid.hex(), _iso_utc(start_ms), _iso_utc(end_ms),
             _local_date(start_ms, offset), count,
         )
-        for uuid, start_ms, offset, end_ms, count in rows
+        for _, start_ms, end_ms, uuid, offset, count
+        in _dedupe_by_priority(rows, _priority_order(hc, CATEGORY_ACTIVITY))
     ]
     return _upsert(
         conn, user_id, "steps",
@@ -311,6 +446,7 @@ def _parse_hydration(
 ) -> int:
     data = _simple_interval_table(
         hc, "hydration_record_table", "volume", scale=LITRES_TO_ML,
+        category=CATEGORY_NUTRITION,
     )
     return _upsert(
         conn, user_id, "hydration",
@@ -354,9 +490,9 @@ def _parse_nutrition(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
     rows = hc.execute(
-        "SELECT uuid, start_time, start_zone_offset, end_time, "
-        "meal_type, energy, protein, total_carbohydrate, total_fat "
-        "FROM nutrition_record_table"
+        "SELECT app_info_id, start_time, end_time, uuid, "
+        "start_zone_offset, meal_type, energy, protein, "
+        "total_carbohydrate, total_fat FROM nutrition_record_table"
     ).fetchall()
     data = [
         (
@@ -365,8 +501,9 @@ def _parse_nutrition(
             energy * CALORIES_TO_KCAL if energy is not None else None,
             protein, carbs, fat,  # Mass macros: already grams, no scale
         )
-        for uuid, start_ms, offset, end_ms, meal_type, energy, protein,
-        carbs, fat in rows
+        for _, start_ms, end_ms, uuid, offset, meal_type, energy, protein,
+        carbs, fat
+        in _dedupe_by_priority(rows, _priority_order(hc, CATEGORY_NUTRITION))
     ]
     return _upsert(
         conn, user_id, "nutrition",
@@ -470,7 +607,7 @@ def parse_and_upsert(
 _SELFCHECK_SCHEMA = (
     "CREATE TABLE steps_record_table (uuid BLOB, start_time "
     "INTEGER, start_zone_offset INTEGER, end_time INTEGER, "
-    "count INTEGER);"
+    "count INTEGER, app_info_id INTEGER);"
     "CREATE TABLE resting_heart_rate_record_table (uuid BLOB, "
     "time INTEGER, zone_offset INTEGER, beats_per_minute "
     "INTEGER);"
@@ -485,22 +622,22 @@ _SELFCHECK_SCHEMA = (
     "basal_metabolic_rate REAL);"
     "CREATE TABLE active_calories_burned_record_table (uuid "
     "BLOB, start_time INTEGER, start_zone_offset INTEGER, "
-    "end_time INTEGER, energy REAL);"
+    "end_time INTEGER, energy REAL, app_info_id INTEGER);"
     "CREATE TABLE total_calories_burned_record_table (uuid "
     "BLOB, start_time INTEGER, start_zone_offset INTEGER, "
-    "end_time INTEGER, energy REAL);"
+    "end_time INTEGER, energy REAL, app_info_id INTEGER);"
     "CREATE TABLE hydration_record_table (uuid BLOB, start_time"
     " INTEGER, start_zone_offset INTEGER, end_time INTEGER, "
-    "volume REAL);"
+    "volume REAL, app_info_id INTEGER);"
     "CREATE TABLE distance_record_table (uuid BLOB, start_time"
     " INTEGER, start_zone_offset INTEGER, end_time INTEGER, "
-    "distance REAL);"
+    "distance REAL, app_info_id INTEGER);"
     "CREATE TABLE floors_climbed_record_table (uuid BLOB, "
     "start_time INTEGER, start_zone_offset INTEGER, end_time "
-    "INTEGER, floors REAL);"
+    "INTEGER, floors REAL, app_info_id INTEGER);"
     "CREATE TABLE elevation_gained_record_table (uuid BLOB, "
     "start_time INTEGER, start_zone_offset INTEGER, end_time "
-    "INTEGER, elevation REAL);"
+    "INTEGER, elevation REAL, app_info_id INTEGER);"
     "CREATE TABLE sleep_session_record_table (row_id INTEGER "
     "PRIMARY KEY, uuid BLOB, start_time INTEGER, "
     "start_zone_offset INTEGER, end_time INTEGER, title TEXT, "
@@ -515,7 +652,10 @@ _SELFCHECK_SCHEMA = (
     "CREATE TABLE nutrition_record_table (uuid BLOB, start_time"
     " INTEGER, start_zone_offset INTEGER, end_time INTEGER, "
     "meal_type INTEGER, energy REAL, protein REAL, "
-    "total_carbohydrate REAL, total_fat REAL);"
+    "total_carbohydrate REAL, total_fat REAL, app_info_id INTEGER);"
+    "CREATE TABLE health_data_category_priority_table ("
+    "row_id INTEGER PRIMARY KEY, health_data_category INTEGER, "
+    "app_id_priority_order TEXT);"
     "CREATE TABLE heart_rate_record_table (row_id INTEGER "
     "PRIMARY KEY, start_zone_offset INTEGER);"
     "CREATE TABLE heart_rate_record_series_table (parent_key "
@@ -559,7 +699,7 @@ if __name__ == "__main__":
         u1, u2 = b"\x01" * 16, b"\x02" * 16
         t0 = 1_700_000_000_000  # fixed reference instant
         hc.execute(
-            "INSERT INTO steps_record_table VALUES (?, ?, 3600, ?, ?)",
+            "INSERT INTO steps_record_table VALUES (?, ?, 3600, ?, ?, 5)",
             (u1, t0, t0 + 60_000, 500),
         )
         hc.execute(
@@ -604,7 +744,7 @@ if __name__ == "__main__":
         )
         hc.execute(
             "INSERT INTO active_calories_burned_record_table VALUES "
-            "(?, ?, 3600, ?, 400000.0)", (u1, t0, t0 + 3600_000),
+            "(?, ?, 3600, ?, 400000.0, 5)", (u1, t0, t0 + 3600_000),
         )
         hc.execute(
             "INSERT INTO basal_metabolic_rate_record_table VALUES "
@@ -613,12 +753,12 @@ if __name__ == "__main__":
         # Volume is litres, not millilitres: a 1.75 L day is raw 1.75.
         hc.execute(
             "INSERT INTO hydration_record_table VALUES "
-            "(?, ?, 3600, ?, 1.75)", (u1, t0, t0 + 3600_000),
+            "(?, ?, 3600, ?, 1.75, 14)", (u1, t0, t0 + 3600_000),
         )
         # Energy in (small) calories, macros already in grams.
         hc.execute(
             "INSERT INTO nutrition_record_table VALUES "
-            "(?, ?, 3600, ?, 1, 452825.0, 18.4, 71.1, 12.7)",
+            "(?, ?, 3600, ?, 1, 452825.0, 18.4, 71.1, 12.7, 14)",
             (u1, t0, t0 + 60_000),
         )
         hc.commit()
@@ -697,7 +837,7 @@ if __name__ == "__main__":
         hc2.executescript(_SELFCHECK_SCHEMA)
         u3 = b"\x03" * 16
         hc2.execute(
-            "INSERT INTO steps_record_table VALUES (?, ?, 3600, ?, ?)",
+            "INSERT INTO steps_record_table VALUES (?, ?, 3600, ?, ?, 5)",
             (u3, t0, t0 + 60_000, 250),
         )
         hc2.commit()
@@ -712,5 +852,43 @@ if __name__ == "__main__":
         assert conn.execute(
             "SELECT count FROM steps WHERE user_id = ?", (uid,),
         ).fetchone()["count"] == 500
+
+        # Several apps recording the same walk must count once, not
+        # once each. Real numbers from a real export: the watch logged
+        # 6068 steps for a day and the phone 5097, and summing them
+        # gave 11165 where the honest answer is 6068. The phone's
+        # separate later window is real movement the watch missed, so
+        # it still counts.
+        dup_path = tmp / "health_connect_export_dupes.db"
+        dup = sqlite3.connect(dup_path)
+        dup.executescript(_SELFCHECK_SCHEMA)
+        dup.execute(
+            "INSERT INTO health_data_category_priority_table VALUES "
+            "(1, 1, '5,11,12')"
+        )
+        hour = 3600_000
+        dup.execute(
+            "INSERT INTO steps_record_table VALUES (?, ?, 3600, ?, ?, 5)",
+            (b"\x10" * 16, t0, t0 + hour, 6068),
+        )
+        dup.execute(  # same hour, phone's own counter
+            "INSERT INTO steps_record_table VALUES (?, ?, 3600, ?, ?, 12)",
+            (b"\x11" * 16, t0, t0 + hour, 5097),
+        )
+        dup.execute(  # a later hour only the phone saw
+            "INSERT INTO steps_record_table VALUES (?, ?, 3600, ?, ?, 12)",
+            (b"\x12" * 16, t0 + 2 * hour, t0 + 3 * hour, 800),
+        )
+        dup.commit()
+        dup.close()
+
+        dup_conn = db.connect(tmp / "dupes.db")
+        db.init_db(dup_conn)
+        dup_uid = db.create_user(dup_conn, "dupes", "password1234")
+        parse_and_upsert(dup_path, dup_conn, dup_uid)
+        total = dup_conn.execute(
+            "SELECT SUM(count) AS n FROM steps WHERE user_id = ?", (dup_uid,),
+        ).fetchone()["n"]
+        assert total == 6068 + 800, total
 
         print("parse_health_connect.py: all checks passed")
