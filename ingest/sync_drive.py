@@ -67,10 +67,10 @@ def _copy_args(remote: str, staging_dir: Path) -> list[str]:
     """Build the rclone argv for pulling the export.
 
     A remote naming the zip itself ("gdrive:Sante Connect.zip") is
-    copied directly -- nothing else is fetched, and nothing else has
-    to be stored or sifted through afterwards. This is the precise
-    option, and the only one that avoids touching the neighbours
-    entirely when the export shares a busy folder.
+    fetched as its parent folder filtered to that one name, so nothing
+    else is transferred. It is expressed that way rather than by
+    passing the file as the source because rclone's Drive backend
+    reads a file path as a root directory and fails outright.
 
     A remote naming a *folder* is restricted to the zips directly
     inside it. Both restrictions matter there: without ``--include``
@@ -85,10 +85,25 @@ def _copy_args(remote: str, staging_dir: Path) -> list[str]:
     Returns:
         list[str]: Full argv for ``subprocess.run``.
     """
-    args = ["rclone", "copy", remote, str(staging_dir)]
     if remote.lower().endswith(".zip"):
-        return args
-    return args + ["--include", "*.zip", "--max-depth", "1"]
+        # Handing rclone the file as the source looks like it should
+        # work and doesn't: the Drive backend reads the path as a root
+        # directory and fails with "directory not found". Copying the
+        # parent folder with a filter for that one name is a plain
+        # directory source, which every backend handles, and transfers
+        # just as little.
+        parent, _, filename = remote.rpartition("/")
+        if not parent:
+            head, colon, filename = remote.partition(":")
+            parent = head + colon
+        return [
+            "rclone", "copy", parent, str(staging_dir),
+            "--include", filename, "--max-depth", "1",
+        ]
+    return [
+        "rclone", "copy", remote, str(staging_dir),
+        "--include", "*.zip", "--max-depth", "1",
+    ]
 
 
 def find_latest_zip(staging_dir: Path) -> Optional[Path]:
@@ -203,13 +218,20 @@ if __name__ == "__main__":
 
     # Pointing straight at the export fetches it alone; pointing at a
     # folder stays inside it rather than sweeping the whole account.
+    # A named zip is fetched via its parent + a filter, never as a
+    # file source: rclone's Drive backend rejects that outright.
     file_args = _copy_args("gdrive:Sante Connect.zip", tmp)
-    assert file_args[:3] == ["rclone", "copy", "gdrive:Sante Connect.zip"]
-    assert "--include" not in file_args and "--max-depth" not in file_args
+    assert file_args[2] == "gdrive:", file_args
+    assert file_args[-4:] == [
+        "--include", "Sante Connect.zip", "--max-depth", "1",
+    ], file_args
+    nested = _copy_args("gdrive:Exports/Sante Connect.zip", tmp)
+    assert nested[2] == "gdrive:Exports", nested
+    assert nested[-3] == "Sante Connect.zip", nested
+    # Case shouldn't decide which of the two shapes we get.
+    assert _copy_args("gdrive:Export.ZIP", tmp)[-3] == "Export.ZIP"
     folder_args = _copy_args("gdrive:", tmp)
     assert folder_args[-4:] == ["--include", "*.zip", "--max-depth", "1"]
-    # Case shouldn't decide which of the two shapes we get.
-    assert "--include" not in _copy_args("gdrive:Export.ZIP", tmp)
 
     assert find_latest_zip(tmp) == newer
     assert find_latest_zip(tmp / "empty") is None
