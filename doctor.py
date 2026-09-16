@@ -194,11 +194,22 @@ def _rclone_reachable(remote: str) -> tuple[str, str]:
     Returns:
         tuple[str, str]: ``(level, detail)`` for :func:`check`.
     """
-    # --max-depth only means something for a folder; a remote naming
-    # the export zip itself is listed as-is.
-    args = ["rclone", "lsjson", remote]
-    if not remote.lower().endswith(".zip"):
-        args[2:2] = ["--max-depth", "1"]
+    # rclone's listing commands want a directory: handed a file they
+    # fail with "directory not found", which would condemn a remote
+    # that copies perfectly well (rclone copy does take a file
+    # source). So a file-shaped remote is checked by listing its
+    # parent folder filtered down to that one name.
+    if remote.lower().endswith(".zip"):
+        parent, _, filename = remote.rpartition("/")
+        if not parent:
+            head, colon, filename = remote.partition(":")
+            parent = head + colon
+        args = [
+            "rclone", "lsf", parent, "--include", filename,
+            "--max-depth", "1",
+        ]
+    else:
+        args = ["rclone", "lsf", remote, "--max-depth", "1"]
     try:
         result = subprocess.run(
             args, capture_output=True, text=True, timeout=45,
@@ -208,6 +219,14 @@ def _rclone_reachable(remote: str) -> tuple[str, str]:
     except subprocess.TimeoutExpired:
         return WARN, f"{remote} — pas de reponse en 45 s"
     if result.returncode == 0:
+        # A filtered listing exits 0 with nothing on stdout when the
+        # name matched no file -- a wrong filename looks like success
+        # otherwise.
+        if remote.lower().endswith(".zip") and not result.stdout.strip():
+            return FAIL, (
+                f"{remote} — aucun fichier de ce nom ; listez-les avec "
+                "rclone lsf <remote> --max-depth 1 --include '*.zip'"
+            )
         return OK, remote
     error = " ".join(result.stderr.split())
     if "SERVICE_DISABLED" in error or "has not been used in project" in error:
