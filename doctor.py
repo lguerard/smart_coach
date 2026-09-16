@@ -194,10 +194,14 @@ def _rclone_reachable(remote: str) -> tuple[str, str]:
     Returns:
         tuple[str, str]: ``(level, detail)`` for :func:`check`.
     """
+    # --max-depth only means something for a folder; a remote naming
+    # the export zip itself is listed as-is.
+    args = ["rclone", "lsjson", remote]
+    if not remote.lower().endswith(".zip"):
+        args[2:2] = ["--max-depth", "1"]
     try:
         result = subprocess.run(
-            ["rclone", "lsjson", "--max-depth", "1", remote],
-            capture_output=True, text=True, timeout=45,
+            args, capture_output=True, text=True, timeout=45,
         )
     except FileNotFoundError:
         return FAIL, "binaire rclone introuvable"

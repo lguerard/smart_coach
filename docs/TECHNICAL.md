@@ -230,10 +230,19 @@ Connect.zip" on a French device), and `rclone lsd` lists directories
 only, so it never appears there. Use
 `rclone lsf gdrive: -R --include "*.zip"`. Several Android builds
 don't let you choose the destination at all and always write to the
-Drive root — that's fine, point `RCLONE_REMOTE` at `gdrive:`. Only
-top-level zips are fetched (never a recursive sweep of the account),
-rclone transfers them incrementally, and the export is recognised by
-its contents, so unrelated archives sharing the root are ignored
+Drive root. That's fine — **point `RCLONE_REMOTE` straight at the
+file**, quoting included:
+
+```bash
+RCLONE_REMOTE=gdrive:Santé Connect.zip
+```
+
+That fetches exactly that one file and touches nothing else, which is
+what you want when the export shares a folder with unrelated
+archives. Pointing at a folder (`gdrive:` for the root) also works:
+only the zips directly inside it are fetched — never a recursive
+sweep of the account — rclone transfers them incrementally, and the
+export is recognised by its contents, so neighbours are ignored
 rather than mistaken for it when they happen to be newer.
 
 **And if rclone's prompt asked for a `client_id` and you pasted the

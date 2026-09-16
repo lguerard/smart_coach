@@ -12,13 +12,17 @@ copied, so a folder shared with unrelated files is fine; of the zips
 found, the newest by mtime wins, which handles both a single
 repeatedly-overwritten export and timestamped/rotating ones.
 
-A dedicated folder is nice but not required, and on some Android
-builds not even possible -- the export destination isn't always
-selectable, and where it isn't, everything lands in the Drive root
-next to whatever else lives there. That case is supported: the copy
-is limited to zips at the top level of the remote, and the export is
-identified by its contents rather than by name or timestamp, so
-unrelated archives alongside it are ignored.
+RCLONE_REMOTE may name either the folder holding the export or the
+export file itself ("gdrive:Sante Connect.zip"). Naming the file is
+the better option whenever the folder isn't dedicated to the export
+-- which it often can't be, since some Android builds give no choice
+of destination and always write to the Drive root. It fetches that
+one file and touches nothing else.
+
+Given a folder, only the zips directly inside it are fetched, and the
+export is then identified by its contents rather than by name or
+timestamp, so unrelated archives sharing the folder are ignored
+rather than mistaken for it.
 
 The file is named after the phone's locale ("Sante Connect.zip" on a
 French device), so don't go looking for a predictable name --
@@ -51,25 +55,40 @@ def sync_remote(staging_dir: Path, remote: Optional[str] = None) -> None:
     if not remote:
         raise RuntimeError("RCLONE_REMOTE is not set.")
     staging_dir.mkdir(parents=True, exist_ok=True)
-    # The export is always a zip sitting directly in the remote
-    # folder, so restrict to exactly that. Both flags matter when the
-    # folder isn't dedicated to it -- and often it can't be, since
-    # some Android builds give no choice of export destination at all
-    # and always write to the Drive root. Without --include the whole
-    # folder gets mirrored; without --max-depth the copy descends into
-    # every subfolder, so an unrelated backup directory would be
-    # re-fetched as it grows. rclone copy is incremental, so the
-    # neighbours that do match are transferred once, not daily, and
-    # find_latest_zip tells the export apart from them by content.
     result = subprocess.run(
-        [
-            "rclone", "copy", remote, str(staging_dir),
-            "--include", "*.zip", "--max-depth", "1",
-        ],
+        _copy_args(remote, staging_dir),
         capture_output=True, text=True, timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(f"rclone copy failed: {result.stderr[:500]}")
+
+
+def _copy_args(remote: str, staging_dir: Path) -> list[str]:
+    """Build the rclone argv for pulling the export.
+
+    A remote naming the zip itself ("gdrive:Sante Connect.zip") is
+    copied directly -- nothing else is fetched, and nothing else has
+    to be stored or sifted through afterwards. This is the precise
+    option, and the only one that avoids touching the neighbours
+    entirely when the export shares a busy folder.
+
+    A remote naming a *folder* is restricted to the zips directly
+    inside it. Both restrictions matter there: without ``--include``
+    the whole folder is mirrored, and without ``--max-depth`` the copy
+    descends into every subfolder, so an unrelated backup directory
+    would be re-fetched as it grows.
+
+    Parameters:
+        remote (str): rclone remote path, folder or file.
+        staging_dir (Path): Local directory to copy into.
+
+    Returns:
+        list[str]: Full argv for ``subprocess.run``.
+    """
+    args = ["rclone", "copy", remote, str(staging_dir)]
+    if remote.lower().endswith(".zip"):
+        return args
+    return args + ["--include", "*.zip", "--max-depth", "1"]
 
 
 def find_latest_zip(staging_dir: Path) -> Optional[Path]:
@@ -181,6 +200,16 @@ if __name__ == "__main__":
     with zipfile.ZipFile(newer, "w") as archive:
         archive.writestr("health_connect_export.db", b"new")
     os.utime(newer, (time.time() + 100, time.time() + 100))
+
+    # Pointing straight at the export fetches it alone; pointing at a
+    # folder stays inside it rather than sweeping the whole account.
+    file_args = _copy_args("gdrive:Sante Connect.zip", tmp)
+    assert file_args[:3] == ["rclone", "copy", "gdrive:Sante Connect.zip"]
+    assert "--include" not in file_args and "--max-depth" not in file_args
+    folder_args = _copy_args("gdrive:", tmp)
+    assert folder_args[-4:] == ["--include", "*.zip", "--max-depth", "1"]
+    # Case shouldn't decide which of the two shapes we get.
+    assert "--include" not in _copy_args("gdrive:Export.ZIP", tmp)
 
     assert find_latest_zip(tmp) == newer
     assert find_latest_zip(tmp / "empty") is None
