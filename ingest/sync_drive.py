@@ -12,13 +12,19 @@ copied, so a folder shared with unrelated files is fine; of the zips
 found, the newest by mtime wins, which handles both a single
 repeatedly-overwritten export and timestamped/rotating ones.
 
-The folder is whatever was picked in Android's file picker when the
-Health Connect export was set up, so it is often an existing folder
-rather than a dedicated one -- and the export is named after the
-phone's locale ("Sante Connect.zip" on a French device), not
-something predictable. `rclone lsf gdrive: -R --include "*.zip"`
-finds it. A dedicated folder is still worth creating: at a Drive
-root, even a filtered copy has to walk the whole account.
+A dedicated folder is nice but not required, and on some Android
+builds not even possible -- the export destination isn't always
+selectable, and where it isn't, everything lands in the Drive root
+next to whatever else lives there. That case is supported: the copy
+is limited to zips at the top level of the remote, and the export is
+identified by its contents rather than by name or timestamp, so
+unrelated archives alongside it are ignored.
+
+The file is named after the phone's locale ("Sante Connect.zip" on a
+French device), so don't go looking for a predictable name --
+`rclone lsf <remote> --max-depth 1 --include "*.zip"` shows what is
+actually there. Note `rclone lsd` lists directories only and will
+never show it.
 """
 
 import os
@@ -45,14 +51,21 @@ def sync_remote(staging_dir: Path, remote: Optional[str] = None) -> None:
     if not remote:
         raise RuntimeError("RCLONE_REMOTE is not set.")
     staging_dir.mkdir(parents=True, exist_ok=True)
-    # Only the export zip is ever wanted, so filter server-side rather
-    # than mirroring whatever else shares the folder. Health Connect's
-    # export target is picked through Android's file picker, so it
-    # often lands somewhere shared with unrelated files -- without
-    # this, pointing at such a folder (or at a Drive root) drags all
-    # of it down every morning.
+    # The export is always a zip sitting directly in the remote
+    # folder, so restrict to exactly that. Both flags matter when the
+    # folder isn't dedicated to it -- and often it can't be, since
+    # some Android builds give no choice of export destination at all
+    # and always write to the Drive root. Without --include the whole
+    # folder gets mirrored; without --max-depth the copy descends into
+    # every subfolder, so an unrelated backup directory would be
+    # re-fetched as it grows. rclone copy is incremental, so the
+    # neighbours that do match are transferred once, not daily, and
+    # find_latest_zip tells the export apart from them by content.
     result = subprocess.run(
-        ["rclone", "copy", remote, str(staging_dir), "--include", "*.zip"],
+        [
+            "rclone", "copy", remote, str(staging_dir),
+            "--include", "*.zip", "--max-depth", "1",
+        ],
         capture_output=True, text=True, timeout=600,
     )
     if result.returncode != 0:

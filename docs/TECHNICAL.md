@@ -219,12 +219,22 @@ docker compose run --rm -it smart_coach-worker rclone config
 Pick `drive`, follow the prompts, and name the remote exactly as in
 `RCLONE_REMOTE`. The configuration is kept in `data/rclone/`.
 
-Two things that bite here. **The value needs a colon and a folder** --
-`gdrive:HealthConnectExports`, not `gdrive`. rclone reads a colonless
-value as a *local* path and fails with `directory not found`, which
-points nowhere near the mistake. (`rclone lsd gdrive:` lists the
-folders in the Drive account, if you're unsure which one the phone
-writes to. A bare `gdrive:` is valid but syncs the entire Drive.)
+Two things that bite here. **The value needs a colon** --
+`gdrive:HealthConnectExports`, or bare `gdrive:` for the Drive root,
+but never `gdrive`. rclone reads a colonless value as a *local* path
+and fails with `directory not found`, which points nowhere near the
+mistake.
+
+**Finding the export:** it is named from the phone's locale ("Santé
+Connect.zip" on a French device), and `rclone lsd` lists directories
+only, so it never appears there. Use
+`rclone lsf gdrive: -R --include "*.zip"`. Several Android builds
+don't let you choose the destination at all and always write to the
+Drive root — that's fine, point `RCLONE_REMOTE` at `gdrive:`. Only
+top-level zips are fetched (never a recursive sweep of the account),
+rclone transfers them incrementally, and the export is recognised by
+its contents, so unrelated archives sharing the root are ignored
+rather than mistaken for it when they happen to be newer.
 
 **And if rclone's prompt asked for a `client_id` and you pasted the
 OAuth client from step 3** -- the natural thing to do, since you've
