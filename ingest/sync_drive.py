@@ -60,16 +60,55 @@ def sync_remote(staging_dir: Path, remote: Optional[str] = None) -> None:
 
 
 def find_latest_zip(staging_dir: Path) -> Optional[Path]:
-    """Newest ``.zip`` file in the staging directory, by mtime.
+    """Newest zip in the staging dir that actually holds an export.
+
+    Newest-by-mtime alone is not enough to identify the export. The
+    folder Health Connect writes to is picked in Android's file
+    picker, so it is regularly a general-purpose folder (or the Drive
+    root) holding unrelated zips -- and any of those being more
+    recent would otherwise win, leaving the run to either fail on a
+    missing .db or, worse, feed some unrelated database to the
+    parser. Checking the contents makes the choice of folder
+    irrelevant.
 
     Parameters:
         staging_dir (Path): Directory to scan (non-recursive).
 
     Returns:
-        Path | None: Newest zip, or ``None`` if none present.
+        Path | None: Newest zip containing a ``.db`` member, or
+        ``None`` if the directory holds no such zip.
     """
-    zips = list(staging_dir.glob("*.zip"))
-    return max(zips, key=lambda p: p.stat().st_mtime) if zips else None
+    candidates = sorted(
+        staging_dir.glob("*.zip"),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
+    for candidate in candidates:
+        try:
+            with zipfile.ZipFile(candidate) as archive:
+                if any(_db_members(archive)):
+                    return candidate
+        except zipfile.BadZipFile:
+            # A half-synced or simply not-a-zip file shouldn't stop us
+            # reaching the real export behind it.
+            continue
+    return None
+
+
+def _db_members(archive: zipfile.ZipFile) -> list[str]:
+    """``.db`` members of an archive, the export's own name first.
+
+    Parameters:
+        archive (zipfile.ZipFile): Open archive to inspect.
+
+    Returns:
+        list[str]: Matching member names, ``health_connect_export.db``
+        ordered ahead of any other ``.db`` found.
+    """
+    members = [name for name in archive.namelist() if name.endswith(".db")]
+    return sorted(
+        members,
+        key=lambda name: not name.endswith("health_connect_export.db"),
+    )
 
 
 def extract_export(zip_path: Path, dest_dir: Path) -> Path:
@@ -87,9 +126,7 @@ def extract_export(zip_path: Path, dest_dir: Path) -> Path:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as archive:
-        db_members = [
-            name for name in archive.namelist() if name.endswith(".db")
-        ]
+        db_members = _db_members(archive)
         if not db_members:
             raise RuntimeError(f"No .db file found inside {zip_path}")
         archive.extract(db_members[0], dest_dir)
@@ -137,5 +174,26 @@ if __name__ == "__main__":
 
     extracted = extract_export(newer, tmp / "out")
     assert extracted.read_bytes() == b"new"
+
+    # The export commonly shares a folder (or a Drive root) with
+    # unrelated zips, so a newer one must not be mistaken for it --
+    # nor must a corrupt file hide the real export behind it.
+    decoy = tmp / "KMSpico_setup.zip"
+    with zipfile.ZipFile(decoy, "w") as archive:
+        archive.writestr("setup.exe", b"not an export")
+    corrupt = tmp / "Contrats_signes.zip"
+    corrupt.write_bytes(b"not a zip at all")
+    for path in (decoy, corrupt):
+        os.utime(path, (time.time() + 500, time.time() + 500))
+    assert find_latest_zip(tmp) == newer, find_latest_zip(tmp)
+
+    # A locale-named export with no health_connect_export.db member
+    # still resolves through the generic .db fallback.
+    accented = tmp / "Sante Connect.zip"
+    with zipfile.ZipFile(accented, "w") as archive:
+        archive.writestr("export.db", b"locale-named")
+    os.utime(accented, (time.time() + 900, time.time() + 900))
+    assert find_latest_zip(tmp) == accented
+    assert extract_export(accented, tmp / "out2").read_bytes() == b"locale-named"
 
     print("sync_drive.py: all checks passed (no live rclone call made)")
