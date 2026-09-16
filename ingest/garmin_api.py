@@ -53,7 +53,6 @@ from garminconnect.workout import (
     FitnessEquipmentWorkout,
     StepType,
     TargetType,
-    WalkingWorkout,
     WorkoutSegment,
     create_interval_step,
     create_repeat_group,
@@ -782,25 +781,34 @@ def fetch_and_upsert(
     return counts
 
 
-def _treadmill_workout(level: int, values: dict) -> WalkingWorkout:
-    """Build a single-step walking workout for tonight's treadmill session.
+def _treadmill_workout(level: int, values: dict) -> FitnessEquipmentWorkout:
+    """Build a single-step indoor-cardio workout for tonight's treadmill
+    session.
 
     Parameters:
         level (int): Tonight's treadmill level (name only).
         values (dict): ``training.treadmill_values()`` output.
 
     Returns:
-        WalkingWorkout: Ready to upload via ``client.upload_workout``.
+        FitnessEquipmentWorkout: Ready to upload via
+        ``client.upload_workout``.
     """
+    # sportTypeId 17 ("walking" per WalkingWorkout's own default) is
+    # wrong on Garmin's actual backend -- verified against a real
+    # account, it renders the pushed step as a pool-swimming step
+    # (distance target + pool-size field) instead of a treadmill walk.
+    # 6/cardio_training is the same, already-verified sportType the
+    # circuit workouts use.
+    cardio_sport_type = {
+        "sportTypeId": 6, "sportTypeKey": "cardio_training", "displayOrder": 6,
+    }
     duration_s = values["duration_min"] * 60
     segment = WorkoutSegment(
         segmentOrder=1,
-        sportType={
-            "sportTypeId": 17, "sportTypeKey": "walking", "displayOrder": 17,
-        },
+        sportType=cardio_sport_type,
         workoutSteps=[create_interval_step(duration_s, step_order=1)],
     )
-    return WalkingWorkout(
+    return FitnessEquipmentWorkout(
         workoutName=f"Smart Coach - Tapis niveau {level}",
         estimatedDurationInSecs=int(duration_s),
         description=(
@@ -808,6 +816,7 @@ def _treadmill_workout(level: int, values: dict) -> WalkingWorkout:
             f"{values['incline_pct']}%, {values['duration_min']} min"
         ),
         workoutSegments=[segment],
+        sportType=cardio_sport_type,
     )
 
 
@@ -924,7 +933,7 @@ def build_workout(session_type: str, level: int, values: dict):
         values (dict): ``training.session_values()`` output.
 
     Returns:
-        WalkingWorkout | FitnessEquipmentWorkout: Ready to upload via
+        FitnessEquipmentWorkout: Ready to upload via
         ``client.upload_workout(workout.to_dict())``.
     """
     if session_type == "treadmill":
