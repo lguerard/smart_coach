@@ -427,6 +427,11 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         ``body_battery_charged``, ``body_battery_drained``,
         ``body_battery_highest``, ``body_battery_lowest``,
         ``stress_avg_level``, ``stress_max_level``,
+        ``respiration_avg_waking``, ``respiration_avg_sleep``,
+        ``respiration_highest``, ``respiration_lowest``,
+        ``spo2_average``, ``spo2_lowest``, ``intensity_moderate_min``,
+        ``intensity_vigorous_min``, ``intensity_weekly_goal_min``,
+        ``vo2max``, ``fitness_age``,
         ``menstrual_cycle_phase`` (only present if the user opted
         into tracking it) -- keys with no data that day are simply
         absent.
@@ -463,6 +468,39 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     if stress:
         result["stress_avg_level"] = stress["avg_level"]
         result["stress_max_level"] = stress["max_level"]
+    respiration = conn.execute(
+        "SELECT avg_waking, avg_sleep, highest, lowest FROM "
+        "garmin_respiration WHERE user_id = ? AND local_date = ?",
+        (user_id, date),
+    ).fetchone()
+    if respiration:
+        result["respiration_avg_waking"] = respiration["avg_waking"]
+        result["respiration_avg_sleep"] = respiration["avg_sleep"]
+        result["respiration_highest"] = respiration["highest"]
+        result["respiration_lowest"] = respiration["lowest"]
+    spo2 = conn.execute(
+        "SELECT average, lowest FROM garmin_spo2 WHERE user_id = ? "
+        "AND local_date = ?", (user_id, date),
+    ).fetchone()
+    if spo2:
+        result["spo2_average"] = spo2["average"]
+        result["spo2_lowest"] = spo2["lowest"]
+    intensity = conn.execute(
+        "SELECT moderate_min, vigorous_min, weekly_goal_min FROM "
+        "garmin_intensity_minutes WHERE user_id = ? AND local_date = ?",
+        (user_id, date),
+    ).fetchone()
+    if intensity:
+        result["intensity_moderate_min"] = intensity["moderate_min"]
+        result["intensity_vigorous_min"] = intensity["vigorous_min"]
+        result["intensity_weekly_goal_min"] = intensity["weekly_goal_min"]
+    vo2max = conn.execute(
+        "SELECT value, fitness_age FROM garmin_vo2max WHERE "
+        "user_id = ? AND local_date = ?", (user_id, date),
+    ).fetchone()
+    if vo2max:
+        result["vo2max"] = vo2max["value"]
+        result["fitness_age"] = vo2max["fitness_age"]
     cycle = conn.execute(
         "SELECT phase FROM garmin_menstrual_cycle WHERE user_id = ? "
         "AND local_date = ?", (user_id, date),

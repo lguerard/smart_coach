@@ -612,6 +612,150 @@ def upsert_stress(
     return 1
 
 
+def upsert_respiration(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch today's respiration summary into garmin_respiration.
+
+    Context only, like body battery/stress. get_respiration_data rides
+    an undocumented endpoint -- unverified against a real account, so
+    field names are a best-effort guess; a wrong name just leaves that
+    column NULL rather than failing the whole ingest.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a summary was upserted, 0 if none yet.
+    """
+    data = client.get_respiration_data(date) or {}
+    avg_waking = data.get("avgWakingRespirationValue")
+    avg_sleep = data.get("avgSleepRespirationValue")
+    highest = data.get("highestRespirationValue")
+    lowest = data.get("lowestRespirationValue")
+    if all(v is None for v in (avg_waking, avg_sleep, highest, lowest)):
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_respiration (user_id, local_date, "
+        "avg_waking, avg_sleep, highest, lowest) VALUES "
+        "(?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, local_date) DO "
+        "UPDATE SET avg_waking = excluded.avg_waking, "
+        "avg_sleep = excluded.avg_sleep, highest = excluded.highest, "
+        "lowest = excluded.lowest",
+        (user_id, date, avg_waking, avg_sleep, highest, lowest),
+    )
+    return 1
+
+
+def upsert_spo2(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch today's pulse ox (SpO2) summary into garmin_spo2.
+
+    Context only. Not every watch has a pulse ox sensor -- absent
+    entirely for those accounts, which is not an error here.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a summary was upserted, 0 if none yet.
+    """
+    data = client.get_spo2_data(date) or {}
+    average = data.get("averageSpO2")
+    lowest = data.get("lowestSpO2")
+    if average is None and lowest is None:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_spo2 (user_id, local_date, average, "
+        "lowest) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, local_date) "
+        "DO UPDATE SET average = excluded.average, "
+        "lowest = excluded.lowest",
+        (user_id, date, average, lowest),
+    )
+    return 1
+
+
+def upsert_intensity_minutes(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch today's intensity minutes into garmin_intensity_minutes.
+
+    Context only -- rides an undocumented endpoint, field names are a
+    best-effort guess (see upsert_respiration's caveat).
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a summary was upserted, 0 if none yet.
+    """
+    data = client.get_intensity_minutes_data(date) or {}
+    moderate = data.get("moderateIntensityMinutes")
+    vigorous = data.get("vigorousIntensityMinutes")
+    goal = data.get("intensityMinutesGoal") or data.get("weeklyGoal")
+    if moderate is None and vigorous is None:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_intensity_minutes (user_id, local_date, "
+        "moderate_min, vigorous_min, weekly_goal_min) VALUES "
+        "(?, ?, ?, ?, ?) ON CONFLICT(user_id, local_date) DO UPDATE "
+        "SET moderate_min = excluded.moderate_min, "
+        "vigorous_min = excluded.vigorous_min, "
+        "weekly_goal_min = excluded.weekly_goal_min",
+        (user_id, date, moderate, vigorous, goal),
+    )
+    return 1
+
+
+def upsert_vo2max(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch today's VO2max estimate into garmin_vo2max.
+
+    Context only. get_max_metrics has no stable typed schema even per
+    the client library's own docs -- it bundles per-sport breakdowns
+    under keys like "generic"/"cycling" that vary by device/account,
+    and may come back as a bare dict or a one-item list depending on
+    account. Best-effort: only the "generic" (running/overall)
+    estimate is stored.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if an estimate was upserted, 0 if none yet.
+    """
+    data = client.get_max_metrics(date) or {}
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    generic = data.get("generic") or {}
+    value = generic.get("vo2MaxPreciseValue") or generic.get("vo2MaxValue")
+    fitness_age = generic.get("fitnessAge")
+    if value is None and fitness_age is None:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_vo2max (user_id, local_date, value, "
+        "fitness_age) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, "
+        "local_date) DO UPDATE SET value = excluded.value, "
+        "fitness_age = excluded.fitness_age",
+        (user_id, date, value, fitness_age),
+    )
+    return 1
+
+
 # get_earned_badges() has no typed wrapper in garminconnect and no
 # test fixture upstream either -- field names below are the
 # commonly-documented ones (badgeId/badgeKey, badgeName,
@@ -722,9 +866,10 @@ def fetch_and_upsert(
 ) -> dict[str, int]:
     """Pull one user's Garmin activities, sleep and wellness into the db.
 
-    HRV/training-readiness/body-battery are fetched for today's local
-    date only (not backfilled over ``days``) -- they're morning-vote
-    inputs for today's coaching run, not historical training data.
+    HRV/training-readiness/body-battery/stress/respiration/SpO2/
+    intensity-minutes/VO2max are fetched for today's local date only
+    (not backfilled over ``days``) -- they're inputs for today's
+    coaching run, not historical training data.
 
     Parameters:
         conn (sqlite3.Connection): smart_coach db connection.
@@ -763,6 +908,12 @@ def fetch_and_upsert(
         ),
         "body_battery": upsert_body_battery(conn, user_id, client, today),
         "stress": upsert_stress(conn, user_id, client, today),
+        "respiration": upsert_respiration(conn, user_id, client, today),
+        "spo2": upsert_spo2(conn, user_id, client, today),
+        "intensity_minutes": upsert_intensity_minutes(
+            conn, user_id, client, today,
+        ),
+        "vo2max": upsert_vo2max(conn, user_id, client, today),
         "badges": upsert_badges(conn, user_id, client),
         "menstrual_cycle": (
             upsert_menstrual_cycle(conn, user_id, client, today)

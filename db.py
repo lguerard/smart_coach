@@ -201,6 +201,50 @@ CREATE TABLE IF NOT EXISTS garmin_stress (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- Context only, like body battery/stress -- these four ride the same
+-- undocumented wellness endpoints as the tables above (no official
+-- Garmin API schema), so field-name mismatches show up as NULLs here
+-- rather than a crash; see ingest/garmin_api.py's upsert_* docstrings
+-- for the caveat on each.
+CREATE TABLE IF NOT EXISTS garmin_respiration (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    avg_waking REAL,
+    avg_sleep REAL,
+    highest REAL,
+    lowest REAL,
+    PRIMARY KEY (user_id, local_date)
+);
+
+CREATE TABLE IF NOT EXISTS garmin_spo2 (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    average INTEGER,
+    lowest INTEGER,
+    PRIMARY KEY (user_id, local_date)
+);
+
+CREATE TABLE IF NOT EXISTS garmin_intensity_minutes (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    moderate_min INTEGER,
+    vigorous_min INTEGER,
+    weekly_goal_min INTEGER,
+    PRIMARY KEY (user_id, local_date)
+);
+
+-- VO2max: even Garmin's own client library warns this endpoint has no
+-- stable typed schema (bundles per-sport breakdowns under keys like
+-- "generic"/"cycling" that vary by device/account) -- one value per
+-- day regardless, most-recently-fetched wins.
+CREATE TABLE IF NOT EXISTS garmin_vo2max (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    value REAL,
+    fitness_age REAL,
+    PRIMARY KEY (user_id, local_date)
+);
+
 -- Tracks the most recently pushed watch workout per user, so the
 -- next day's push can delete the old template before creating a new
 -- one (see ingest/garmin_api.py:push_workout_for_session) instead of
