@@ -192,6 +192,16 @@ docker compose run --rm -it smart_coach-worker rclone config
 Pick `drive`, follow the prompts, and name the remote exactly as in
 `RCLONE_REMOTE`. The configuration is kept in `data/rclone/`.
 
+`RCLONE_REMOTE` in `.env` only names *that rclone remote itself* --
+`run_ingest.py` actually reads a separate **per-user** `rclone_remote`
+setting to decide whose export to sync, and it defaults to empty for
+every account, admin included. Set it once you've signed up (step 6):
+Settings page -> "Remote rclone" -> the same value as `RCLONE_REMOTE`
+(e.g. `gdrive:HealthConnectExports`). Skipping this leaves
+steps/nutrition/hydration/weight silently empty forever -- `run_ingest.py`
+prints `no rclone_remote configured, skipping HC export` for that
+account, but nothing surfaces it on the dashboard.
+
 ### 3. Google Calendar
 
 **a. Create the credentials, once, in the Google Cloud Console.**

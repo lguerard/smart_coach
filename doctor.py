@@ -167,6 +167,21 @@ def check_rclone() -> None:
     )
 
 
+def check_rclone_remote_setting(conn: sqlite3.Connection) -> None:
+    """Per-user rclone_remote -- run_ingest.py silently skips the whole
+    Health Connect import (steps/nutrition/hydration/weight) for any
+    account where this is unset, with no dashboard-visible sign of it.
+    """
+    for user in conn.execute("SELECT id, username FROM users"):
+        remote = db.get_setting(conn, user["id"], "rclone_remote")
+        check(
+            f"Remote rclone ({user['username']})", OK if remote else FAIL,
+            "" if remote else
+            "non configure — Reglages > Remote rclone, sinon pas/"
+            "nutrition/hydratation/poids restent vides",
+        )
+
+
 def check_llm() -> None:
     provider = os.environ.get("LLM_PROVIDER", "claude_cli")
     if provider == "claude_cli":
@@ -198,6 +213,7 @@ def main() -> int:
         check_ingestion(conn)
         check_garmin_tokens(conn)
         check_calendar(conn)
+        check_rclone_remote_setting(conn)
 
     width = max(len(name) for name, _, _ in results)
     for name, level, detail in results:
