@@ -14,8 +14,10 @@ so it can run from cron and only speak up when it matters.
 
 import datetime as dt
 import os
+import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -172,11 +174,57 @@ def check_rclone() -> None:
         )
         return
     name = remote.split(":", 1)[0]
-    known = f"[{name}]" in conf.read_text()
-    check(
-        "rclone", OK if known else FAIL,
-        f"remote {name!r}" + ("" if known else " absent de rclone.conf"),
-    )
+    if f"[{name}]" not in conf.read_text():
+        check("rclone", FAIL, f"remote {name!r} absent de rclone.conf")
+        return
+    # A valid-looking config still fails at 07:15 for reasons no file
+    # inspection can see -- the Drive API disabled on the Cloud
+    # project, a revoked token, a folder that moved. Actually listing
+    # the remote is the only check that catches those, and catching
+    # them here beats finding out from a silent morning.
+    check("rclone", *_rclone_reachable(remote))
+
+
+def _rclone_reachable(remote: str) -> tuple[str, str]:
+    """Try listing the remote, and translate the usual failures.
+
+    Parameters:
+        remote (str): Full ``name:folder`` rclone path.
+
+    Returns:
+        tuple[str, str]: ``(level, detail)`` for :func:`check`.
+    """
+    try:
+        result = subprocess.run(
+            ["rclone", "lsjson", "--max-depth", "1", remote],
+            capture_output=True, text=True, timeout=45,
+        )
+    except FileNotFoundError:
+        return FAIL, "binaire rclone introuvable"
+    except subprocess.TimeoutExpired:
+        return WARN, f"{remote} — pas de reponse en 45 s"
+    if result.returncode == 0:
+        return OK, remote
+    error = " ".join(result.stderr.split())
+    if "SERVICE_DISABLED" in error or "has not been used in project" in error:
+        project = ""
+        match = re.search(r"project (\d+)", error)
+        if match:
+            project = (
+                " — activez-la sur console.developers.google.com/apis/"
+                f"api/drive.googleapis.com/overview?project={match.group(1)}"
+            )
+        return FAIL, f"API Google Drive desactivee sur le projet OAuth{project}"
+    if "directory not found" in error:
+        return FAIL, f"{remote} introuvable — verifiez le nom du dossier"
+    if "token" in error.lower() or "oauth" in error.lower():
+        return FAIL, f"autorisation refusee — rclone config reconnect {name_of(remote)}"
+    return FAIL, f"rclone: {error[:160]}"
+
+
+def name_of(remote: str) -> str:
+    """Remote name (the part before the colon) of an rclone path."""
+    return remote.split(":", 1)[0]
 
 
 def check_rclone_remote_setting(conn: sqlite3.Connection) -> None:

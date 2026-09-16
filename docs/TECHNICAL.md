@@ -219,6 +219,24 @@ docker compose run --rm -it smart_coach-worker rclone config
 Pick `drive`, follow the prompts, and name the remote exactly as in
 `RCLONE_REMOTE`. The configuration is kept in `data/rclone/`.
 
+Two things that bite here. **The value needs a colon and a folder** --
+`gdrive:HealthConnectExports`, not `gdrive`. rclone reads a colonless
+value as a *local* path and fails with `directory not found`, which
+points nowhere near the mistake. (`rclone lsd gdrive:` lists the
+folders in the Drive account, if you're unsure which one the phone
+writes to. A bare `gdrive:` is valid but syncs the entire Drive.)
+
+**And if rclone's prompt asked for a `client_id` and you pasted the
+OAuth client from step 3** -- the natural thing to do, since you've
+just made one -- that Cloud project only has the *Calendar* API
+enabled. Drive calls then fail with `Error 403: Google Drive API has
+not been used in project N before or it is disabled`. Enable the Drive
+API for that same project
+(`console.developers.google.com/apis/api/drive.googleapis.com/overview?project=<N>`,
+the error quotes the number) and give it a couple of minutes. Leaving
+`client_id` blank avoids this entirely by using rclone's own shared
+credentials, at the cost of sharing their rate limit.
+
 `RCLONE_REMOTE` in `.env` only names *that rclone remote itself* --
 `run_ingest.py` actually reads a separate **per-user** `rclone_remote`
 setting to decide whose export to sync, and it defaults to empty for
@@ -466,6 +484,17 @@ that fixes each one.
   **Test users**.
 - `ModuleNotFoundError` or "can't open file" in the worker's logs means
   the image is older than the code: `docker compose up -d --build`.
+- `rclone` fails with `Error 403: Google Drive API has not been used in
+  project N` (or `SERVICE_DISABLED`): the OAuth client rclone is using
+  belongs to a Cloud project without the Drive API turned on — usually
+  because the step 3 Calendar client got reused here. Enable it at
+  `console.developers.google.com/apis/api/drive.googleapis.com/overview?project=N`
+  and wait a couple of minutes. `doctor.py` reports this one by name.
+- `rclone` fails with `directory not found` and a notice that the remote
+  "refers to a local folder": the remote is missing its colon. It must
+  be `gdrive:HealthConnectExports`, not `gdrive` — in `.env`
+  (`RCLONE_REMOTE`) *and* in Settings > "Remote rclone", which are read
+  independently.
 - `setup_garmin.py` fails with `429` from `mobile+cffi`/`mobile+requests`
   then a `widget+cffi` error: the first two are Garmin's IP rate limit
   (wait it out, don't keep retrying — that extends the block) and the
