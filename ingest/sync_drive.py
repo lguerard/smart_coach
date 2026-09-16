@@ -63,6 +63,38 @@ def sync_remote(staging_dir: Path, remote: Optional[str] = None) -> None:
         raise RuntimeError(f"rclone copy failed: {result.stderr[:500]}")
 
 
+def folder_of(remote: str) -> str:
+    """The folder containing a remote that names a file.
+
+    Parameters:
+        remote (str): rclone path naming a file, e.g.
+            ``"gdrive:Sante Connect.zip"``.
+
+    Returns:
+        str: The containing folder, e.g. ``"gdrive:"``.
+    """
+    parent, _, _ = remote.rpartition("/")
+    if not parent:
+        head, colon, _ = remote.partition(":")
+        parent = head + colon
+    return parent
+
+
+def filename_of(remote: str) -> str:
+    """The filename part of a remote that names a file.
+
+    Parameters:
+        remote (str): rclone path naming a file.
+
+    Returns:
+        str: The bare filename.
+    """
+    _, slash, tail = remote.rpartition("/")
+    if slash:
+        return tail
+    return remote.partition(":")[2]
+
+
 def _copy_args(remote: str, staging_dir: Path) -> list[str]:
     """Build the rclone argv for pulling the export.
 
@@ -92,13 +124,9 @@ def _copy_args(remote: str, staging_dir: Path) -> list[str]:
         # parent folder with a filter for that one name is a plain
         # directory source, which every backend handles, and transfers
         # just as little.
-        parent, _, filename = remote.rpartition("/")
-        if not parent:
-            head, colon, filename = remote.partition(":")
-            parent = head + colon
         return [
-            "rclone", "copy", parent, str(staging_dir),
-            "--include", filename, "--max-depth", "1",
+            "rclone", "copy", folder_of(remote), str(staging_dir),
+            "--include", filename_of(remote), "--max-depth", "1",
         ]
     return [
         "rclone", "copy", remote, str(staging_dir),
@@ -195,14 +223,27 @@ def sync_and_extract(
     Raises:
         RuntimeError: No zip found after syncing.
     """
+    remote = remote or os.environ.get("RCLONE_REMOTE")
     sync_remote(staging_dir, remote)
     latest = find_latest_zip(staging_dir)
+    if latest is None and remote and remote.lower().endswith(".zip"):
+        # The export's name is generated from the phone's locale and
+        # has to survive a trip through .env, a settings field and
+        # Drive intact -- an accent alone can end up normalised
+        # differently at either end ("e" plus a combining mark rather
+        # than a single codepoint), and then the filter quietly
+        # matches nothing. Falling back to every zip in the folder
+        # costs one wider transfer and lets find_latest_zip identify
+        # the export the way it already does: by looking inside.
+        sync_remote(staging_dir, folder_of(remote))
+        latest = find_latest_zip(staging_dir)
     if latest is None:
         raise RuntimeError(f"No export zip found in {staging_dir}")
     return extract_export(latest, staging_dir / "extracted")
 
 
 if __name__ == "__main__":
+    import sys
     import tempfile
     import time
 
@@ -259,5 +300,32 @@ if __name__ == "__main__":
     os.utime(accented, (time.time() + 900, time.time() + 900))
     assert find_latest_zip(tmp) == accented
     assert extract_export(accented, tmp / "out2").read_bytes() == b"locale-named"
+
+    # A named zip whose filter matches nothing (an accent normalised
+    # differently at one end is enough) must fall back to the folder
+    # rather than failing the run.
+    module = sys.modules[__name__]
+
+    fallback_dir = tmp / "fallback"
+    fallback_dir.mkdir()
+    attempts = []
+
+    def fake_sync(staging, remote_arg=None):
+        attempts.append(remote_arg)
+        if remote_arg and remote_arg.lower().endswith(".zip"):
+            return  # precise filter matched nothing
+        with zipfile.ZipFile(staging / "Sante Connect.zip", "w") as archive:
+            archive.writestr("health_connect_export.db", b"recovered")
+
+    real_sync = module.sync_remote
+    module.sync_remote = fake_sync
+    try:
+        found = module.sync_and_extract(
+            fallback_dir, "gdrive:Sante Connect.zip",
+        )
+    finally:
+        module.sync_remote = real_sync
+    assert attempts == ["gdrive:Sante Connect.zip", "gdrive:"], attempts
+    assert found.read_bytes() == b"recovered"
 
     print("sync_drive.py: all checks passed (no live rclone call made)")
