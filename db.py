@@ -86,6 +86,14 @@ CREATE TABLE IF NOT EXISTS resting_heart_rate (
 );
 CREATE INDEX IF NOT EXISTS idx_rhr_user_date ON resting_heart_rate(user_id, local_date);
 
+-- The garmin_* columns are Garmin's own nightly summary, carried in
+-- the same get_sleep_data payload the stages come from. sleep_score
+-- is Garmin's real score, which beats metrics.score_sleep's
+-- stage-derived approximation whenever it's there (see
+-- metrics.sleep_for_date); the rest are signals with no equivalent
+-- anywhere else. All nullable -- HC-era rows and nights Garmin hasn't
+-- scored yet simply don't have them. Added after the table shipped,
+-- so init_db ALTERs them in for existing databases.
 CREATE TABLE IF NOT EXISTS sleep_sessions (
     uuid TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -93,7 +101,13 @@ CREATE TABLE IF NOT EXISTS sleep_sessions (
     end_utc TEXT NOT NULL,
     local_date TEXT NOT NULL,
     title TEXT,
-    notes TEXT
+    notes TEXT,
+    sleep_score INTEGER,
+    avg_sleep_hrv REAL,
+    avg_spo2 REAL,
+    avg_respiration REAL,
+    lowest_respiration REAL,
+    highest_respiration REAL
 );
 CREATE INDEX IF NOT EXISTS idx_sleep_user_date ON sleep_sessions(user_id, local_date);
 
@@ -198,6 +212,35 @@ CREATE TABLE IF NOT EXISTS garmin_stress (
     local_date TEXT NOT NULL,
     avg_level INTEGER,
     max_level INTEGER,
+    PRIMARY KEY (user_id, local_date)
+);
+
+-- Garmin's own whole-day rollup (get_stats). Its field names are the
+-- one set the client library models explicitly (garminconnect.typed
+-- .DailyStats), so unlike the undocumented endpoints below these are
+-- verified rather than guessed. Its real value is freshness: steps
+-- and resting HR land here for TODAY, while the Health Connect export
+-- carrying the same numbers only syncs overnight and so runs a day
+-- behind (see metrics.daily_wellness, which prefers HC when it has
+-- the day and falls back to this).
+CREATE TABLE IF NOT EXISTS garmin_daily_summary (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    total_steps INTEGER,
+    daily_step_goal INTEGER,
+    total_distance_m REAL,
+    resting_hr INTEGER,
+    min_hr INTEGER,
+    max_hr INTEGER,
+    total_kcal REAL,
+    active_kcal REAL,
+    bmr_kcal REAL,
+    moderate_intensity_min INTEGER,
+    vigorous_intensity_min INTEGER,
+    floors_ascended REAL,
+    active_seconds INTEGER,
+    sedentary_seconds INTEGER,
+    highly_active_seconds INTEGER,
     PRIMARY KEY (user_id, local_date)
 );
 
@@ -631,6 +674,25 @@ def init_db(conn: sqlite3.Connection) -> None:
     }
     if "trigger" not in deload_cols:
         conn.execute("ALTER TABLE deload_events ADD COLUMN trigger TEXT")
+    # Garmin's own nightly sleep summary, added after sleep_sessions
+    # shipped -- backfilled by the next ingest, which re-upserts the
+    # trailing GARMIN_LOOKBACK_DAYS window anyway.
+    sleep_cols = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(sleep_sessions)")
+    }
+    for column, column_type in (
+        ("sleep_score", "INTEGER"),
+        ("avg_sleep_hrv", "REAL"),
+        ("avg_spo2", "REAL"),
+        ("avg_respiration", "REAL"),
+        ("lowest_respiration", "REAL"),
+        ("highest_respiration", "REAL"),
+    ):
+        if column not in sleep_cols:
+            conn.execute(
+                f"ALTER TABLE sleep_sessions ADD COLUMN {column} {column_type}"
+            )
     conn.commit()
 
 

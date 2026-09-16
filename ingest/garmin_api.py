@@ -419,15 +419,34 @@ def upsert_sleep(
             conn, user_id, "sleep_sessions", start_utc, end_utc, uuid,
         ):
             continue
+        # Garmin's own nightly summary rides along in the same payload
+        # as the stages -- its sleep score is the real one (what the
+        # watch and Connect show), and avgSleepHRV/avgSpO2/respiration
+        # have no equivalent in any other source we ingest.
+        scores = dto.get("sleepScores") or {}
+        overall = scores.get("overall") or {}
         conn.execute(
             "INSERT INTO sleep_sessions (uuid, user_id, start_utc, "
-            "end_utc, local_date, title, notes) VALUES "
-            "(?, ?, ?, ?, ?, NULL, NULL) ON CONFLICT(uuid) DO UPDATE "
+            "end_utc, local_date, title, notes, sleep_score, "
+            "avg_sleep_hrv, avg_spo2, avg_respiration, "
+            "lowest_respiration, highest_respiration) VALUES "
+            "(?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?) ON "
+            "CONFLICT(uuid) DO UPDATE "
             "SET start_utc = excluded.start_utc, "
             "end_utc = excluded.end_utc, "
-            "local_date = excluded.local_date",
+            "local_date = excluded.local_date, "
+            "sleep_score = excluded.sleep_score, "
+            "avg_sleep_hrv = excluded.avg_sleep_hrv, "
+            "avg_spo2 = excluded.avg_spo2, "
+            "avg_respiration = excluded.avg_respiration, "
+            "lowest_respiration = excluded.lowest_respiration, "
+            "highest_respiration = excluded.highest_respiration",
             (uuid, user_id, start_utc, end_utc,
-             start.astimezone(tz).date().isoformat()),
+             start.astimezone(tz).date().isoformat(),
+             overall.get("value"), dto.get("avgSleepHRV"),
+             dto.get("avgSpO2"), dto.get("averageRespirationValue"),
+             dto.get("lowestRespirationValue"),
+             dto.get("highestRespirationValue")),
         )
         session_count += 1
         stages = []
@@ -608,6 +627,70 @@ def upsert_stress(
         "local_date) DO UPDATE SET avg_level = excluded.avg_level, "
         "max_level = excluded.max_level",
         (user_id, date, avg, high),
+    )
+    return 1
+
+
+def upsert_daily_summary(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch Garmin's whole-day rollup into garmin_daily_summary.
+
+    The one endpoint here whose field names the client library models
+    explicitly (garminconnect.typed.DailyStats), so these are verified
+    rather than guessed like the wellness endpoints below.
+
+    Worth having even though Health Connect carries most of the same
+    numbers: HC only syncs overnight, so its steps/resting HR run a
+    day behind, while this has today's. metrics.daily_wellness prefers
+    HC where it has the day and falls back to this.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a summary was upserted, 0 if Garmin has none yet.
+    """
+    data = client.get_stats(date) or {}
+    if data.get("totalSteps") is None and data.get("restingHeartRate") is None:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_daily_summary (user_id, local_date, "
+        "total_steps, daily_step_goal, total_distance_m, resting_hr, "
+        "min_hr, max_hr, total_kcal, active_kcal, bmr_kcal, "
+        "moderate_intensity_min, vigorous_intensity_min, "
+        "floors_ascended, active_seconds, sedentary_seconds, "
+        "highly_active_seconds) VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON "
+        "CONFLICT(user_id, local_date) DO UPDATE SET "
+        "total_steps = excluded.total_steps, "
+        "daily_step_goal = excluded.daily_step_goal, "
+        "total_distance_m = excluded.total_distance_m, "
+        "resting_hr = excluded.resting_hr, min_hr = excluded.min_hr, "
+        "max_hr = excluded.max_hr, total_kcal = excluded.total_kcal, "
+        "active_kcal = excluded.active_kcal, "
+        "bmr_kcal = excluded.bmr_kcal, "
+        "moderate_intensity_min = excluded.moderate_intensity_min, "
+        "vigorous_intensity_min = excluded.vigorous_intensity_min, "
+        "floors_ascended = excluded.floors_ascended, "
+        "active_seconds = excluded.active_seconds, "
+        "sedentary_seconds = excluded.sedentary_seconds, "
+        "highly_active_seconds = excluded.highly_active_seconds",
+        (
+            user_id, date, data.get("totalSteps"),
+            data.get("dailyStepGoal"), data.get("totalDistanceMeters"),
+            data.get("restingHeartRate"), data.get("minHeartRate"),
+            data.get("maxHeartRate"), data.get("totalKilocalories"),
+            data.get("activeKilocalories"), data.get("bmrKilocalories"),
+            data.get("moderateIntensityMinutes"),
+            data.get("vigorousIntensityMinutes"),
+            data.get("floorsAscended"), data.get("activeSeconds"),
+            data.get("sedentarySeconds"),
+            data.get("highlyActiveSeconds"),
+        ),
     )
     return 1
 
@@ -908,6 +991,7 @@ def fetch_and_upsert(
         ),
         "body_battery": upsert_body_battery(conn, user_id, client, today),
         "stress": upsert_stress(conn, user_id, client, today),
+        "daily_summary": upsert_daily_summary(conn, user_id, client, today),
         "respiration": upsert_respiration(conn, user_id, client, today),
         "spo2": upsert_spo2(conn, user_id, client, today),
         "intensity_minutes": upsert_intensity_minutes(

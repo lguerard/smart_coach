@@ -35,12 +35,20 @@ SLEEP_STAGE_LABELS = {
 # ~89kg person stored as raw 89250; a plausible ~2200kcal/day TDEE
 # stored as raw 2221000; a plausible ~1780kcal/day BMR stored as raw
 # 86.05; distance/elevation/floors matched real-world values with NO
-# scaling). Volume (hydration) and nutrition's Mass macros are
-# unverified -- currently 0 rows in the source export -- but follow
-# the same Mass=grams / Volume=milliliters convention as everything
-# else; re-verify once nutrition/hydration logging actually has data.
+# scaling).
+#
+# Volume and nutrition's Mass macros were guessed here while the
+# source export still had 0 rows of either, and the Volume guess
+# (milliliters, i.e. no scaling) was wrong: an export with real data
+# stores hydration in LITRES (a 1.75 L day is raw 1.75), so reading it
+# as millilitres under-reported hydration by 1000x. Nutrition's macros
+# did follow the Mass=grams convention -- a 453 kcal meal's raw
+# protein/carb/fat of 18.4/71.1/12.7 reconstruct that same calorie
+# count -- and Energy is in (small) calories, raw 452825 == 453 kcal,
+# matching the logging app to the kcal.
 GRAMS_TO_KG = 1 / 1000  # Mass -> grams internally
 CALORIES_TO_KCAL = 1 / 1000  # Energy -> (small) calories internally
+LITRES_TO_ML = 1000  # Volume -> litres internally
 WATTS_TO_KCAL_PER_DAY = 86400 / 4184  # Power -> watts internally
 
 EXERCISE_TYPE_LABELS = {
@@ -301,7 +309,9 @@ def _parse_total_calories_burned(
 def _parse_hydration(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
-    data = _simple_interval_table(hc, "hydration_record_table", "volume")
+    data = _simple_interval_table(
+        hc, "hydration_record_table", "volume", scale=LITRES_TO_ML,
+    )
     return _upsert(
         conn, user_id, "hydration",
         ["uuid", "start_utc", "end_utc", "local_date", "volume_ml"], data,
@@ -600,6 +610,17 @@ if __name__ == "__main__":
             "INSERT INTO basal_metabolic_rate_record_table VALUES "
             "(?, ?, 3600, 86.05)", (u1, t0),
         )
+        # Volume is litres, not millilitres: a 1.75 L day is raw 1.75.
+        hc.execute(
+            "INSERT INTO hydration_record_table VALUES "
+            "(?, ?, 3600, ?, 1.75)", (u1, t0, t0 + 3600_000),
+        )
+        # Energy in (small) calories, macros already in grams.
+        hc.execute(
+            "INSERT INTO nutrition_record_table VALUES "
+            "(?, ?, 3600, ?, 1, 452825.0, 18.4, 71.1, 12.7)",
+            (u1, t0, t0 + 60_000),
+        )
         hc.commit()
         hc.close()
 
@@ -653,6 +674,18 @@ if __name__ == "__main__":
         ).fetchone()
         # 86.05 W -> ~1777 kcal/day (Power's internal unit is watts)
         assert 1770 < bmr_row["kcal_per_day"] < 1785, bmr_row["kcal_per_day"]
+
+        hydration_row = conn.execute(
+            "SELECT volume_ml FROM hydration WHERE user_id = ?", (uid,),
+        ).fetchone()
+        assert hydration_row["volume_ml"] == 1750.0, hydration_row["volume_ml"]
+
+        nutrition_row = conn.execute(
+            "SELECT calories, protein_g, carbs_g, fat_g FROM nutrition "
+            "WHERE user_id = ?", (uid,),
+        ).fetchone()
+        assert round(nutrition_row["calories"]) == 453, dict(nutrition_row)
+        assert nutrition_row["protein_g"] == 18.4, dict(nutrition_row)
 
         # Isolation check: a second user's export (real Android UUIDs
         # are per-device cryptographically random, so two real phones

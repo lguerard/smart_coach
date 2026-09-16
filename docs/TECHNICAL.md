@@ -32,15 +32,31 @@ overview, see the [README](../README.md).
 
 - **Garmin API** (`ingest/garmin_api.py`): exercise sessions
   (correct activity types, per-session HR series, GPS route points
-  when the activity has a track), sleep (sessions + stages), and
-  daily HRV / training readiness / body battery / stress. Garmin's
-  Health Connect writer mislabels activity types and never syncs
-  workout HR series, GPS tracks, or any of the recovery signals — the
-  API has all of it, so these domains bypass Health Connect entirely.
+  when the activity has a track), sleep (sessions + stages, plus
+  Garmin's own sleep score and overnight HRV/SpO2/respiration), the
+  whole-day rollup (`get_stats`: steps, resting/min/max HR, calories,
+  intensity minutes, active-vs-sedentary seconds), and daily HRV /
+  training readiness / body battery / stress / respiration / SpO2 /
+  VO2max. Garmin's Health Connect writer mislabels activity types and
+  never syncs workout HR series, GPS tracks, or any of the recovery
+  signals — the API has all of it, so these domains bypass Health
+  Connect entirely.
 - **`health_connect_export.db`** — Android's raw internal Health
   Connect SQLite backup — for every other record type (steps, heart
   rate, weight, body fat, nutrition, hydration, ...), from whichever
   apps write to it (Garmin Connect, MyFitnessPal, ...).
+
+Where the two overlap, `metrics.daily_wellness` picks per field.
+Health Connect wins on steps/resting HR/floors/distance/calories: it
+merges every app writing to the phone, not just the watch. But it
+only syncs overnight, so it never has *today* — Garmin's rollup fills
+those in rather than leaving the current day blank on the dashboard.
+Intensity minutes invert that: the rollup's field names are the ones
+the Garmin client library models explicitly, so they beat the
+undocumented per-metric endpoint's guessed ones. Sleep score works
+the same way — Garmin's own score replaces `metrics.score_sleep`'s
+stage-derived approximation whenever Garmin has scored the night, and
+`sleep_score_source` records which one you're looking at.
 
 HRV status and training readiness feed real votes in the daily
 green/yellow/red status (`training.compute_status`), alongside a

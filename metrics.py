@@ -128,11 +128,17 @@ def sleep_for_date(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
 
     Returns:
         dict: ``score_sleep`` output for the longest session ending
-        that local day, or ``{}`` if none.
+        that local day, with Garmin's own nightly summary merged in
+        where it has one -- its ``sleep_score`` replaces the
+        stage-derived approximation (``sleep_score_source`` says
+        which), and ``avg_sleep_hrv``/``avg_spo2``/``*_respiration``
+        are added. ``{}`` if there's no session at all.
     """
     tz = local_tz(conn, user_id)
     sessions = conn.execute(
-        "SELECT uuid, start_utc, end_utc FROM sleep_sessions "
+        "SELECT uuid, start_utc, end_utc, sleep_score, avg_sleep_hrv, "
+        "avg_spo2, avg_respiration, lowest_respiration, "
+        "highest_respiration FROM sleep_sessions "
         "WHERE user_id = ?", (user_id,),
     ).fetchall()
     candidates = [
@@ -156,7 +162,23 @@ def sleep_for_date(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         "FROM sleep_stages WHERE user_id = ? AND parent_uuid = ?",
         (user_id, longest["uuid"]),
     ).fetchall()
-    return score_sleep(stages)
+    result = score_sleep(stages)
+    # Garmin scores the night itself (same payload as the stages);
+    # that beats approximating one from stage durations, so it wins
+    # when present -- and still leaves a score on nights Garmin
+    # scored but sent no usable stages.
+    if longest["sleep_score"] is not None:
+        result["sleep_score"] = longest["sleep_score"]
+        result["sleep_score_source"] = "garmin"
+    elif result:
+        result["sleep_score_source"] = "estimated"
+    for key in (
+        "avg_sleep_hrv", "avg_spo2", "avg_respiration",
+        "lowest_respiration", "highest_respiration",
+    ):
+        if longest[key] is not None:
+            result[key] = longest[key]
+    return result
 
 
 def sleep_scores_for_range(
@@ -510,6 +532,31 @@ def garmin_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     return result
 
 
+def garmin_daily_summary(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict:
+    """Garmin's whole-day rollup for a date, or ``{}`` if not fetched.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date.
+
+    Returns:
+        dict: The ``garmin_daily_summary`` row as a plain dict (minus
+        the key columns), or ``{}`` if there's no row for that day.
+    """
+    row = conn.execute(
+        "SELECT total_steps, daily_step_goal, total_distance_m, "
+        "resting_hr, min_hr, max_hr, total_kcal, active_kcal, "
+        "bmr_kcal, moderate_intensity_min, vigorous_intensity_min, "
+        "floors_ascended, active_seconds, sedentary_seconds, "
+        "highly_active_seconds FROM garmin_daily_summary "
+        "WHERE user_id = ? AND local_date = ?", (user_id, date),
+    ).fetchone()
+    return dict(row) if row else {}
+
+
 def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Full daily wellness dict for a date, in garmin-coach's shape.
 
@@ -518,9 +565,19 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         user_id (int): Owning user.
         date (str): ISO local date (today, in the run's timezone).
 
+    Two sources overlap here and the tie-breaks differ by field:
+    Health Connect wins on steps/RHR/floors/distance/calories, since
+    it merges every app writing to the phone rather than just the
+    watch -- but it only syncs overnight, so Garmin's same-day rollup
+    fills those in for today rather than leaving the day blank.
+    Intensity minutes go the other way: the rollup's names are the
+    ones the Garmin client library models, so they beat the
+    undocumented endpoint's guessed ones outright.
+
     Returns:
         dict: Merged sleep/steps/RHR/activity-load/body-comp signals,
-        used by training.compute_status and the LLM payload.
+        used by training.compute_status and the LLM payload. Keys
+        with no data are omitted entirely.
     """
     steps_window = steps_for_range(conn, user_id, date, days=7)
     wellness: dict = {
@@ -567,6 +624,49 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         wellness["hydration_target_ml"] = round(
             wellness["weight_kg"] * float(hydration_target)
         )
+
+    # Reconcile the two sources that overlap. Health Connect stays
+    # authoritative where it has the day -- it merges every app that
+    # writes to the phone, not just the watch -- but it only syncs
+    # overnight, so TODAY is always missing from it. Garmin's rollup
+    # has today, so it fills the holes instead of the dashboard
+    # showing a blank day until tomorrow's export.
+    summary = garmin_daily_summary(conn, user_id, date)
+    for key, column in (
+        ("steps_today", "total_steps"),
+        ("resting_hr", "resting_hr"),
+        ("floors_climbed_today", "floors_ascended"),
+        ("total_calories_burned_today", "total_kcal"),
+    ):
+        if wellness.get(key) is None and summary.get(column) is not None:
+            wellness[key] = summary[column]
+    if wellness.get("distance_km_today") is None and summary.get(
+        "total_distance_m"
+    ) is not None:
+        wellness["distance_km_today"] = round(
+            summary["total_distance_m"] / 1000, 1
+        )
+    # Intensity minutes are the opposite case: the rollup's field
+    # names are the library-modelled ones, while garmin_intensity_
+    # minutes rides an undocumented endpoint whose names are a guess,
+    # so here the rollup wins outright rather than just filling gaps.
+    for key, column in (
+        ("intensity_moderate_min", "moderate_intensity_min"),
+        ("intensity_vigorous_min", "vigorous_intensity_min"),
+    ):
+        if summary.get(column) is not None:
+            wellness[key] = summary[column]
+    for key, column in (
+        ("active_seconds", "active_seconds"),
+        ("sedentary_seconds", "sedentary_seconds"),
+        ("highly_active_seconds", "highly_active_seconds"),
+        ("active_kcal", "active_kcal"),
+        ("bmr_kcal", "bmr_kcal"),
+        ("hr_min_today", "min_hr"),
+        ("hr_max_today", "max_hr"),
+    ):
+        if summary.get(column) is not None:
+            wellness[key] = summary[column]
     return {k: v for k, v in wellness.items() if v is not None}
 
 
@@ -807,9 +907,10 @@ if __name__ == "__main__":
     other_uid = db.create_user(conn, "other", "password1234")
 
     conn.execute(
-        "INSERT INTO sleep_sessions VALUES "
+        "INSERT INTO sleep_sessions (uuid, user_id, start_utc, "
+        "end_utc, local_date) VALUES "
         "('s1', ?, '2026-07-12T22:00:00+00:00', "
-        "'2026-07-13T06:00:00+00:00', '2026-07-12', NULL, NULL)", (uid,),
+        "'2026-07-13T06:00:00+00:00', '2026-07-12')", (uid,),
     )
     stages = [
         ("s1", uid, "2026-07-12T22:00:00+00:00", "2026-07-12T22:30:00+00:00", 1),
@@ -881,6 +982,25 @@ if __name__ == "__main__":
     sleep = sleep_for_date(conn, uid, "2026-07-13")
     assert sleep["sleep_hours"] == 7.0, sleep
     assert 0 < sleep["sleep_score"] <= 100
+    # No Garmin summary on this row yet, so the score is the
+    # stage-derived approximation.
+    assert sleep["sleep_score_source"] == "estimated", sleep
+
+    # Once Garmin's own summary lands on the same night, its score
+    # wins and its extra signals come through.
+    conn.execute(
+        "UPDATE sleep_sessions SET sleep_score = 83, avg_sleep_hrv = 42.0, "
+        "avg_spo2 = 95.0, avg_respiration = 14.5 WHERE uuid = 's1'"
+    )
+    conn.commit()
+    sleep = sleep_for_date(conn, uid, "2026-07-13")
+    assert sleep["sleep_score"] == 83, sleep
+    assert sleep["sleep_score_source"] == "garmin", sleep
+    assert sleep["avg_sleep_hrv"] == 42.0, sleep
+    assert sleep["avg_spo2"] == 95.0, sleep
+    assert sleep["avg_respiration"] == 14.5, sleep
+    # The stage-derived figures stay alongside it.
+    assert sleep["sleep_hours"] == 7.0, sleep
 
     assert resting_hr_for_date(conn, uid, "2026-07-13") == 54
     assert resting_hr_for_date(conn, uid, "2026-07-01") is None
@@ -898,6 +1018,37 @@ if __name__ == "__main__":
     assert wellness["hydration_target_ml"] == round(80.0 * 35)
     assert "distance_km_today" not in wellness  # none logged -> omitted
     assert nutrition_for_date(conn, uid, "2026-07-13") == {}
+
+    # --- Garmin rollup vs Health Connect ---
+    # A day HC hasn't synced yet (its export only lands overnight) is
+    # blank until Garmin's same-day rollup fills it in.
+    assert daily_wellness(conn, uid, "2026-07-14").get("steps_today") is None
+    conn.execute(
+        "INSERT INTO garmin_daily_summary (user_id, local_date, "
+        "total_steps, resting_hr, moderate_intensity_min, "
+        "vigorous_intensity_min, total_distance_m) VALUES "
+        "(?, '2026-07-14', 8200, 51, 25, 10, 6400.0)", (uid,),
+    )
+    # Same rollup on a day HC *does* have, to prove precedence below.
+    conn.execute(
+        "INSERT INTO garmin_daily_summary (user_id, local_date, "
+        "total_steps, resting_hr, moderate_intensity_min) VALUES "
+        "(?, '2026-07-13', 4321, 60, 25)", (uid,),
+    )
+    conn.commit()
+    filled = daily_wellness(conn, uid, "2026-07-14")
+    assert filled["steps_today"] == 8200, filled
+    assert filled["resting_hr"] == 51, filled
+    assert filled["distance_km_today"] == 6.4, filled
+
+    # HC stays authoritative where it has the day (it merges every app
+    # writing to the phone, not just the watch)...
+    wellness = daily_wellness(conn, uid, "2026-07-13")
+    assert wellness["steps_today"] == 4000, wellness
+    assert wellness["resting_hr"] == 54, wellness
+    # ...but intensity minutes come off the rollup regardless, since
+    # those are the library-modelled field names.
+    assert wellness["intensity_moderate_min"] == 25, wellness
 
     # Garmin-API-only signals (no HC equivalent): merged into wellness.
     assert wellness["hrv_status"] == "BALANCED"
