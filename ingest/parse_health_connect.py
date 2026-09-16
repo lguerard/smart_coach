@@ -177,7 +177,12 @@ def _dedupe_by_priority(
             missing from it sort last, in id order.
 
     Returns:
-        list[tuple]: The surviving rows, unchanged.
+        tuple[list[tuple], list[str]]: The surviving rows unchanged,
+        and the hex uuids of the rejected ones. The rejects matter as
+        much as the survivors: upserting by uuid only ever touches
+        what it keeps, so records an earlier run inserted before this
+        rule existed (or before the user reordered their apps) would
+        otherwise sit in the table forever, still being summed.
     """
     rank = {app_id: index for index, app_id in enumerate(priority)}
     unranked = len(priority)
@@ -186,15 +191,18 @@ def _dedupe_by_priority(
         by_app.setdefault(row[0], []).append(row)
 
     kept: list[tuple] = []
+    rejected: list[str] = []
     covered: list[tuple[int, int]] = []
     starts: list[int] = []
     for app_id in sorted(
         by_app, key=lambda app: (rank.get(app, unranked), app or 0)
     ):
-        accepted = [
-            row for row in by_app[app_id]
-            if not _overlaps(covered, starts, row[1], row[2])
-        ]
+        accepted = []
+        for row in by_app[app_id]:
+            if _overlaps(covered, starts, row[1], row[2]):
+                rejected.append(row[3].hex())
+            else:
+                accepted.append(row)
         kept.extend(accepted)
         # Merged once per app rather than per record: with a handful
         # of apps and ~90k records, per-record insertion would be
@@ -203,7 +211,26 @@ def _dedupe_by_priority(
             covered + [(row[1], row[2]) for row in accepted]
         )
         starts = [interval[0] for interval in covered]
-    return kept
+    return kept, rejected
+
+
+def _purge(
+    conn: sqlite3.Connection, user_id: int, table: str, uuids: list[str],
+) -> None:
+    """Delete this user's rows for uuids the priority rule rejected.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        table (str): Target table name.
+        uuids (list[str]): Hex uuids to remove.
+    """
+    if not uuids:
+        return
+    conn.executemany(
+        f"DELETE FROM {table} WHERE user_id = ? AND uuid = ?",
+        [(user_id, uuid) for uuid in uuids],
+    )
 
 
 def _local_date(time_ms: int, zone_offset_s: int) -> str:
@@ -326,14 +353,14 @@ def _simple_interval_table(
         f"SELECT app_info_id, start_time, end_time, uuid, "
         f"start_zone_offset, {value_col} FROM {hc_table}"
     ).fetchall()
+    kept, rejected = _dedupe_by_priority(rows, _priority_order(hc, category))
     return [
         (
             uuid.hex(), _iso_utc(start_ms), _iso_utc(end_ms),
             _local_date(start_ms, offset), value * scale,
         )
-        for _, start_ms, end_ms, uuid, offset, value
-        in _dedupe_by_priority(rows, _priority_order(hc, category))
-    ]
+        for _, start_ms, end_ms, uuid, offset, value in kept
+    ], rejected
 
 
 def _parse_steps(
@@ -343,14 +370,17 @@ def _parse_steps(
         "SELECT app_info_id, start_time, end_time, uuid, "
         "start_zone_offset, count FROM steps_record_table"
     ).fetchall()
+    kept, rejected = _dedupe_by_priority(
+        rows, _priority_order(hc, CATEGORY_ACTIVITY),
+    )
     data = [
         (
             uuid.hex(), _iso_utc(start_ms), _iso_utc(end_ms),
             _local_date(start_ms, offset), count,
         )
-        for _, start_ms, end_ms, uuid, offset, count
-        in _dedupe_by_priority(rows, _priority_order(hc, CATEGORY_ACTIVITY))
+        for _, start_ms, end_ms, uuid, offset, count in kept
     ]
+    _purge(conn, user_id, "steps", rejected)
     return _upsert(
         conn, user_id, "steps",
         ["uuid", "start_utc", "end_utc", "local_date", "count"], data,
@@ -418,10 +448,11 @@ def _parse_basal_metabolic_rate(
 def _parse_active_calories(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
-    data = _simple_interval_table(
+    data, rejected = _simple_interval_table(
         hc, "active_calories_burned_record_table", "energy",
         scale=CALORIES_TO_KCAL,
     )
+    _purge(conn, user_id, "active_calories", rejected)
     return _upsert(
         conn, user_id, "active_calories",
         ["uuid", "start_utc", "end_utc", "local_date", "kcal"], data,
@@ -431,10 +462,11 @@ def _parse_active_calories(
 def _parse_total_calories_burned(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
-    data = _simple_interval_table(
+    data, rejected = _simple_interval_table(
         hc, "total_calories_burned_record_table", "energy",
         scale=CALORIES_TO_KCAL,
     )
+    _purge(conn, user_id, "total_calories_burned", rejected)
     return _upsert(
         conn, user_id, "total_calories_burned",
         ["uuid", "start_utc", "end_utc", "local_date", "kcal"], data,
@@ -444,10 +476,11 @@ def _parse_total_calories_burned(
 def _parse_hydration(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
-    data = _simple_interval_table(
+    data, rejected = _simple_interval_table(
         hc, "hydration_record_table", "volume", scale=LITRES_TO_ML,
         category=CATEGORY_NUTRITION,
     )
+    _purge(conn, user_id, "hydration", rejected)
     return _upsert(
         conn, user_id, "hydration",
         ["uuid", "start_utc", "end_utc", "local_date", "volume_ml"], data,
@@ -457,7 +490,8 @@ def _parse_hydration(
 def _parse_distance(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
-    data = _simple_interval_table(hc, "distance_record_table", "distance")
+    data, rejected = _simple_interval_table(hc, "distance_record_table", "distance")
+    _purge(conn, user_id, "distance", rejected)
     return _upsert(
         conn, user_id, "distance",
         ["uuid", "start_utc", "end_utc", "local_date", "meters"], data,
@@ -467,7 +501,8 @@ def _parse_distance(
 def _parse_floors_climbed(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
-    data = _simple_interval_table(hc, "floors_climbed_record_table", "floors")
+    data, rejected = _simple_interval_table(hc, "floors_climbed_record_table", "floors")
+    _purge(conn, user_id, "floors_climbed", rejected)
     return _upsert(
         conn, user_id, "floors_climbed",
         ["uuid", "start_utc", "end_utc", "local_date", "floors"], data,
@@ -477,9 +512,10 @@ def _parse_floors_climbed(
 def _parse_elevation_gained(
     hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
 ) -> int:
-    data = _simple_interval_table(
+    data, rejected = _simple_interval_table(
         hc, "elevation_gained_record_table", "elevation",
     )
+    _purge(conn, user_id, "elevation_gained", rejected)
     return _upsert(
         conn, user_id, "elevation_gained",
         ["uuid", "start_utc", "end_utc", "local_date", "meters"], data,
@@ -494,6 +530,9 @@ def _parse_nutrition(
         "start_zone_offset, meal_type, energy, protein, "
         "total_carbohydrate, total_fat FROM nutrition_record_table"
     ).fetchall()
+    kept, rejected = _dedupe_by_priority(
+        rows, _priority_order(hc, CATEGORY_NUTRITION),
+    )
     data = [
         (
             uuid.hex(), _iso_utc(start_ms), _iso_utc(end_ms),
@@ -502,9 +541,9 @@ def _parse_nutrition(
             protein, carbs, fat,  # Mass macros: already grams, no scale
         )
         for _, start_ms, end_ms, uuid, offset, meal_type, energy, protein,
-        carbs, fat
-        in _dedupe_by_priority(rows, _priority_order(hc, CATEGORY_NUTRITION))
+        carbs, fat in kept
     ]
+    _purge(conn, user_id, "nutrition", rejected)
     return _upsert(
         conn, user_id, "nutrition",
         ["uuid", "start_utc", "end_utc", "local_date", "meal_type",
@@ -885,10 +924,29 @@ if __name__ == "__main__":
         dup_conn = db.connect(tmp / "dupes.db")
         db.init_db(dup_conn)
         dup_uid = db.create_user(dup_conn, "dupes", "password1234")
+        # Stand in for a run made before this rule existed, which
+        # inserted the duplicate. Upserting by uuid only ever touches
+        # the records it keeps, so without an explicit purge that row
+        # survives every later ingest and keeps being summed -- the
+        # de-duplication would look like it had done nothing at all.
+        dup_conn.execute(
+            "INSERT INTO steps (uuid, user_id, start_utc, end_utc, "
+            "local_date, count) VALUES (?, ?, '2023-11-14T22:13:20+00:00', "
+            "'2023-11-14T23:13:20+00:00', '2023-11-14', 5097)",
+            ((b"\x11" * 16).hex(), dup_uid),
+        )
+        dup_conn.commit()
+
         parse_and_upsert(dup_path, dup_conn, dup_uid)
         total = dup_conn.execute(
             "SELECT SUM(count) AS n FROM steps WHERE user_id = ?", (dup_uid,),
         ).fetchone()["n"]
         assert total == 6068 + 800, total
+
+        # Re-running must neither resurrect it nor drift.
+        parse_and_upsert(dup_path, dup_conn, dup_uid)
+        assert dup_conn.execute(
+            "SELECT SUM(count) AS n FROM steps WHERE user_id = ?", (dup_uid,),
+        ).fetchone()["n"] == 6068 + 800
 
         print("parse_health_connect.py: all checks passed")
