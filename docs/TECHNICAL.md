@@ -66,8 +66,11 @@ signal from recent exercise volume. Body battery and stress have no
 vote — body battery is a running energy gauge, not a morning score,
 and a separate stress vote would double-count what
 training-readiness's own aggregate already factors in — both are
-dashboard/LLM context only. VO2max is not ingested (`get_max_metrics`
-has no stable typed schema in the Garmin client used here).
+dashboard/LLM context only. VO2max, respiration, SpO2 and intensity
+minutes are ingested as context too; `get_max_metrics` still has no
+stable typed schema in the Garmin client, so VO2max is read
+best-effort out of its "generic" block and simply stays NULL when the
+shape doesn't match.
 
 Two capabilities were explicitly checked and are **not available**:
 Garmin Explore's route-suggestion/popularity-routing feature has no
@@ -80,9 +83,14 @@ Garmin workout is implemented**
 `training.session_values()` (a single timed step for treadmill, a
 repeat-group of rep/time steps for the bodyweight circuits) and
 uploads + schedules it, deleting yesterday's pushed template first.
-Ceiling: per-exercise step labels ride an unofficial `description`
-field with no confirmed on-watch display — verify against a real
-account; the mechanism (upload/schedule/cleanup) is solid regardless.
+Each rep step carries a `category`/`exerciseName` pair from Garmin's
+own exercise catalog (`garminconnect.exercises`), which is what drives
+the exercise name and muscle diagram on the watch — the free-text
+`description` field it used to rely on is not rendered on-device at
+all. The segment is typed `strength_training` for circuits and
+`cardio_training` for the treadmill; `walking` (sportTypeId 17) looked
+right but Garmin renders it as a pool swim, verified against a real
+account.
 
 Three more life-integration pieces:
 
@@ -130,14 +138,16 @@ history view lists every one with its unlock date), and Settings
 ## Architecture
 
 ```text
-worker container cron
-  05:30  run_ingest.py    Garmin API fetch (activities + sleep,
+worker container cron (times are the defaults; all four are
+configurable per deployment -- see "What runs on its own
+afterwards" below)
+  07:15  run_ingest.py    Garmin API fetch (activities + sleep,
                            trailing GARMIN_LOOKBACK_DAYS window),
                            then rclone-sync the Drive export,
                            extract, upsert the rest into
                            data/db/smart_coach.db (idempotent --
                            full snapshot each time)
-  06:00  run_coach.py     metrics.py + progress.py compute today's
+  07:45  run_coach.py     metrics.py + progress.py compute today's
                            wellness + weekly trends; training.py
                            applies the deload guardrail (3 reds in a
                            row, OR a single critically negative TSB
@@ -161,10 +171,11 @@ worker container cron
                            last 3 nights are meaningfully short on
                            sleep -- silent otherwise
 
-Note: exercise/sleep/wellness are Garmin-API-fresh (same day), but
-Health-Connect-only fields (steps, weight, nutrition, ...) still lag
-a day -- that export syncs once overnight, so those numbers reflect
-yesterday until the next 05:30 ingest.
+Note: exercise/sleep/wellness are Garmin-API-fresh (same day), and
+Garmin's whole-day rollup covers today's steps/resting HR too. The
+Health-Connect-only fields it does not carry (weight, nutrition,
+body fat, ...) still lag a day -- that export syncs once overnight,
+so those numbers reflect yesterday until the next ingest.
 
 web container (always on)
   web/app.py               FastAPI reads the same db read-mostly;
@@ -337,10 +348,20 @@ first account ever created is the admin.
 
 | Time | What happens |
 |---|---|
-| 05:30 | ingestion: Garmin + the phone's export |
-| 06:00 | readiness, tonight's session, calendar, coaching message |
-| 16:00 | afternoon check-in — silent unless you are falling behind |
-| 21:00 | evening check-in, same rule |
+| `INGEST_TIME` (07:15) | ingestion: Garmin + the phone's export |
+| `COACH_TIME` (07:45) | readiness, tonight's session, calendar, coaching message |
+| `CHECKIN_AFTERNOON_TIME` (16:00) | afternoon check-in — silent unless you are falling behind |
+| `CHECKIN_EVENING_TIME` (21:00) | evening check-in, same rule |
+
+All four are `HH:MM` in `TZ`, set in `.env`; the defaults above apply
+when they're unset. **`INGEST_TIME` has to fall after you actually get
+up.** Garmin only publishes a night's sleep score, HRV and training
+readiness once the sleep session has *ended* and the watch has synced,
+so an ingest that runs while you're still asleep collects none of them
+and the coaching message goes out with no recovery signals behind its
+verdict — body battery and stress are all it will have. Allow ~15-30
+minutes after waking for the watch to sync. An unparseable value falls
+back to the default rather than writing a crontab cron would reject.
 
 ## Adding a user
 
