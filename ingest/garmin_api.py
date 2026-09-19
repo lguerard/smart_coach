@@ -631,6 +631,83 @@ def upsert_stress(
     return 1
 
 
+def upsert_body_composition(
+    conn: sqlite3.Connection, user_id: int, client: Garmin,
+    tz: ZoneInfo, days: int,
+) -> int:
+    """Fetch Garmin weigh-ins into weight/body_fat/lean_body_mass.
+
+    These tables are also filled from the Health Connect export, and
+    Garmin is the better source for them: the scale syncs to Garmin
+    first and only reaches Health Connect afterwards, where readings
+    arrive erratically -- a real account had daily weigh-ins showing
+    up there about weekly, so the coach kept calling a plateau on a
+    fortnight-old figure. Both sources land in the same tables under
+    their own uuids; metrics.latest_body_comp takes the most recent
+    reading, which is the Garmin one whenever the two disagree on
+    freshness.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        tz (ZoneInfo): User timezone for local_date day boundaries.
+        days (int): Trailing window length.
+
+    Returns:
+        int: Weigh-ins upserted.
+    """
+    today = dt.date.today()
+    data = client.get_body_composition(
+        (today - dt.timedelta(days=days)).isoformat(), today.isoformat(),
+    ) or {}
+    # Undocumented endpoint: the per-weigh-in list has carried a
+    # couple of names, and masses come back in grams.
+    entries = (
+        data.get("dateWeightList")
+        or data.get("dailyWeightSummaries")
+        or []
+    )
+    count = 0
+    for entry in entries:
+        grams = entry.get("weight")
+        timestamp_ms = entry.get("date") or entry.get("timestampGMT")
+        if grams is None or not timestamp_ms:
+            continue
+        measured = _epoch_ms_utc(int(timestamp_ms))
+        local_date = measured.astimezone(tz).date().isoformat()
+        time_utc = measured.isoformat()
+        uuid = f"garmin-weight-{entry.get('samplePk') or timestamp_ms}"
+        conn.execute(
+            "INSERT INTO weight (uuid, user_id, time_utc, local_date, kg) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(uuid) DO UPDATE SET "
+            "time_utc = excluded.time_utc, "
+            "local_date = excluded.local_date, kg = excluded.kg",
+            (uuid, user_id, time_utc, local_date, grams / 1000),
+        )
+        count += 1
+        if entry.get("bodyFat") is not None:
+            conn.execute(
+                "INSERT INTO body_fat (uuid, user_id, time_utc, "
+                "local_date, percentage) VALUES (?, ?, ?, ?, ?) ON "
+                "CONFLICT(uuid) DO UPDATE SET "
+                "time_utc = excluded.time_utc, "
+                "local_date = excluded.local_date, "
+                "percentage = excluded.percentage",
+                (uuid, user_id, time_utc, local_date, entry["bodyFat"]),
+            )
+        if entry.get("muscleMass") is not None:
+            conn.execute(
+                "INSERT INTO lean_body_mass (uuid, user_id, time_utc, "
+                "local_date, kg) VALUES (?, ?, ?, ?, ?) ON CONFLICT"
+                "(uuid) DO UPDATE SET time_utc = excluded.time_utc, "
+                "local_date = excluded.local_date, kg = excluded.kg",
+                (uuid, user_id, time_utc, local_date,
+                 entry["muscleMass"] / 1000),
+            )
+    return count
+
+
 def upsert_daily_summary(
     conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
 ) -> int:
@@ -978,6 +1055,7 @@ def fetch_and_upsert(
     sleep_sessions, sleep_stages = upsert_sleep(
         conn, user_id, client, tz, days,
     )
+    weigh_ins = upsert_body_composition(conn, user_id, client, tz, days)
     today = dt.datetime.now(tz).date().isoformat()
     counts = {
         "exercise_sessions": sessions,
@@ -985,6 +1063,7 @@ def fetch_and_upsert(
         "exercise_route_points": route_points,
         "sleep_sessions": sleep_sessions,
         "sleep_stages": sleep_stages,
+        "body_composition": weigh_ins,
         "hrv": upsert_hrv(conn, user_id, client, today),
         "training_readiness": upsert_training_readiness(
             conn, user_id, client, today,
@@ -1353,6 +1432,21 @@ if __name__ == "__main__":
                 "level": "MODERATE", "feedbackLong": "note",
             }]
 
+        def get_body_composition(self, start: str, end: str) -> dict:
+            return {
+                "dateWeightList": [
+                    {
+                        "samplePk": 7001, "date": 1784176200000,
+                        "weight": 88700.0, "bodyFat": 24.5,
+                        "muscleMass": 61200.0,
+                    },
+                    # Garmin returns weightless rows for days the
+                    # scale only measured impedance -- must be skipped.
+                    {"samplePk": 7002, "date": 1784262600000,
+                     "weight": None},
+                ],
+            }
+
         def get_body_battery(self, date: str) -> list:
             if date != "2026-07-16":
                 return []
@@ -1530,6 +1624,38 @@ if __name__ == "__main__":
     ).fetchone()
     assert stress_row["avg_level"] == 32, dict(stress_row)
     assert stress_row["max_level"] == 68, dict(stress_row)
+
+    # Body composition: grams -> kg, weightless row skipped, and the
+    # re-run stays idempotent (same uuid, no second weigh-in).
+    assert upsert_body_composition(conn, uid, fake, tz, 3650) == 1
+    weight_row = conn.execute(
+        "SELECT * FROM weight WHERE user_id = ?", (uid,),
+    ).fetchone()
+    assert weight_row["uuid"] == "garmin-weight-7001", dict(weight_row)
+    assert weight_row["kg"] == 88.7, dict(weight_row)
+    assert weight_row["local_date"] == "2026-07-16", dict(weight_row)
+    assert conn.execute(
+        "SELECT percentage FROM body_fat WHERE user_id = ?", (uid,),
+    ).fetchone()["percentage"] == 24.5
+    assert conn.execute(
+        "SELECT kg FROM lean_body_mass WHERE user_id = ?", (uid,),
+    ).fetchone()["kg"] == 61.2
+    assert upsert_body_composition(conn, uid, fake, tz, 3650) == 1
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM weight WHERE user_id = ?", (uid,),
+    ).fetchone()["n"] == 1
+
+    # A stale Health Connect weigh-in must not outrank the Garmin one:
+    # metrics.latest_body_comp is what the coach reads, and picking
+    # the older row is exactly the "plateau" bug this fetch fixes.
+    conn.execute(
+        "INSERT INTO weight (uuid, user_id, time_utc, local_date, kg) "
+        "VALUES ('hc-old-weight', ?, '2026-07-01T07:00:00+00:00', "
+        "'2026-07-01', 90.0)", (uid,),
+    )
+    assert metrics.latest_body_comp(
+        conn, uid, "2026-07-31",
+    )["weight_kg"] == 88.7
 
     # Badges: nameless entry skipped, not crashed on; idempotent re-run.
     assert upsert_badges(conn, uid, fake) == 1
