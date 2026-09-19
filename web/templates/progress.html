@@ -15,6 +15,17 @@
     {{ bundle.recalibration.target_weekly_kg }} kg/sem -- ajustement suggere :
     {{ '%+d'|format(bundle.recalibration.suggested_daily_calorie_adjustment_kcal) }} kcal/jour.
   </p>
+  {# The rate above is smoothed over weeks; a single recent weigh-in
+     moving the other way is not a contradiction, it just needs
+     saying -- this is the exact confusion a naked "-0.18 kg/sem"
+     next to a scale that just went up caused. #}
+  {% set rs = bundle.weight_progression.recent_step %}
+  {% if rs and (rs.change > 0) != (bundle.recalibration.actual_weekly_kg > 0) %}
+  <p class="text-xs mt-1" style="color: var(--muted);">
+    (derniere pesee {{ '%+.2f'|format(rs.change) }} kg sur {{ rs.days }} jours --
+    n'annule pas la tendance ci-dessus, une pesee reste bruitee)
+  </p>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -92,6 +103,15 @@
     {% if wp.per_week is defined %}
     <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if wp.per_week < 0 else 'var(--text-secondary)' }};">
       Tendance {{ '%+.2f'|format(wp.per_week) }} kg/sem sur {{ wp.readings }} pesees
+    </p>
+    {% endif %}
+    {# A third window on purpose: not the single latest step (mostly
+       noise) nor the full-window slope (mostly the past), but
+       specifically "this week" -- the span someone means when they
+       say they gained weight since Monday. #}
+    {% if wp.recent_step is defined %}
+    <p class="text-xs mt-0.5" style="color: var(--muted);">
+      Sur {{ wp.recent_step.days }}j : {{ '%+.2f'|format(wp.recent_step.change) }} kg
     </p>
     {% endif %}
   </div>

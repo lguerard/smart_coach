@@ -590,7 +590,13 @@ def point_progression(
     Returns:
         dict: ``latest`` and ``previous`` (each ``date``/``value``),
         ``change`` and ``days_between`` between those two, plus
-        ``per_week`` and ``readings`` over the window. Keys are
+        ``per_week`` and ``readings`` over the window, and
+        ``recent_step`` -- latest vs the reading closest to
+        ``RECENT_STEP_DAYS`` ago -- a third figure distinct from
+        both: not one noisy reading like ``change``, not blended
+        across the whole window like ``per_week``, so a rise across
+        this week specifically stays visible even inside a slope
+        that nets out flat or falling over the full window. Keys are
         omitted rather than faked when the data cannot support them:
         one reading yields ``latest`` alone, none yields ``{}``.
     """
@@ -619,6 +625,24 @@ def point_progression(
         dt.date.fromisoformat(series[-1][0])
         - dt.date.fromisoformat(previous_date)
     ).days
+
+    latest_date = dt.date.fromisoformat(series[-1][0])
+    target = latest_date - dt.timedelta(days=RECENT_STEP_DAYS)
+    candidates = series[:-1]  # never compare the latest to itself
+    closest_date, closest_value = min(
+        candidates,
+        key=lambda point: abs(
+            (dt.date.fromisoformat(point[0]) - target).days
+        ),
+    )
+    days_back = (latest_date - dt.date.fromisoformat(closest_date)).days
+    if abs(days_back - RECENT_STEP_DAYS) <= RECENT_STEP_TOLERANCE_DAYS:
+        result["recent_step"] = {
+            "from_date": closest_date,
+            "value": round(closest_value, 2),
+            "change": round(series[-1][1] - closest_value, 2),
+            "days": days_back,
+        }
     return result
 
 
@@ -953,6 +977,19 @@ def format_nutrition_nudge(nutrition: dict, language: str = "fr") -> str:
     return "Nutrition: " + ", ".join(parts)
 
 
+# How far back "the recent step" looks, distinct from both the
+# immediate previous reading (mostly noise) and the full-window
+# slope (mostly the past). A user who gained weight Monday-to-Friday
+# is describing exactly this window, and neither of the other two
+# figures speaks to it: the immediate step is one day, the slope
+# blends four-plus weeks and a five-day rise inside a longer decline
+# can average out to "flat".
+RECENT_STEP_DAYS = 7
+# How far a candidate reading may sit from that target and still
+# count as "the recent step" -- weigh-ins are not on a fixed
+# schedule, so this tolerates a few days' slack either way.
+RECENT_STEP_TOLERANCE_DAYS = 3
+
 # Each half of the trend window needs at least this many days
 # carrying a reading before a flat delta means anything. Weigh-ins
 # reached this database through Health Connect alone until Garmin
@@ -963,16 +1000,27 @@ def format_nutrition_nudge(nutrition: dict, language: str = "fr") -> str:
 MIN_TREND_READING_DAYS = 3
 
 
-def detect_plateau(weight: dict, calories: dict) -> dict:
+def detect_plateau(
+    weight: dict, calories: dict, recent_step: Optional[dict] = None,
+) -> dict:
     """Flag a weight-loss plateau despite a real logged deficit.
 
     Parameters:
-        weight (dict): ``weight_trend`` output.
+        weight (dict): ``weight_trend`` output (14-day half-vs-half
+            average -- smoothed on purpose, which is exactly why it
+            can call a week "flat" while the readings inside it rose).
         calories (dict): ``calorie_balance_for_range`` output.
+        recent_step (dict | None): ``point_progression(...)
+            ["recent_step"]`` -- latest reading vs about a week ago.
+            A real move here, in either direction, is not a plateau
+            whatever the smoothed trend says, so it is checked first
+            and short-circuits the rest of this function.
 
     Returns:
         dict: ``{"plateau": bool, "note": str | None}``, plus
-        ``too_few_weigh_ins`` when the window is too sparse to judge.
+        ``too_few_weigh_ins`` when the window is too sparse to judge,
+        or ``recent_move`` (``direction``/``change``/``days``) when a
+        clear recent move pre-empted the plateau question entirely.
         ``note`` is a plain-language flag for the LLM/dashboard to
         surface, not a prescription -- it names the situation, the
         LLM phrases advice.
@@ -983,6 +1031,17 @@ def detect_plateau(weight: dict, calories: dict) -> dict:
         weight.get("current_days", 0), weight.get("past_days", 0)
     ) < MIN_TREND_READING_DAYS:
         return {"plateau": False, "note": None, "too_few_weigh_ins": True}
+    if recent_step and abs(recent_step["change"]) >= PLATEAU_WEIGHT_DELTA_KG:
+        return {
+            "plateau": False, "note": None,
+            "recent_move": {
+                "direction": (
+                    "up" if recent_step["change"] > 0 else "down"
+                ),
+                "change": recent_step["change"],
+                "days": recent_step["days"],
+            },
+        }
     flat = abs(weight["delta"]) < PLATEAU_WEIGHT_DELTA_KG
     if not flat:
         return {"plateau": False, "note": None}
@@ -1013,31 +1072,35 @@ RECAL_REL_THRESHOLD = 0.4  # 40% relative deviation from target
 def _weekly_rate_kg(
     conn: sqlite3.Connection, user_id: int, end_date: str, days: int = 28,
 ) -> Optional[float]:
-    """Actual weekly weight-change rate from the earliest/latest
-    readings in a trailing window (more stable than day-to-day noise).
+    """Actual weekly weight-change rate: a least-squares slope over
+    the trailing window, not the two endpoints.
+
+    Used to be exactly that subtraction, and it was the more fragile
+    of the two methods this file now has for the same question: the
+    earliest and latest readings in the window are the two points
+    most likely to be a single odd morning, and extrapolating a
+    week's rate from just those two turned a five-day rise sitting
+    inside an otherwise-declining month into a confidently-reported
+    "-0.18 kg/week", with no sign anything had gone up. See
+    :func:`_slope_per_week`.
 
     Returns:
-        float | None: kg/week (signed), or ``None`` if fewer than 2
-        readings span at least 7 days in the window.
+        float | None: kg/week (signed), or ``None`` if the readings
+        in the window don't span at least 7 days.
     """
     start = (
         dt.date.fromisoformat(end_date) - dt.timedelta(days=days)
     ).isoformat()
-    rows = conn.execute(
-        "SELECT local_date, kg FROM weight WHERE user_id = ? AND "
-        "local_date BETWEEN ? AND ? ORDER BY local_date",
-        (user_id, start, end_date),
-    ).fetchall()
-    if len(rows) < 2:
+    series = _daily_series(conn, user_id, "weight", "kg", start, end_date)
+    if len(series) < 2:
         return None
-    first, last = rows[0], rows[-1]
     span_days = (
-        dt.date.fromisoformat(last["local_date"])
-        - dt.date.fromisoformat(first["local_date"])
+        dt.date.fromisoformat(series[-1][0])
+        - dt.date.fromisoformat(series[0][0])
     ).days
     if span_days < 7:
         return None
-    return (last["kg"] - first["kg"]) / span_days * 7
+    return _slope_per_week(series)
 
 
 def recalibration_check(
@@ -1090,12 +1153,11 @@ def weekly_progress(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         empty sub-dicts where there isn't enough data yet.
     """
     weight = weight_trend(conn, user_id, date)
+    weight_progress = point_progression(conn, user_id, "weight", "kg", date)
     calories = calorie_balance_for_range(conn, user_id, date)
     return {
         "weight_trend_14d": weight,
-        "weight_progression": point_progression(
-            conn, user_id, "weight", "kg", date,
-        ),
+        "weight_progression": weight_progress,
         "body_fat_progression": point_progression(
             conn, user_id, "body_fat", "percentage", date,
         ),
@@ -1104,7 +1166,9 @@ def weekly_progress(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         "lean_mass_trend_28d": lean_mass_trend(conn, user_id, date),
         "calorie_balance_7d": calories,
         "protein_7d": protein_trend(conn, user_id, date),
-        "plateau": detect_plateau(weight, calories),
+        "plateau": detect_plateau(
+            weight, calories, weight_progress.get("recent_step"),
+        ),
         "nutrition_yesterday": nutrition_gap(conn, user_id, date),
         "recalibration": recalibration_check(conn, user_id, date),
     }
@@ -1181,6 +1245,62 @@ if __name__ == "__main__":
 
     plateau = detect_plateau(trend, calories)
     assert plateau["plateau"] is True
+
+    # The real bug report: an athlete losing overall who gains
+    # across one week is not on a plateau, and must not be told
+    # they are. Fixture: -0.1 kg/day for 21 days, then +0.15 kg/day
+    # for the final week -- net loss over 28 days, real rise over 7.
+    rise_conn = db.connect(Path(tempfile.mkdtemp()) / "rise.db")
+    db.init_db(rise_conn)
+    rise_uid = db.create_user(rise_conn, "rise", "password1234")
+    for i in range(28):
+        day_date = (base + dt.timedelta(days=i)).isoformat()
+        kg = 90.0 - 0.1 * i if i < 21 else 90.0 - 0.1 * 21 + 0.15 * (i - 21)
+        rise_conn.execute(
+            "INSERT INTO weight VALUES (?, ?, ?, ?, ?)",
+            (f"r{i}", rise_uid, f"{day_date}T07:00:00+00:00", day_date, kg),
+        )
+    rise_conn.commit()
+    rise_end = (base + dt.timedelta(days=27)).isoformat()
+    rise_wp = point_progression(rise_conn, rise_uid, "weight", "kg", rise_end)
+    assert rise_wp["recent_step"]["change"] > 0, rise_wp  # the felt rise
+    assert rise_wp["per_week"] < 0, rise_wp  # still losing overall
+    rise_trend = weight_trend(rise_conn, rise_uid, rise_end)
+    rise_plateau = detect_plateau(
+        rise_trend, {}, rise_wp.get("recent_step"),
+    )
+    # Must name the rise, not call it a plateau -- whatever the
+    # smoothed 14-day halves happen to say.
+    assert rise_plateau["plateau"] is False, rise_plateau
+    assert rise_plateau["recent_move"]["direction"] == "up", rise_plateau
+    assert rise_plateau["recent_move"]["change"] > 0, rise_plateau
+
+    # Without a recent_step (old call sites, or too few readings for
+    # one), behaviour is unchanged -- this override never applies to
+    # data that cannot support it.
+    assert detect_plateau(trend, calories, None) == plateau
+
+    # recalibration_check's rate must be the same robust slope, not
+    # the two endpoints -- on this fixture the naive subtraction
+    # (first reading vs last, both potentially odd mornings) reads
+    # -0.31 kg/week; the fit through all 28 readings reads -0.46.
+    # Neither is "the" true answer, but only one of them is immune
+    # to a single reading at either end moving it.
+    slope_rate = _weekly_rate_kg(rise_conn, rise_uid, rise_end)
+    rise_rows = rise_conn.execute(
+        "SELECT local_date, kg FROM weight WHERE user_id = ? "
+        "ORDER BY local_date", (rise_uid,),
+    ).fetchall()
+    naive_rate = (
+        (rise_rows[-1]["kg"] - rise_rows[0]["kg"])
+        / (
+            dt.date.fromisoformat(rise_rows[-1]["local_date"])
+            - dt.date.fromisoformat(rise_rows[0]["local_date"])
+        ).days * 7
+    )
+    assert round(slope_rate, 2) == -0.46, slope_rate
+    assert round(naive_rate, 2) == -0.31, naive_rate
+    assert abs(slope_rate - naive_rate) > 0.1  # genuinely different answers
 
     # A fortnight carrying one weigh-in per half is two numbers, not
     # a trend: flat or not, it must not be reported as a plateau.
@@ -1344,6 +1464,10 @@ if __name__ == "__main__":
     assert wprog["days_between"] == 1, wprog
     assert wprog["change"] == 0.0, wprog
     assert wprog["per_week"] < 0, wprog
+    # Flat for the whole recent week too, in this fixture -- so
+    # recent_step agrees with everything else and changes nothing.
+    assert wprog["recent_step"]["days"] == 7, wprog
+    assert wprog["recent_step"]["change"] == 0.0, wprog
 
     # One reading gives a latest and nothing to compare it against,
     # rather than a change of zero -- which would read as "stable".
