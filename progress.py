@@ -43,7 +43,9 @@ def _weight_like_trend(
 
     Returns:
         dict: ``current_avg``, ``past_avg``, ``delta`` (current minus
-        past), or ``{}`` if not enough readings in either half.
+        past) and ``current_days``/``past_days`` (how many distinct
+        dates each average rests on), or ``{}`` if either half is
+        empty.
     """
     # Two equal, non-overlapping halves of days//2 dates each (BETWEEN
     # is inclusive on both ends, so bounds are half-1 / half / 2*half-1
@@ -55,22 +57,32 @@ def _weight_like_trend(
     past_hi = (end - dt.timedelta(days=half)).isoformat()
     start = (end - dt.timedelta(days=2 * half - 1)).isoformat()
 
-    def avg(lo: str, hi: str) -> Optional[float]:
+    def avg(lo: str, hi: str) -> tuple[Optional[float], int]:
+        # Averaged per date first, then across dates. These tables
+        # are multi-source -- the scale writes to Garmin and to
+        # Health Connect, and both land here -- so a day carrying two
+        # readings would otherwise weigh twice as much in the half as
+        # a day carrying one, tilting the trend toward whichever days
+        # happened to sync twice.
         row = conn.execute(
-            f"SELECT AVG({value_col}) AS avg, COUNT(*) AS n FROM {table} "
-            "WHERE user_id = ? AND local_date BETWEEN ? AND ?",
+            f"SELECT AVG(daily) AS avg, COUNT(*) AS n FROM ("
+            f"SELECT AVG({value_col}) AS daily FROM {table} "
+            "WHERE user_id = ? AND local_date BETWEEN ? AND ? "
+            "GROUP BY local_date)",
             (user_id, lo, hi),
         ).fetchone()
-        return row["avg"] if row["n"] else None
+        return (row["avg"], row["n"]) if row["n"] else (None, 0)
 
-    current_avg = avg(current_lo, end_date)
-    past_avg = avg(start, past_hi)
+    current_avg, current_days = avg(current_lo, end_date)
+    past_avg, past_days = avg(start, past_hi)
     if current_avg is None or past_avg is None:
         return {}
     return {
         "current_avg": round(current_avg, 2),
         "past_avg": round(past_avg, 2),
         "delta": round(current_avg - past_avg, 2),
+        "current_days": current_days,
+        "past_days": past_days,
     }
 
 
@@ -593,6 +605,16 @@ def format_nutrition_nudge(gap: dict, language: str = "fr") -> str:
     return "Nutrition: " + ", ".join(parts)
 
 
+# Each half of the trend window needs at least this many days
+# carrying a reading before a flat delta means anything. Weigh-ins
+# reached this database through Health Connect alone until Garmin
+# was added, and they arrived about weekly: two readings a fortnight
+# apart differing by 0.1 kg is not a plateau, it is two numbers. The
+# coach called one anyway, on a real account, while the athlete's
+# weight was moving.
+MIN_TREND_READING_DAYS = 3
+
+
 def detect_plateau(weight: dict, calories: dict) -> dict:
     """Flag a weight-loss plateau despite a real logged deficit.
 
@@ -601,12 +623,18 @@ def detect_plateau(weight: dict, calories: dict) -> dict:
         calories (dict): ``calorie_balance_for_range`` output.
 
     Returns:
-        dict: ``{"plateau": bool, "note": str | None}``. ``note`` is a
-        plain-language flag for the LLM/dashboard to surface, not a
-        prescription -- it names the situation, the LLM phrases advice.
+        dict: ``{"plateau": bool, "note": str | None}``, plus
+        ``too_few_weigh_ins`` when the window is too sparse to judge.
+        ``note`` is a plain-language flag for the LLM/dashboard to
+        surface, not a prescription -- it names the situation, the
+        LLM phrases advice.
     """
     if not weight or "delta" not in weight:
         return {"plateau": False, "note": None}
+    if min(
+        weight.get("current_days", 0), weight.get("past_days", 0)
+    ) < MIN_TREND_READING_DAYS:
+        return {"plateau": False, "note": None, "too_few_weigh_ins": True}
     flat = abs(weight["delta"]) < PLATEAU_WEIGHT_DELTA_KG
     if not flat:
         return {"plateau": False, "note": None}
@@ -795,6 +823,60 @@ if __name__ == "__main__":
 
     plateau = detect_plateau(trend, calories)
     assert plateau["plateau"] is True
+
+    # A fortnight carrying one weigh-in per half is two numbers, not
+    # a trend: flat or not, it must not be reported as a plateau.
+    sparse_conn = db.connect(Path(tempfile.mkdtemp()) / "sparse.db")
+    db.init_db(sparse_conn)
+    sparse_uid = db.create_user(sparse_conn, "sparse", "password1234")
+    for offset, kg in ((0, 89.0), (10, 89.05)):
+        date = (base + dt.timedelta(days=offset)).isoformat()
+        sparse_conn.execute(
+            "INSERT INTO weight VALUES (?, ?, ?, ?, ?)",
+            (f"s{offset}", sparse_uid, f"{date}T07:00:00+00:00", date, kg),
+        )
+    sparse_conn.commit()
+    sparse_end = (base + dt.timedelta(days=13)).isoformat()
+    sparse_trend = weight_trend(sparse_conn, sparse_uid, sparse_end)
+    assert sparse_trend["current_days"] == 1, sparse_trend
+    assert sparse_trend["past_days"] == 1, sparse_trend
+    assert abs(sparse_trend["delta"]) < PLATEAU_WEIGHT_DELTA_KG
+    sparse_plateau = detect_plateau(sparse_trend, calories)
+    assert sparse_plateau["plateau"] is False, sparse_plateau
+    assert sparse_plateau["too_few_weigh_ins"] is True, sparse_plateau
+
+    # A day can carry two readings that disagree: the scale reaches
+    # Garmin and Health Connect separately, and an evening weigh-in
+    # is heavier than the morning one. Counted as two samples, that
+    # single day pulls its whole half; counted as one day, it
+    # contributes its own mean like every other day.
+    dual_conn = db.connect(Path(tempfile.mkdtemp()) / "dual.db")
+    db.init_db(dual_conn)
+    dual_uid = db.create_user(dual_conn, "dual", "password1234")
+    for offset in range(14):
+        date = (base + dt.timedelta(days=offset)).isoformat()
+        dual_conn.execute(
+            "INSERT INTO weight VALUES (?, ?, ?, ?, ?)",
+            (f"hc{offset}", dual_uid, f"{date}T07:00:00+00:00", date,
+             90.0 - 0.1 * offset),
+        )
+    # Second, heavier reading on the final day only.
+    last_date = (base + dt.timedelta(days=13)).isoformat()
+    dual_conn.execute(
+        "INSERT INTO weight VALUES (?, ?, ?, ?, 90.1)",
+        ("garmin-weight-13", dual_uid, f"{last_date}T19:00:00+00:00",
+         last_date),
+    )
+    dual_conn.commit()
+    dual_trend = weight_trend(dual_conn, dual_uid, last_date)
+    assert dual_trend["current_days"] == 7, dual_trend
+    assert dual_trend["past_days"] == 7, dual_trend
+    # Recent half: six plain days plus (88.7 + 90.1)/2 = 89.4 for the
+    # doubled one, averaging 89.1 against 89.7 before. Pooling the
+    # eight raw readings instead gives 89.14, shrinking a real 0.6 kg
+    # fall to 0.56.
+    assert dual_trend["current_avg"] == 89.1, dual_trend
+    assert dual_trend["delta"] == -0.6, dual_trend
 
     # Lean mass logged flat while weight fell -> recomposition signal.
     for i in (0, 14, 27):
