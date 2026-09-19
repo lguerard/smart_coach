@@ -78,6 +78,22 @@
     {% else %}
     <p class="text-sm mt-1" style="color: var(--muted);">Pas assez de donnees</p>
     {% endif %}
+    {# The two senses of change, kept apart: a weigh-in is mostly
+       water and food in transit, the slope is the body. Shown
+       together so a heavy morning inside a steady loss reads as one. #}
+    {% set wp = bundle.weight_progression %}
+    {% if wp.change is defined %}
+    <p class="text-xs mt-2 pt-2" style="color: var(--muted); border-top: 1px solid var(--border);">
+      Derniere pesee {{ wp.latest.value }} kg
+      ({{ '%+.2f'|format(wp.change) }} kg en
+      {{ wp.days_between }} jour{{ "s" if wp.days_between != 1 }})
+    </p>
+    {% endif %}
+    {% if wp.per_week is defined %}
+    <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if wp.per_week < 0 else 'var(--text-secondary)' }};">
+      Tendance {{ '%+.2f'|format(wp.per_week) }} kg/sem sur {{ wp.readings }} pesees
+    </p>
+    {% endif %}
   </div>
   <div class="card p-4">
     <p class="text-xs" style="color: var(--muted);">Balance calorique (7j)</p>
@@ -141,6 +157,52 @@
   <h2 class="font-semibold text-sm mb-3">Proteines -- 30 jours</h2>
   <div style="height: 220px;"><canvas id="proteinChart"></canvas></div>
 </div>
+
+{# Per exercise type: the last session against the one before it, and
+   the direction over the window. Each delta carries which way counts
+   as progress, so a falling heart rate reads green and a falling
+   duration does not. #}
+{% if bundle.effort_progression %}
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-3">Seances -- derniere vs precedente</h2>
+  <div class="space-y-3">
+    {% for label, entry in bundle.effort_progression.items() %}
+    <div>
+      <div class="flex justify-between items-baseline">
+        <span class="text-sm font-medium">{{ label|replace("_", " ") }}</span>
+        <span class="text-xs" style="color: var(--muted);">
+          {{ entry.sessions }} seance{{ "s" if entry.sessions != 1 }}
+          sur {{ entry.window_days }}j
+        </span>
+      </div>
+      {% if entry.change is defined %}
+      <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs">
+        {% for field, move in entry.change.items() %}
+        {% set better = (move.delta > 0) if move.direction == 'higher_is_more_work' else (move.delta < 0) %}
+        <span style="color: {{ 'var(--good)' if better and move.delta != 0 else ('var(--muted)' if move.delta == 0 else 'var(--text-secondary)') }};">
+          {{ field|replace("_", " ") }} {{ '%+g'|format(move.delta) }}
+        </span>
+        {% endfor %}
+        <span style="color: var(--muted);">
+          vs il y a {{ entry.days_between }} jour{{ "s" if entry.days_between != 1 }}
+        </span>
+      </div>
+      {% else %}
+      <p class="text-xs mt-1" style="color: var(--muted);">
+        Premiere seance de ce type -- rien a comparer.
+      </p>
+      {% endif %}
+      {% if entry.per_week is defined %}
+      <p class="text-xs mt-1" style="color: var(--muted);">
+        Tendance/sem :
+        {% for field, slope in entry.per_week.items() %}{{ field|replace("_", " ") }} {{ '%+g'|format(slope) }}{{ ", " if not loop.last }}{% endfor %}
+      </p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 {% endblock %}
 
