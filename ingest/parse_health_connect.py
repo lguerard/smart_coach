@@ -300,7 +300,72 @@ def _upsert(
         f"ON CONFLICT({conflict_col}) DO UPDATE SET {updates}",
         full_rows,
     )
+    if "local_date" in columns:
+        _reconcile(
+            conn, user_id, table,
+            [row[0] for row in rows],
+            [row[columns.index("local_date")] for row in rows],
+        )
     return len(full_rows)
+
+
+# ingest/garmin_api.py writes some of the same tables (weight,
+# body_fat, lean_body_mass) and keys its rows with this prefix.
+# Reconciliation below speaks only for what Health Connect exported,
+# so it must never touch them.
+GARMIN_UUID_PREFIX = "garmin-"
+
+
+def _reconcile(
+    conn: sqlite3.Connection, user_id: int, table: str,
+    uuids: list[str], dates: list[str],
+) -> None:
+    """Delete rows the export no longer carries, inside its own window.
+
+    Upserting by uuid alone silently accumulates. Health Connect
+    hands each record a fresh uuid every time the writing app
+    re-syncs it, and MyFitnessPal sets no client_record_id or
+    dedupe_hash that would let HC (or us) recognise a meal it has
+    already seen -- so one breakfast logged once and synced four
+    times arrives as four different uuids across four exports. Any
+    single export holds just one copy; our db kept all four. On a
+    real account that turned a 1713 kcal day into 6854 kcal over 16
+    rows, and left the coach reading 11.8 g of protein off a day
+    whose partial first generation was all it could still recognise.
+
+    So the export is treated as authoritative for the span it
+    covers: every row of ours inside ``[min(dates), max(dates)]``
+    that this export did not just produce is a stale generation (or
+    something the user deleted in the logging app) and goes. Rows
+    outside the span are untouched, which is what keeps history from
+    a wider earlier export when Health Connect's retention has since
+    rolled past it.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        table (str): Target table name.
+        uuids (list[str]): Every uuid this export supplied.
+        dates (list[str]): Their local dates, defining the window.
+    """
+    if not uuids:
+        return
+    conn.execute(
+        "CREATE TEMP TABLE IF NOT EXISTS _exported_uuids "
+        "(uuid TEXT PRIMARY KEY)"
+    )
+    conn.execute("DELETE FROM _exported_uuids")
+    conn.executemany(
+        "INSERT OR IGNORE INTO _exported_uuids (uuid) VALUES (?)",
+        [(uuid,) for uuid in uuids],
+    )
+    conn.execute(
+        f"DELETE FROM {table} WHERE user_id = ? "
+        f"AND local_date BETWEEN ? AND ? "
+        f"AND uuid NOT LIKE '{GARMIN_UUID_PREFIX}%' "
+        f"AND uuid NOT IN (SELECT uuid FROM _exported_uuids)",
+        (user_id, min(dates), max(dates)),
+    )
 
 
 def _simple_point_table(
@@ -948,5 +1013,77 @@ if __name__ == "__main__":
         assert dup_conn.execute(
             "SELECT SUM(count) AS n FROM steps WHERE user_id = ?", (dup_uid,),
         ).fetchone()["n"] == 6068 + 800
+
+        # A re-synced meal arrives under a FRESH uuid: Health Connect
+        # mints a new one each time the writing app pushes the record
+        # again, and MyFitnessPal sets neither client_record_id nor
+        # dedupe_hash, so nothing links the two. Upserting by uuid
+        # alone therefore keeps both generations and sums them -- on
+        # a real account, one 1713 kcal day had become 6854 kcal
+        # across 16 rows, and yesterday's protein read 11.8 g.
+        regen_conn = db.connect(tmp / "regen.db")
+        db.init_db(regen_conn)
+        regen_uid = db.create_user(regen_conn, "regen", "password1234")
+
+        def _nutrition_export(path: Path, uuid_byte: bytes) -> Path:
+            export = sqlite3.connect(path)
+            export.executescript(_SELFCHECK_SCHEMA)
+            export.execute(
+                "INSERT INTO nutrition_record_table VALUES "
+                "(?, ?, 3600, ?, 1, 452825.0, 18.4, 71.1, 12.7, 14)",
+                (uuid_byte * 16, t0, t0 + 60_000),
+            )
+            # A weigh-in too, so reconciliation actually runs against
+            # the weight table -- that is where Garmin's own rows live
+            # and the check below would pass vacuously without it.
+            export.execute(
+                "INSERT INTO weight_record_table VALUES (?, ?, 3600, ?)",
+                (uuid_byte * 8 + b"\xff" * 8, t0, 89250.0),
+            )
+            export.commit()
+            export.close()
+            return path
+
+        first = _nutrition_export(tmp / "regen_1.db", b"\x20")
+        second = _nutrition_export(tmp / "regen_2.db", b"\x21")
+        parse_and_upsert(first, regen_conn, regen_uid)
+        parse_and_upsert(second, regen_conn, regen_uid)
+        regen = regen_conn.execute(
+            "SELECT COUNT(*) AS n, SUM(calories) AS kcal FROM nutrition "
+            "WHERE user_id = ?", (regen_uid,),
+        ).fetchone()
+        assert regen["n"] == 1, dict(regen)
+        assert round(regen["kcal"]) == 453, dict(regen)
+
+        # Only the export's own window is authoritative. A day it
+        # does not reach -- Health Connect's retention having rolled
+        # past it, or simply an older export having gone deeper --
+        # must survive, or every ingest would truncate history to
+        # whatever the phone still holds.
+        regen_conn.execute(
+            "INSERT INTO nutrition (uuid, user_id, start_utc, end_utc, "
+            "local_date, calories) VALUES ('older-day', ?, "
+            "'2020-01-01T08:00:00+00:00', '2020-01-01T09:00:00+00:00', "
+            "'2020-01-01', 600)", (regen_uid,),
+        )
+        # Garmin owns weight/body_fat/lean_body_mass rows in the same
+        # tables and never appears in an export, so reconciliation
+        # must leave its prefix alone rather than deleting it on
+        # every Health Connect run.
+        regen_conn.execute(
+            "INSERT INTO weight (uuid, user_id, time_utc, local_date, kg) "
+            "VALUES ('garmin-weight-1', ?, '2023-11-14T22:13:20+00:00', "
+            "'2023-11-14', 88.7)", (regen_uid,),
+        )
+        regen_conn.commit()
+        parse_and_upsert(second, regen_conn, regen_uid)
+        assert regen_conn.execute(
+            "SELECT COUNT(*) AS n FROM nutrition WHERE user_id = ? AND "
+            "local_date = '2020-01-01'", (regen_uid,),
+        ).fetchone()["n"] == 1
+        assert regen_conn.execute(
+            "SELECT COUNT(*) AS n FROM weight WHERE user_id = ? AND "
+            "uuid = 'garmin-weight-1'", (regen_uid,),
+        ).fetchone()["n"] == 1
 
         print("parse_health_connect.py: all checks passed")
