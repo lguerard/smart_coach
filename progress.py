@@ -489,6 +489,31 @@ _GAP_FIELDS = [
 ]
 
 
+def export_reaches(
+    conn: sqlite3.Connection, user_id: int, table: str, date: str,
+) -> Optional[bool]:
+    """Whether the newest Health Connect export carried ``date``.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        table (str): Ingested table name, as recorded by the parser.
+        date (str): ISO local date.
+
+    Returns:
+        bool | None: True/False once an export has been parsed since
+        coverage tracking existed, None before that -- which is not
+        the same as False and must not be read as one.
+    """
+    row = conn.execute(
+        "SELECT first_date, last_date FROM hc_export_coverage "
+        "WHERE user_id = ? AND table_name = ?", (user_id, table),
+    ).fetchone()
+    if not row:
+        return None
+    return row["first_date"] <= date <= row["last_date"]
+
+
 def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Yesterday's targets vs what was actually logged, for the coach.
 
@@ -525,9 +550,16 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         for actual_key, target_key in _GAP_FIELDS
         if actual_key in actual and target_key in targets
     }
+    # Distinct from the heuristic below: this one is a fact. The
+    # export either reached that date or it did not, and when it did
+    # not, the emptiness says nothing at all about what was eaten.
+    missing = export_reaches(conn, user_id, "nutrition", yesterday) is False
     return {
         "date": yesterday, "targets": targets, "actual": actual, "gap": gap,
-        "log_looks_incomplete": _log_looks_incomplete(actual, targets),
+        "data_missing": missing,
+        "log_looks_incomplete": (
+            missing or _log_looks_incomplete(actual, targets)
+        ),
     }
 
 
@@ -567,7 +599,7 @@ NUDGE_HYDRATION_MIN_ML = 200
 NUDGE_CALORIE_SURPLUS_MIN_KCAL = 100
 
 
-def format_nutrition_nudge(gap: dict, language: str = "fr") -> str:
+def format_nutrition_nudge(nutrition: dict, language: str = "fr") -> str:
     """One-line nutrition/hydration reminder for the calendar event.
 
     Deterministic (no LLM call) so the calendar update in the morning
@@ -575,15 +607,23 @@ def format_nutrition_nudge(gap: dict, language: str = "fr") -> str:
     the same gap numbers the LLM message narrates around.
 
     Parameters:
-        gap (dict): ``nutrition_gap(...)["gap"]``.
+        nutrition (dict): ``nutrition_gap(...)`` output -- the whole
+            dict, not just its ``gap``. A shortfall measured against
+            a day the export never carried is not a shortfall, and
+            telling someone to eat 120 g of protein they already ate
+            is worse than saying nothing.
         language (str): "fr" or "en".
 
     Returns:
         str: A short line, or "" if nothing is worth flagging (no
-        data, or everything's within threshold).
+        data, an unusable food log, or everything within threshold).
     """
+    gap = nutrition.get("gap") or {}
+    # Hydration survives an unusable food log: it comes from its own
+    # records, and a missing dinner says nothing about what was drunk.
+    food_is_usable = not nutrition.get("log_looks_incomplete")
     parts = []
-    protein_gap = gap.get("protein_g")
+    protein_gap = gap.get("protein_g") if food_is_usable else None
     if protein_gap is not None and protein_gap > NUDGE_PROTEIN_MIN_G:
         parts.append(
             f"+{round(protein_gap)}g proteines" if language == "fr"
@@ -593,7 +633,7 @@ def format_nutrition_nudge(gap: dict, language: str = "fr") -> str:
     if hydration_gap is not None and hydration_gap > NUDGE_HYDRATION_MIN_ML:
         liters = round(hydration_gap / 1000, 1)
         parts.append(f"{liters}L d'eau" if language == "fr" else f"{liters}L water")
-    calorie_gap = gap.get("calories_kcal")
+    calorie_gap = gap.get("calories_kcal") if food_is_usable else None
     if calorie_gap is not None and calorie_gap < -NUDGE_CALORIE_SURPLUS_MIN_KCAL:
         over = abs(round(calorie_gap))
         parts.append(
@@ -975,15 +1015,61 @@ if __name__ == "__main__":
     conn.commit()
     assert nutrition_gap(conn, uid, end_date)["log_looks_incomplete"] is True
 
+    # Until an export has been parsed there is no coverage on record,
+    # and "we don't know" must not be reported as "the day is missing".
+    assert export_reaches(conn, uid, "nutrition", end_date) is None
+    assert nutrition_gap(conn, uid, end_date)["data_missing"] is False
+
+    # Once one has, a day past its last_date is missing as a matter
+    # of fact, not of heuristic -- the athlete's empty log here is
+    # the export stopping short, not a day without food.
+    yesterday = (
+        dt.date.fromisoformat(end_date) - dt.timedelta(days=1)
+    ).isoformat()
+    conn.execute(
+        "INSERT INTO hc_export_coverage (user_id, table_name, "
+        "first_date, last_date, observed_at) VALUES (?, 'nutrition', "
+        "?, ?, '2026-07-28T04:00:00+00:00')",
+        (uid, base.isoformat(),
+         (dt.date.fromisoformat(yesterday) - dt.timedelta(days=2)).isoformat()),
+    )
+    conn.commit()
+    assert export_reaches(conn, uid, "nutrition", yesterday) is False
+    stale = nutrition_gap(conn, uid, end_date)
+    assert stale["data_missing"] is True, stale
+    assert stale["log_looks_incomplete"] is True, stale
+    # A day the export did reach is judged on its contents as before.
+    assert export_reaches(conn, uid, "nutrition", base.isoformat()) is True
+    conn.execute(
+        "UPDATE hc_export_coverage SET last_date = ? WHERE user_id = ?",
+        (end_date, uid),
+    )
+    conn.commit()
+    assert nutrition_gap(conn, uid, end_date)["data_missing"] is False
+
     # This scenario's protein gap (~2.7g) is below the nudge threshold
     # (by design -- not every tiny miss is worth a calendar nudge);
     # hydration and calories are the ones that should surface here.
-    nudge_fr = format_nutrition_nudge(gap["gap"], "fr")
+    nudge_fr = format_nutrition_nudge(gap, "fr")
     assert "eau" in nudge_fr and "kcal" in nudge_fr, nudge_fr
-    nudge_en = format_nutrition_nudge(gap["gap"], "en")
+    nudge_en = format_nutrition_nudge(gap, "en")
     assert "water" in nudge_en and "kcal" in nudge_en, nudge_en
     assert format_nutrition_nudge({}, "fr") == ""
-    assert format_nutrition_nudge({"protein_g": 2}, "fr") == ""  # under threshold
+    # Under threshold.
+    assert format_nutrition_nudge({"gap": {"protein_g": 2}}, "fr") == ""
+
+    # An unusable food log silences the food half of the nudge -- a
+    # calendar entry telling the athlete to eat 120g of protein they
+    # already ate is worse than no entry -- while hydration, which
+    # comes from its own records, still surfaces.
+    unusable = {
+        "gap": {"protein_g": 120, "calories_kcal": -800, "hydration_ml": 900},
+        "log_looks_incomplete": True,
+    }
+    unusable_nudge = format_nutrition_nudge(unusable, "fr")
+    assert "proteines" not in unusable_nudge, unusable_nudge
+    assert "kcal" not in unusable_nudge, unusable_nudge
+    assert "eau" in unusable_nudge, unusable_nudge
 
     # Recalibration: actual rate (~-0.18kg/wk, weight barely moved
     # after day 14) is well short of the -0.4kg/wk target -> flagged,

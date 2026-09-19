@@ -459,6 +459,20 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_ingest_runs_user ON ingest_runs(user_id);
 
+-- Which days the latest Health Connect export actually reached, per
+-- table. Without this, a day the export never covered and a day the
+-- athlete genuinely ate nothing are the same thing here -- zero rows
+-- -- and the coach reads the second meaning off the first, telling
+-- someone who ate normally that they were 1200 kcal short.
+CREATE TABLE IF NOT EXISTS hc_export_coverage (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    table_name TEXT NOT NULL,
+    first_date TEXT NOT NULL,
+    last_date TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, table_name)
+);
+
 -- How the session actually felt, asked the evening after it.
 -- The leveling loop was open until this table existed: levels moved on
 -- the MORNING's readiness alone and never learned whether the session

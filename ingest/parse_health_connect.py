@@ -347,9 +347,25 @@ def _reconcile(
         table (str): Target table name.
         uuids (list[str]): Every uuid this export supplied.
         dates (list[str]): Their local dates, defining the window.
+
+    The window is also recorded in ``hc_export_coverage``, since
+    "this export reached the 17th" and "there were no meals on the
+    18th" are otherwise the same absence of rows, and the coach has
+    no way to tell a missing day from an empty one.
     """
     if not uuids:
         return
+    first, last = min(dates), max(dates)
+    conn.execute(
+        "INSERT INTO hc_export_coverage (user_id, table_name, "
+        "first_date, last_date, observed_at) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(user_id, table_name) DO UPDATE SET "
+        "first_date = excluded.first_date, "
+        "last_date = excluded.last_date, "
+        "observed_at = excluded.observed_at",
+        (user_id, table, first, last,
+         dt.datetime.now(dt.timezone.utc).isoformat()),
+    )
     conn.execute(
         "CREATE TEMP TABLE IF NOT EXISTS _exported_uuids "
         "(uuid TEXT PRIMARY KEY)"
@@ -364,7 +380,7 @@ def _reconcile(
         f"AND local_date BETWEEN ? AND ? "
         f"AND uuid NOT LIKE '{GARMIN_UUID_PREFIX}%' "
         f"AND uuid NOT IN (SELECT uuid FROM _exported_uuids)",
-        (user_id, min(dates), max(dates)),
+        (user_id, first, last),
     )
 
 
@@ -1054,6 +1070,16 @@ if __name__ == "__main__":
         ).fetchone()
         assert regen["n"] == 1, dict(regen)
         assert round(regen["kcal"]) == 453, dict(regen)
+
+        # The span the export reached is recorded, so a later day
+        # with no rows can be told apart from a day without food.
+        coverage = regen_conn.execute(
+            "SELECT first_date, last_date FROM hc_export_coverage "
+            "WHERE user_id = ? AND table_name = 'nutrition'", (regen_uid,),
+        ).fetchone()
+        exported_day = _local_date(t0, 3600)
+        assert coverage["first_date"] == exported_day, dict(coverage)
+        assert coverage["last_date"] == exported_day, dict(coverage)
 
         # Only the export's own window is authoritative. A day it
         # does not reach -- Health Connect's retention having rolled

@@ -107,7 +107,7 @@ def run_for_user(conn, user: dict) -> None:
         # nutrition/hydration nudge (no LLM call, so it's never blocked
         # on or delayed by the coaching-message step below).
         nudge = progress.format_nutrition_nudge(
-            weekly["nutrition_yesterday"]["gap"], language,
+            weekly["nutrition_yesterday"], language,
         )
         calendar_description = f"{description}\n{nudge}" if nudge else description
         calendar_name = db.get_setting(conn, user_id, "calendar_name")
