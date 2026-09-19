@@ -16,6 +16,8 @@ import sqlite3
 from typing import Optional
 
 import db
+import metrics
+from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
 
 # Tunable thresholds -- starting points, same "retune against real
 # weeks" posture as training.py's constants.
@@ -505,6 +507,259 @@ _GAP_FIELDS = [
 ]
 
 
+def _slope_per_week(points: list[tuple[str, float]]) -> Optional[float]:
+    """Least-squares change per week across dated values.
+
+    Preferred over subtracting the first reading from the last: the
+    endpoints are exactly the two most easily distorted points in a
+    noisy series (one heavy dinner, one dehydrated morning), and a
+    fit over every point in between is what makes "you are losing
+    0.34 kg a week" a statement about the body rather than about two
+    particular mornings.
+
+    Parameters:
+        points (list[tuple[str, float]]): (ISO date, value), any order.
+
+    Returns:
+        float | None: Change per week, or None with fewer than two
+        distinct dates (a slope through one point is not a slope).
+    """
+    if len(points) < 2:
+        return None
+    origin = dt.date.fromisoformat(min(date for date, _ in points))
+    days = [
+        (dt.date.fromisoformat(date) - origin).days for date, _ in points
+    ]
+    values = [value for _, value in points]
+    n = len(points)
+    mean_day = sum(days) / n
+    mean_value = sum(values) / n
+    variance = sum((day - mean_day) ** 2 for day in days)
+    if variance == 0:  # every reading on the same date
+        return None
+    covariance = sum(
+        (day - mean_day) * (value - mean_value)
+        for day, value in zip(days, values)
+    )
+    return round(covariance / variance * 7, 3)
+
+
+def _daily_series(
+    conn: sqlite3.Connection, user_id: int, table: str, value_col: str,
+    start: str, end: str,
+) -> list[tuple[str, float]]:
+    """One value per date for a weight-shaped table, oldest first.
+
+    Averaged within the date for the same reason the trend halves
+    are (see :func:`_weight_like_trend`): these tables are
+    multi-source and a day can carry two readings.
+    """
+    return [
+        (row["local_date"], row["value"])
+        for row in conn.execute(
+            f"SELECT local_date, AVG({value_col}) AS value FROM {table} "
+            "WHERE user_id = ? AND local_date BETWEEN ? AND ? "
+            "GROUP BY local_date ORDER BY local_date",
+            (user_id, start, end),
+        )
+    ]
+
+
+def point_progression(
+    conn: sqlite3.Connection, user_id: int, table: str, value_col: str,
+    date: str, days: int = 28,
+) -> dict:
+    """Both readings of change a measurement series supports.
+
+    A number can move in two senses at once, and conflating them is
+    how a coach ends up saying the opposite of what is happening:
+    the step from the last measurement to this one ("+0.4 kg since
+    Tuesday", which on a bathroom scale is mostly water and food in
+    transit) and the direction across the window ("-0.34 kg a week
+    over 28 days", which is the body). Reported separately, a heavy
+    morning inside a steady loss reads as exactly that.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        table (str): ``weight``, ``body_fat`` or ``lean_body_mass``.
+        value_col (str): That table's value column.
+        date (str): ISO local date, window end.
+        days (int): Trailing window length for the slope.
+
+    Returns:
+        dict: ``latest`` and ``previous`` (each ``date``/``value``),
+        ``change`` and ``days_between`` between those two, plus
+        ``per_week`` and ``readings`` over the window. Keys are
+        omitted rather than faked when the data cannot support them:
+        one reading yields ``latest`` alone, none yields ``{}``.
+    """
+    start = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=days - 1)
+    ).isoformat()
+    series = _daily_series(conn, user_id, table, value_col, start, date)
+    if not series:
+        return {}
+    result: dict = {
+        "latest": {"date": series[-1][0], "value": round(series[-1][1], 2)},
+        "readings": len(series),
+        "window_days": days,
+    }
+    per_week = _slope_per_week(series)
+    if per_week is not None:
+        result["per_week"] = per_week
+    if len(series) < 2:
+        return result
+    previous_date, previous_value = series[-2]
+    result["previous"] = {
+        "date": previous_date, "value": round(previous_value, 2),
+    }
+    result["change"] = round(series[-1][1] - previous_value, 2)
+    result["days_between"] = (
+        dt.date.fromisoformat(series[-1][0])
+        - dt.date.fromisoformat(previous_date)
+    ).days
+    return result
+
+
+# Effort fields compared between two sessions of the same kind.
+# Direction is which way counts as progress, so the coach never has
+# to work out whether a smaller number is better: a shorter session
+# is less work, a lower heart rate for the same work is fitter.
+_EFFORT_FIELDS = {
+    "duration_min": "higher_is_more_work",
+    "kcal": "higher_is_more_work",
+    "avg_hr": "lower_is_fitter",
+    "rpe": "lower_is_easier",
+}
+
+
+def _session_effort(
+    conn: sqlite3.Connection, user_id: int, row: sqlite3.Row,
+) -> dict:
+    """One session's comparable effort figures.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        row (sqlite3.Row): An ``exercise_sessions`` row.
+
+    Returns:
+        dict: ``date`` plus whichever of ``duration_min``/``avg_hr``/
+        ``rpe``/``kcal`` this session actually has.
+    """
+    effort = {
+        "date": row["local_date"],
+        "duration_min": metrics.session_duration_min(row),
+    }
+    if row["rpe"] is not None:
+        effort["rpe"] = row["rpe"]
+    hr = conn.execute(
+        "SELECT AVG(bpm) AS avg_hr FROM exercise_hr_samples "
+        "WHERE user_id = ? AND exercise_uuid = ?",
+        (user_id, row["uuid"]),
+    ).fetchone()["avg_hr"]
+    if hr is not None:
+        effort["avg_hr"] = round(hr)
+    kcal = conn.execute(
+        "SELECT SUM(kcal) AS kcal FROM active_calories WHERE "
+        "user_id = ? AND start_utc < ? AND end_utc > ?",
+        (user_id, row["end_utc"], row["start_utc"]),
+    ).fetchone()["kcal"]
+    if kcal is not None:
+        effort["kcal"] = round(kcal)
+    return effort
+
+
+def effort_progression(
+    conn: sqlite3.Connection, user_id: int, date: str, days: int = 90,
+) -> dict:
+    """Per exercise type, the last session against the one before it,
+    and the direction across the window.
+
+    The same two senses as :func:`point_progression`, for training.
+    The prompt used to ask the LLM to do this itself -- "compare
+    tonight's session to the last one of the same type" -- which
+    meant the one comparison progressive overload actually turns on
+    was left to a model reading a list, and could be quietly wrong
+    in either direction. Computing it means the message can say "12
+    min de plus qu'il y a 4 jours, a frequence cardiaque egale"
+    because that is what happened.
+
+    Sessions are grouped by their displayed label, so a manual
+    label_override groups with its corrected type rather than with
+    whatever Garmin guessed.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date, window end.
+        days (int): Trailing window length.
+
+    Returns:
+        dict: One entry per label seen in the window, each with
+        ``latest``, ``sessions`` (count) and ``window_days``, plus
+        ``previous``/``change``/``days_between`` once there are two,
+        and ``per_week`` slopes for the numeric fields. ``change``
+        carries only fields both sessions have, each with its
+        ``direction`` from ``_EFFORT_FIELDS``.
+    """
+    start = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=days - 1)
+    ).isoformat()
+    rows = conn.execute(
+        "SELECT uuid, local_date, start_utc, end_utc, exercise_type, "
+        "label_override, rpe FROM exercise_sessions WHERE user_id = ? "
+        "AND local_date BETWEEN ? AND ? ORDER BY start_utc",
+        (user_id, start, date),
+    ).fetchall()
+
+    by_label: dict[str, list[dict]] = {}
+    for row in rows:
+        label = row["label_override"] or EXERCISE_TYPE_LABELS.get(
+            row["exercise_type"], "other"
+        )
+        by_label.setdefault(label, []).append(
+            _session_effort(conn, user_id, row)
+        )
+
+    progression: dict = {}
+    for label, efforts in by_label.items():
+        entry: dict = {
+            "latest": efforts[-1],
+            "sessions": len(efforts),
+            "window_days": days,
+        }
+        slopes = {}
+        for field in _EFFORT_FIELDS:
+            points = [
+                (effort["date"], float(effort[field]))
+                for effort in efforts if field in effort
+            ]
+            slope = _slope_per_week(points)
+            if slope is not None:
+                slopes[field] = slope
+        if slopes:
+            entry["per_week"] = slopes
+        if len(efforts) >= 2:
+            previous = efforts[-2]
+            entry["previous"] = previous
+            entry["change"] = {
+                field: {
+                    "delta": round(efforts[-1][field] - previous[field], 1),
+                    "direction": direction,
+                }
+                for field, direction in _EFFORT_FIELDS.items()
+                if field in efforts[-1] and field in previous
+            }
+            entry["days_between"] = (
+                dt.date.fromisoformat(efforts[-1]["date"])
+                - dt.date.fromisoformat(previous["date"])
+            ).days
+        progression[label] = entry
+    return progression
+
+
 def remaining_today(
     conn: sqlite3.Connection, user_id: int, date: str,
 ) -> dict:
@@ -828,13 +1083,23 @@ def weekly_progress(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     Returns:
         dict: ``weight_trend_14d``, ``body_fat_trend_28d``,
         ``lean_mass_trend_28d``, ``calorie_balance_7d``,
-        ``protein_7d``, ``plateau``, ``recalibration`` -- empty
-        sub-dicts where there isn't enough data yet.
+        ``protein_7d``, ``plateau``, ``recalibration``, plus
+        ``weight_progression``/``body_fat_progression`` (last
+        reading vs the one before, and the slope across the window)
+        and ``effort_progression`` (the same, per exercise type) --
+        empty sub-dicts where there isn't enough data yet.
     """
     weight = weight_trend(conn, user_id, date)
     calories = calorie_balance_for_range(conn, user_id, date)
     return {
         "weight_trend_14d": weight,
+        "weight_progression": point_progression(
+            conn, user_id, "weight", "kg", date,
+        ),
+        "body_fat_progression": point_progression(
+            conn, user_id, "body_fat", "percentage", date,
+        ),
+        "effort_progression": effort_progression(conn, user_id, date),
         "body_fat_trend_28d": body_fat_trend(conn, user_id, date),
         "lean_mass_trend_28d": lean_mass_trend(conn, user_id, date),
         "calorie_balance_7d": calories,
@@ -1067,6 +1332,111 @@ if __name__ == "__main__":
     )
     conn.commit()
     assert nutrition_gap(conn, uid, end_date)["log_looks_incomplete"] is True
+
+    # Two senses of change at once. The fixture falls 0.05 kg/day
+    # for a fortnight then sits flat, so across the last 28 days the
+    # slope is a real loss while the step from the previous weigh-in
+    # to the latest is zero -- a coach given only one of those two
+    # numbers tells a different story than a coach given both.
+    wprog = point_progression(conn, uid, "weight", "kg", end_date)
+    assert wprog["latest"]["date"] == end_date, wprog
+    assert wprog["readings"] == 28, wprog
+    assert wprog["days_between"] == 1, wprog
+    assert wprog["change"] == 0.0, wprog
+    assert wprog["per_week"] < 0, wprog
+
+    # One reading gives a latest and nothing to compare it against,
+    # rather than a change of zero -- which would read as "stable".
+    single_conn = db.connect(Path(tempfile.mkdtemp()) / "single.db")
+    db.init_db(single_conn)
+    single_uid = db.create_user(single_conn, "single", "password1234")
+    single_conn.execute(
+        "INSERT INTO weight VALUES ('only', ?, ?, ?, 88.0)",
+        (single_uid, f"{end_date}T07:00:00+00:00", end_date),
+    )
+    single_conn.commit()
+    single = point_progression(single_conn, single_uid, "weight", "kg",
+                               end_date)
+    assert single["latest"]["value"] == 88.0, single
+    assert "change" not in single and "per_week" not in single, single
+    assert point_progression(
+        single_conn, single_uid, "body_fat", "percentage", end_date,
+    ) == {}
+
+    # The slope is a fit, not a subtraction of the endpoints: a
+    # single distorted final morning must not flip a steady loss.
+    noisy = [
+        ((base + dt.timedelta(days=i)).isoformat(), 90.0 - 0.1 * i)
+        for i in range(14)
+    ]
+    assert _slope_per_week(noisy) == -0.7, _slope_per_week(noisy)
+    noisy[-1] = (noisy[-1][0], 91.0)  # one heavy morning
+    spiked = _slope_per_week(noisy)
+    assert spiked < 0, spiked  # still a loss, just a shallower one
+    assert (91.0 - 90.0) / 13 * 7 > 0  # endpoints alone would say +0.54
+    assert _slope_per_week([("2026-07-01", 90.0)]) is None
+    assert _slope_per_week(
+        [("2026-07-01", 90.0), ("2026-07-01", 91.0)]
+    ) is None  # same date twice: no time to have a slope over
+
+    # Efforts: the last session of a type against the one before it,
+    # plus the direction across the window.
+    eff_conn = db.connect(Path(tempfile.mkdtemp()) / "effort.db")
+    db.init_db(eff_conn)
+    eff_uid = db.create_user(eff_conn, "effort", "password1234")
+    for i, (day, minutes, hr) in enumerate((
+        (0, 30, 150), (7, 35, 148), (14, 42, 145),
+    )):
+        day_date = (base + dt.timedelta(days=day)).isoformat()
+        start_utc = f"{day_date}T18:00:00+00:00"
+        end_utc = (
+            dt.datetime.fromisoformat(start_utc)
+            + dt.timedelta(minutes=minutes)
+        ).isoformat()
+        eff_conn.execute(
+            "INSERT INTO exercise_sessions (uuid, user_id, start_utc, "
+            "end_utc, local_date, exercise_type, rpe) "
+            "VALUES (?, ?, ?, ?, ?, 57, ?)",
+            (f"s{i}", eff_uid, start_utc, end_utc, day_date, 7 - i * 0.5),
+        )
+        eff_conn.executemany(
+            "INSERT INTO exercise_hr_samples VALUES (?, ?, ?, ?)",
+            # Straddle the intended mean so avg_hr lands on it
+            # exactly, rather than on a rounded half-beat.
+            [(f"s{i}", eff_uid, f"{day_date}T18:0{n}:00+00:00",
+              hr - 1 + 2 * n) for n in range(2)],
+        )
+    eff_conn.commit()
+    efforts = effort_progression(
+        eff_conn, eff_uid, (base + dt.timedelta(days=14)).isoformat(),
+    )
+    treadmill = efforts["running_treadmill"]
+    assert treadmill["sessions"] == 3, treadmill
+    assert treadmill["latest"]["duration_min"] == 42, treadmill
+    assert treadmill["previous"]["duration_min"] == 35, treadmill
+    assert treadmill["days_between"] == 7, treadmill
+    # Longer AND easier: more work at a lower heart rate and a lower
+    # RPE, which is the shape progressive overload is supposed to have.
+    assert treadmill["change"]["duration_min"]["delta"] == 7, treadmill
+    assert treadmill["change"]["avg_hr"]["delta"] == -3, treadmill
+    assert treadmill["change"]["rpe"]["delta"] == -0.5, treadmill
+    assert treadmill["change"]["avg_hr"]["direction"] == "lower_is_fitter"
+    assert treadmill["per_week"]["duration_min"] == 6.0, treadmill
+    assert treadmill["per_week"]["avg_hr"] == -2.5, treadmill
+
+    # A label_override groups with the corrected type, not with
+    # whatever Garmin guessed.
+    eff_conn.execute(
+        "UPDATE exercise_sessions SET label_override = 'natation' "
+        "WHERE uuid = 's2'",
+    )
+    eff_conn.commit()
+    relabelled = effort_progression(
+        eff_conn, eff_uid, (base + dt.timedelta(days=14)).isoformat(),
+    )
+    assert relabelled["natation"]["sessions"] == 1, relabelled
+    assert relabelled["running_treadmill"]["sessions"] == 2, relabelled
+    assert "change" not in relabelled["natation"], relabelled
 
     # What is left to eat today, precomputed so the message never
     # has to subtract. The fixture logs 1900 kcal / 140 g protein on

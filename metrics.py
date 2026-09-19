@@ -725,7 +725,7 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     return {k: v for k, v in wellness.items() if v is not None}
 
 
-def _session_duration_min(row: sqlite3.Row) -> int:
+def session_duration_min(row: sqlite3.Row) -> int:
     """Whole minutes between a session row's start/end timestamps."""
     start = dt.datetime.fromisoformat(row["start_utc"])
     end = dt.datetime.fromisoformat(row["end_utc"])
@@ -889,7 +889,7 @@ def history_snapshot(
             "label": row["label_override"] or EXERCISE_TYPE_LABELS.get(
                 row["exercise_type"], "other"
             ),
-            "duration_min": _session_duration_min(row),
+            "duration_min": session_duration_min(row),
         }
         if row["rpe"] is not None:
             item["rpe"] = row["rpe"]
@@ -925,7 +925,7 @@ def history_snapshot(
     for row in sessions:
         done_min[row["local_date"]] = (
             done_min.get(row["local_date"], 0)
-            + _session_duration_min(row)
+            + session_duration_min(row)
         )
     adherence = [
         {
