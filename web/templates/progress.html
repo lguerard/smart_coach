@@ -18,11 +18,27 @@
 </div>
 {% endif %}
 
-{% set gap = bundle.nutrition_yesterday.gap %}
+{% set nutrition_y = bundle.nutrition_yesterday %}
+{% set gap = nutrition_y.gap %}
 {% if gap %}
 <div class="card p-4">
   <h2 class="font-semibold text-sm mb-2">Nutrition d'hier vs objectif</h2>
+  {# A gap measured against a day the export never carried, or one
+     logged too thinly to believe, is not a deficit -- say so instead
+     of colouring it red. Hydration keeps its own row either way: it
+     comes from its own records. #}
+  {% if nutrition_y.data_missing %}
+  <p class="text-sm mb-2" style="color: var(--muted);">
+    L'export du telephone ne couvre pas cette journee : donnees
+    manquantes, pas un jeune.
+  </p>
+  {% elif nutrition_y.log_looks_incomplete %}
+  <p class="text-sm mb-2" style="color: var(--muted);">
+    Journal d'hier trop incomplet pour en tirer un ecart fiable.
+  </p>
+  {% endif %}
   <div class="grid grid-cols-2 gap-2 text-sm">
+    {% if not nutrition_y.log_looks_incomplete %}
     {% if gap.calories_kcal is defined %}
     <div class="flex justify-between"><span style="color: var(--muted);">Calories</span>
       <span class="font-medium" style="color: {{ 'var(--critical)' if gap.calories_kcal < 0 else 'var(--text-primary)' }};">{{ '%+.0f'|format(-gap.calories_kcal) }} kcal</span></div>
@@ -31,11 +47,12 @@
     <div class="flex justify-between"><span style="color: var(--muted);">Proteines</span>
       <span class="font-medium" style="color: {{ 'var(--critical)' if gap.protein_g > 15 else 'var(--good)' }};">{{ '%+.0f'|format(-gap.protein_g) }} g</span></div>
     {% endif %}
+    {% endif %}
     {% if gap.hydration_ml is defined %}
     <div class="flex justify-between"><span style="color: var(--muted);">Hydratation</span>
       <span class="font-medium" style="color: {{ 'var(--critical)' if gap.hydration_ml > 300 else 'var(--good)' }};">{{ '%+.0f'|format(-gap.hydration_ml) }} ml</span></div>
     {% endif %}
-    {% if gap.fat_g is defined %}
+    {% if gap.fat_g is defined and not nutrition_y.log_looks_incomplete %}
     <div class="flex justify-between"><span style="color: var(--muted);">Lipides</span>
       <span class="font-medium">{{ '%+.0f'|format(-gap.fat_g) }} g</span></div>
     {% endif %}
@@ -52,6 +69,11 @@
     </p>
     <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if bundle.weight_trend_14d.delta < 0 else 'var(--text-secondary)' }};">
       {{ '%+.2f'|format(bundle.weight_trend_14d.delta) }} kg vs 14j precedents
+    </p>
+    {# Two readings a fortnight apart look identical to fourteen here
+       without this line. #}
+    <p class="text-xs mt-0.5" style="color: var(--muted);">
+      {{ bundle.weight_trend_14d.current_days }}+{{ bundle.weight_trend_14d.past_days }} jours peses
     </p>
     {% else %}
     <p class="text-sm mt-1" style="color: var(--muted);">Pas assez de donnees</p>
