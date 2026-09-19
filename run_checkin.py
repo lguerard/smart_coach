@@ -219,8 +219,8 @@ if __name__ == "__main__":
         start = dt.datetime.combine(night, dt.time(23, 0))
         end = start + dt.timedelta(hours=hours)
         conn.execute(
-            "INSERT INTO sleep_sessions VALUES (?, ?, ?, ?, ?, NULL, "
-            "NULL)",
+            "INSERT INTO sleep_sessions (uuid, user_id, start_utc, "
+            "end_utc, local_date) VALUES (?, ?, ?, ?, ?)",
             (
                 f"night{day_offset}", uid, start.isoformat() + "+00:00",
                 end.isoformat() + "+00:00", night.isoformat(),
