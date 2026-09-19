@@ -190,6 +190,10 @@ def run_for_user(conn, user: dict) -> None:
         "weekly_progress": weekly,
         "today_session": today_session,
         "today_targets": progress.macro_targets(conn, user_id, today),
+        # Precomputed rather than left to the LLM: the message quotes
+        # what is LEFT to eat today, and this project never asks the
+        # model to do arithmetic on figures it is meant to repeat.
+        "today_remaining": progress.remaining_today(conn, user_id, today),
         **({"weather_today": weather_today} if weather_today else {}),
         **metrics.history_snapshot(conn, user_id, today),
     }

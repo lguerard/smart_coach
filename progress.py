@@ -442,28 +442,30 @@ def format_plan_header(targets: dict, language: str) -> str:
     return f"{label}: " + " - ".join(parts)
 
 
-def yesterday_intake(
-    conn: sqlite3.Connection, user_id: int, date: str,
+def intake_for_date(
+    conn: sqlite3.Connection, user_id: int, day: str,
 ) -> dict:
-    """What was actually logged the day before ``date``.
+    """What was logged on one local date.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        day (str): ISO local date.
 
     Returns:
         dict: ``calories_kcal``/``protein_g``/``carbs_g``/``fat_g``
-        (only if nutrition was logged) and ``hydration_ml`` (only if
-        hydration was logged), for yesterday.
+        plus ``entries`` (only if nutrition was logged) and
+        ``hydration_ml`` (only if hydration was logged).
     """
-    yesterday = (
-        dt.date.fromisoformat(date) - dt.timedelta(days=1)
-    ).isoformat()
     row = conn.execute(
         "SELECT SUM(calories) AS calories, SUM(protein_g) AS protein_g, "
         "SUM(carbs_g) AS carbs_g, SUM(fat_g) AS fat_g, "
         "COUNT(*) AS entries FROM nutrition "
-        "WHERE user_id = ? AND local_date = ?", (user_id, yesterday),
+        "WHERE user_id = ? AND local_date = ?", (user_id, day),
     ).fetchone()
     hydration = conn.execute(
         "SELECT SUM(volume_ml) AS total FROM hydration WHERE "
-        "user_id = ? AND local_date = ?", (user_id, yesterday),
+        "user_id = ? AND local_date = ?", (user_id, day),
     ).fetchone()["total"]
 
     result: dict = {}
@@ -480,6 +482,20 @@ def yesterday_intake(
     return result
 
 
+def yesterday_intake(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict:
+    """What was actually logged the day before ``date``.
+
+    Returns:
+        dict: :func:`intake_for_date` for yesterday.
+    """
+    return intake_for_date(
+        conn, user_id,
+        (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat(),
+    )
+
+
 _GAP_FIELDS = [
     ("calories_kcal", "calorie_target_kcal"),
     ("protein_g", "protein_target_g"),
@@ -487,6 +503,43 @@ _GAP_FIELDS = [
     ("carbs_g", "carb_target_g"),
     ("hydration_ml", "hydration_target_ml"),
 ]
+
+
+def remaining_today(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict:
+    """Today's budget minus what has already been logged today.
+
+    The prompt used to ask the LLM for this subtraction, which is
+    the one thing this project deliberately never does: every figure
+    the message quotes is computed here, so it cannot drift. It also
+    made the advice vaguer than the data allowed -- "il te reste 1400
+    kcal et 96 g de proteines" is actionable in a way that "vise 2100
+    kcal" stops being the moment breakfast is logged.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date (today).
+
+    Returns:
+        dict: ``date``, ``targets``, ``logged`` (so far today) and
+        ``remaining`` (target minus logged). Negative values are kept
+        rather than floored -- an overshot budget is exactly what the
+        message needs to say. ``remaining`` is empty when there are
+        no targets to subtract from.
+    """
+    targets = macro_targets(conn, user_id, date)
+    logged = intake_for_date(conn, user_id, date)
+    remaining = {
+        actual_key: round(targets[target_key] - logged.get(actual_key, 0), 1)
+        for actual_key, target_key in _GAP_FIELDS
+        if target_key in targets
+    }
+    return {
+        "date": date, "targets": targets, "logged": logged,
+        "remaining": remaining,
+    }
 
 
 def export_reaches(
@@ -1014,6 +1067,37 @@ if __name__ == "__main__":
     )
     conn.commit()
     assert nutrition_gap(conn, uid, end_date)["log_looks_incomplete"] is True
+
+    # What is left to eat today, precomputed so the message never
+    # has to subtract. The fixture logs 1900 kcal / 140 g protein on
+    # end_date against a 1700 kcal / 143 g budget, so calories come
+    # back negative -- kept, not floored, because "200 kcal over" is
+    # the thing worth saying -- while protein still has 3 g to go.
+    remaining = remaining_today(conn, uid, end_date)
+    assert remaining["logged"]["calories_kcal"] == 1900, remaining
+    assert remaining["remaining"]["calories_kcal"] == -200, remaining
+    assert remaining["remaining"]["protein_g"] == 3.0, remaining
+    # Nothing drunk yet today: the whole hydration budget is open.
+    assert (
+        remaining["remaining"]["hydration_ml"]
+        == remaining["targets"]["hydration_target_ml"]
+    ), remaining
+
+    # Logging more shrinks the remainder by exactly that much.
+    conn.execute(
+        "INSERT INTO nutrition VALUES "
+        "(?, ?, ?, ?, ?, NULL, 300, 25, 20, 10)",
+        ("today-snack", uid, f"{end_date}T16:00:00+00:00",
+         f"{end_date}T16:30:00+00:00", end_date),
+    )
+    conn.commit()
+    after = remaining_today(conn, uid, end_date)
+    assert after["logged"]["calories_kcal"] == 2200, after
+    assert after["remaining"]["calories_kcal"] == -500, after
+    assert after["remaining"]["protein_g"] == -22.0, after
+    conn.execute("DELETE FROM nutrition WHERE uuid = 'today-snack'")
+    conn.commit()
+    assert remaining_today(conn, uid, end_date) == remaining
 
     # Until an export has been parsed there is no coverage on record,
     # and "we don't know" must not be reported as "the day is missing".
