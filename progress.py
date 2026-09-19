@@ -445,7 +445,8 @@ def yesterday_intake(
     ).isoformat()
     row = conn.execute(
         "SELECT SUM(calories) AS calories, SUM(protein_g) AS protein_g, "
-        "SUM(carbs_g) AS carbs_g, SUM(fat_g) AS fat_g FROM nutrition "
+        "SUM(carbs_g) AS carbs_g, SUM(fat_g) AS fat_g, "
+        "COUNT(*) AS entries FROM nutrition "
         "WHERE user_id = ? AND local_date = ?", (user_id, yesterday),
     ).fetchone()
     hydration = conn.execute(
@@ -460,6 +461,7 @@ def yesterday_intake(
             protein_g=round(row["protein_g"] or 0, 1),
             carbs_g=round(row["carbs_g"] or 0, 1),
             fat_g=round(row["fat_g"] or 0, 1),
+            entries=row["entries"],
         )
     if hydration is not None:
         result["hydration_ml"] = round(hydration)
@@ -485,7 +487,21 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     Returns:
         dict: ``targets``, ``actual``, ``gap`` (target minus actual,
         positive = still short, negative = exceeded; only for fields
-        present in both), ``date`` (yesterday's date).
+        present in both), ``date`` (yesterday's date), and
+        ``log_looks_incomplete`` -- see below.
+
+    The gap is only as good as the logging behind it, and food
+    logging reaches this database through a chain (the logging app ->
+    Health Connect -> the phone's nightly export) that drops entries
+    routinely: on a real account only 5 of 30 days had any nutrition
+    row at all, and a day the app itself showed as 1713 kcal arrived
+    here as 1043 with the evening meal missing. A day like that is
+    indistinguishable, in the numbers, from genuinely not eating --
+    so the gap comes back saying the athlete was 1282 kcal and 149 g
+    of protein short, and advice built on it tells them to eat a
+    dinner they already ate. ``log_looks_incomplete`` marks the days
+    where that reading is not credible, so the message can say the
+    log looks partial rather than inventing a deficit.
     """
     yesterday = (
         dt.date.fromisoformat(date) - dt.timedelta(days=1)
@@ -499,7 +515,35 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     }
     return {
         "date": yesterday, "targets": targets, "actual": actual, "gap": gap,
+        "log_looks_incomplete": _log_looks_incomplete(actual, targets),
     }
+
+
+# Below this share of the calorie target, a day reads as "barely
+# logged" rather than "barely eaten". Someone genuinely under-eating
+# still lands well above it, so the flag costs little when wrong: the
+# message only softens from a firm deficit to a caveated one.
+_LOGGED_ENOUGH_RATIO = 0.5
+
+
+def _log_looks_incomplete(actual: dict, targets: dict) -> bool:
+    """Whether yesterday's food log is too sparse to draw a gap from.
+
+    Parameters:
+        actual (dict): ``yesterday_intake`` output.
+        targets (dict): ``macro_targets`` output.
+
+    Returns:
+        bool: True when nothing was logged, or so little that missing
+        entries explain it better than the athlete's day does.
+    """
+    logged = actual.get("calories_kcal")
+    if not actual.get("entries") or logged is None:
+        return True
+    target = targets.get("calorie_target_kcal")
+    if not target:
+        return logged <= 0
+    return logged < _LOGGED_ENOUGH_RATIO * target
 
 
 # Thresholds below which a gap isn't worth nudging about on the
@@ -815,6 +859,39 @@ if __name__ == "__main__":
     assert "hydration_ml" in gap["gap"]
     assert "calories_kcal" in gap["gap"]  # calorie target now derivable
     assert weekly_progress(conn, uid, end_date)["nutrition_yesterday"] == gap
+    # 1900 kcal logged against a ~2400 target: a real day's eating,
+    # so the gap stands as a gap.
+    assert gap["log_looks_incomplete"] is False, gap
+
+    # The failure mode this guards, with the numbers that produced it:
+    # the tracking app showed 1713 kcal for the day, only 1043 of it
+    # reached Health Connect, and a later day arrived with a couple of
+    # stray entries. Reported as a deficit, that becomes "149g of
+    # protein short" and a prescription to eat a dinner already eaten.
+    sparse_day = (base + dt.timedelta(days=26)).isoformat()
+    conn.execute(
+        "DELETE FROM nutrition WHERE user_id = ? AND local_date = ?",
+        (uid, sparse_day),
+    )
+    conn.execute(
+        "INSERT INTO nutrition (uuid, user_id, start_utc, end_utc, "
+        "local_date, calories, protein_g, carbs_g, fat_g) VALUES "
+        "('sparse', ?, ?, ?, ?, 120, 11.8, 4, 3)",
+        (uid, f"{sparse_day}T08:00:00+00:00",
+         f"{sparse_day}T08:30:00+00:00", sparse_day),
+    )
+    conn.commit()
+    sparse = nutrition_gap(conn, uid, end_date)
+    assert sparse["log_looks_incomplete"] is True, sparse
+    assert sparse["actual"]["entries"] == 1, sparse
+
+    # A day with nothing at all is the same story, not a perfect fast.
+    conn.execute(
+        "DELETE FROM nutrition WHERE user_id = ? AND local_date = ?",
+        (uid, sparse_day),
+    )
+    conn.commit()
+    assert nutrition_gap(conn, uid, end_date)["log_looks_incomplete"] is True
 
     # This scenario's protein gap (~2.7g) is below the nudge threshold
     # (by design -- not every tiny miss is worth a calendar nudge);
