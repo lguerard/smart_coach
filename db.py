@@ -215,6 +215,26 @@ CREATE TABLE IF NOT EXISTS garmin_stress (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- Garmin Connect's own daily hydration total (usersummary-service
+-- hydration/daily), logged via the Garmin Connect app or a watch
+-- widget. Kept separate from the Health-Connect-derived `hydration`
+-- table on purpose: that one is summed across every row for the
+-- day, and a second, independent per-day total sharing that table
+-- would double the day's water rather than replace it. Reconciled
+-- at read time instead -- see metrics.daily_wellness and
+-- progress.intake_for_date -- with Garmin preferred when present,
+-- since it is why this table exists: MyFitnessPal's water total
+-- reaches the Health Connect export a day later than its meals do,
+-- confirmed structural across exports days apart, while Garmin's
+-- API returns a completed day's true total the moment it is asked,
+-- no export snapshot in between.
+CREATE TABLE IF NOT EXISTS garmin_hydration (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    volume_ml REAL,
+    PRIMARY KEY (user_id, local_date)
+);
+
 -- Garmin's own whole-day rollup (get_stats). Its field names are the
 -- one set the client library models explicitly (garminconnect.typed
 -- .DailyStats), so unlike the undocumented endpoints below these are

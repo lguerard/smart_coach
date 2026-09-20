@@ -444,6 +444,35 @@ def format_plan_header(targets: dict, language: str) -> str:
     return f"{label}: " + " - ".join(parts)
 
 
+def garmin_hydration_for_date(
+    conn: sqlite3.Connection, user_id: int, day: str,
+) -> Optional[float]:
+    """Garmin Connect's own hydration total for a date, if logged.
+
+    Kept as its own lookup rather than folded into the HC-derived
+    ``hydration`` table (ingest/garmin_api.py explains why) and
+    checked ahead of it wherever hydration is read: unlike Health
+    Connect's MyFitnessPal-sourced total, which reaches the export a
+    full day after that day's meals do, Garmin's API answers for
+    ``day`` as it currently stands, no export snapshot in between --
+    so when this has a value, none of the missing/fallback handling
+    built for the Health Connect path applies at all.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        day (str): ISO local date.
+
+    Returns:
+        float | None: Millilitres, or None if Garmin has no reading.
+    """
+    row = conn.execute(
+        "SELECT volume_ml FROM garmin_hydration WHERE user_id = ? "
+        "AND local_date = ?", (user_id, day),
+    ).fetchone()
+    return row["volume_ml"] if row and row["volume_ml"] is not None else None
+
+
 def intake_for_date(
     conn: sqlite3.Connection, user_id: int, day: str,
 ) -> dict:
@@ -457,7 +486,8 @@ def intake_for_date(
     Returns:
         dict: ``calories_kcal``/``protein_g``/``carbs_g``/``fat_g``
         plus ``entries`` (only if nutrition was logged) and
-        ``hydration_ml`` (only if hydration was logged).
+        ``hydration_ml`` (only if hydration was logged from either
+        source -- see :func:`garmin_hydration_for_date`).
     """
     row = conn.execute(
         "SELECT SUM(calories) AS calories, SUM(protein_g) AS protein_g, "
@@ -465,10 +495,6 @@ def intake_for_date(
         "COUNT(*) AS entries FROM nutrition "
         "WHERE user_id = ? AND local_date = ?", (user_id, day),
     ).fetchone()
-    hydration = conn.execute(
-        "SELECT SUM(volume_ml) AS total FROM hydration WHERE "
-        "user_id = ? AND local_date = ?", (user_id, day),
-    ).fetchone()["total"]
 
     result: dict = {}
     if row["calories"] is not None:
@@ -479,8 +505,16 @@ def intake_for_date(
             fat_g=round(row["fat_g"] or 0, 1),
             entries=row["entries"],
         )
-    if hydration is not None:
-        result["hydration_ml"] = round(hydration)
+    garmin_hydration = garmin_hydration_for_date(conn, user_id, day)
+    if garmin_hydration is not None:
+        result["hydration_ml"] = round(garmin_hydration)
+    else:
+        hydration = conn.execute(
+            "SELECT SUM(volume_ml) AS total FROM hydration WHERE "
+            "user_id = ? AND local_date = ?", (user_id, day),
+        ).fetchone()["total"]
+        if hydration is not None:
+            result["hydration_ml"] = round(hydration)
     return result
 
 
@@ -893,8 +927,16 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     # is dropped from actual/gap entirely when its own table hasn't
     # reached yesterday, rather than trusting a number nothing here
     # can vouch for.
+    #
+    # None of this applies when Garmin already answered the question:
+    # it carries no export lag, so a Garmin reading for yesterday is
+    # simply yesterday's real total, already sitting in ``actual``.
+    garmin_has_hydration = (
+        garmin_hydration_for_date(conn, user_id, yesterday) is not None
+    )
     hydration_missing = (
-        export_reaches(conn, user_id, "hydration", yesterday) is False
+        not garmin_has_hydration
+        and export_reaches(conn, user_id, "hydration", yesterday) is False
     )
     hydration_fallback = None
     if hydration_missing:
@@ -1737,6 +1779,23 @@ if __name__ == "__main__":
         with_fallback["targets"]["hydration_target_ml"] - 2400, 1,
     ), fallback
     conn.execute("DELETE FROM hydration WHERE uuid = 'fallback-hyd'")
+    conn.commit()
+
+    # A Garmin reading for yesterday bypasses all of the above: it
+    # carries no export lag, so it settles the question outright,
+    # even while Health Connect's own coverage is still a day behind
+    # (still true at this point in the fixture) and even with a
+    # stale HC row still sitting in the table for the same date.
+    conn.execute(
+        "INSERT INTO garmin_hydration (user_id, local_date, volume_ml) "
+        "VALUES (?, ?, 2750.0)", (uid, yesterday),
+    )
+    conn.commit()
+    garmin_wins = nutrition_gap(conn, uid, end_date)
+    assert garmin_wins["hydration_data_missing"] is False, garmin_wins
+    assert "hydration_fallback" not in garmin_wins, garmin_wins
+    assert garmin_wins["actual"]["hydration_ml"] == 2750, garmin_wins
+    conn.execute("DELETE FROM garmin_hydration WHERE user_id = ?", (uid,))
     conn.commit()
 
     # Once hydration's own coverage catches up, it is trusted again.

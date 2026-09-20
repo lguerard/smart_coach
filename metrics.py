@@ -660,9 +660,25 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     total_cal = sum_for_date(
         conn, user_id, "total_calories_burned", "kcal", date,
     )
-    wellness["hydration_ml_today"] = (
-        round(hydration) if hydration is not None else None
-    )
+    # Garmin wins outright here rather than just filling a gap, same
+    # as intensity minutes below and unlike steps/floors/calories:
+    # Health Connect's hydration is MyFitnessPal's, and its water
+    # total for a day reaches the export a full day after its meals
+    # do (confirmed structural, not occasional) -- so on a day Garmin
+    # also has a reading, it is the one actually current, whether or
+    # not Health Connect already has something for the same day.
+    garmin_hydration_ml = conn.execute(
+        "SELECT volume_ml FROM garmin_hydration WHERE user_id = ? "
+        "AND local_date = ?", (user_id, date),
+    ).fetchone()
+    if garmin_hydration_ml and garmin_hydration_ml["volume_ml"] is not None:
+        wellness["hydration_ml_today"] = round(
+            garmin_hydration_ml["volume_ml"]
+        )
+    else:
+        wellness["hydration_ml_today"] = (
+            round(hydration) if hydration is not None else None
+        )
     wellness["distance_km_today"] = (
         round(distance / 1000, 1) if distance is not None else None
     )
@@ -1113,6 +1129,23 @@ if __name__ == "__main__":
     # ...but intensity minutes come off the rollup regardless, since
     # those are the library-modelled field names.
     assert wellness["intensity_moderate_min"] == 25, wellness
+
+    # Hydration is the same "wins outright" case as intensity minutes,
+    # for the opposite reason: 2026-07-13 already has 500ml from HC
+    # (MyFitnessPal), but a Garmin reading for that exact day means
+    # the water was logged in Garmin Connect and is the current
+    # number -- HC's is what's stale here, a day behind as usual.
+    conn.execute(
+        "INSERT INTO garmin_hydration (user_id, local_date, volume_ml) "
+        "VALUES (?, '2026-07-13', 2200.0)", (uid,),
+    )
+    conn.commit()
+    hydrated = daily_wellness(conn, uid, "2026-07-13")
+    assert hydrated["hydration_ml_today"] == 2200, hydrated
+    # A day with no Garmin reading still falls back to HC as before.
+    assert daily_wellness(conn, uid, "2026-07-14").get(
+        "hydration_ml_today"
+    ) is None
 
     # Garmin-API-only signals (no HC equivalent): merged into wellness.
     assert wellness["hrv_status"] == "BALANCED"

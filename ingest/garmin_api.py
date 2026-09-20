@@ -629,6 +629,54 @@ def upsert_stress(
         (user_id, date, avg, high),
     )
     return 1
+def upsert_garmin_hydration(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+) -> int:
+    """Fetch one day's Garmin Connect hydration total into
+    garmin_hydration.
+
+    Exists specifically because Health Connect's hydration is
+    unreliable for the same day this project cares about: MyFitnessPal
+    writes the day's water as one record covering the whole day, and
+    it reaches the phone's Health Connect export a full day later
+    than its meals do -- confirmed structural, not an off day, across
+    two real exports four days apart. Garmin's API has no export
+    snapshot in between: asking for a completed day's total returns
+    Garmin's current value for that calendar date, not whatever was
+    true when some earlier job ran. Logging water via the Garmin
+    Connect app or a watch widget sidesteps the lag entirely, at the
+    cost of actually needing to log it there.
+
+    Undocumented endpoint (usersummary-service hydration/daily) with
+    no field names modelled anywhere in the client library -- unlike
+    daily_summary/sleep, ``valueInML``/``goalInML`` here are a
+    best-effort guess, not verified against real account data. If
+    this keeps upserting 0, the guess is wrong; check a raw response
+    and correct the keys below.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        date (str): ISO local date to fetch.
+
+    Returns:
+        int: 1 if a total was upserted, 0 if Garmin has none for
+        this date.
+    """
+    data = client.get_hydration_data(date) or {}
+    volume_ml = data.get("valueInML")
+    if volume_ml is None:
+        return 0
+    conn.execute(
+        "INSERT INTO garmin_hydration (user_id, local_date, "
+        "volume_ml) VALUES (?, ?, ?) ON CONFLICT(user_id, local_date) "
+        "DO UPDATE SET volume_ml = excluded.volume_ml",
+        (user_id, date, volume_ml),
+    )
+    return 1
+
+
 
 
 def upsert_body_composition(
@@ -1029,7 +1077,12 @@ def fetch_and_upsert(
     HRV/training-readiness/body-battery/stress/respiration/SpO2/
     intensity-minutes/VO2max are fetched for today's local date only
     (not backfilled over ``days``) -- they're inputs for today's
-    coaching run, not historical training data.
+    coaching run, not historical training data. Hydration is the one
+    exception fetched for both today AND yesterday: unlike those,
+    someone reads yesterday's completed total back the next morning
+    (progress.intake_for_date), and Garmin's API returns a completed
+    day's true value on demand rather than an ingest-time snapshot,
+    so there is no staleness cost to asking for both.
 
     Parameters:
         conn (sqlite3.Connection): smart_coach db connection.
@@ -1057,6 +1110,9 @@ def fetch_and_upsert(
     )
     weigh_ins = upsert_body_composition(conn, user_id, client, tz, days)
     today = dt.datetime.now(tz).date().isoformat()
+    yesterday = (
+        dt.datetime.now(tz).date() - dt.timedelta(days=1)
+    ).isoformat()
     counts = {
         "exercise_sessions": sessions,
         "exercise_hr_samples": hr_samples,
@@ -1077,6 +1133,10 @@ def fetch_and_upsert(
             conn, user_id, client, today,
         ),
         "vo2max": upsert_vo2max(conn, user_id, client, today),
+        "hydration": (
+            upsert_garmin_hydration(conn, user_id, client, today)
+            + upsert_garmin_hydration(conn, user_id, client, yesterday)
+        ),
         "badges": upsert_badges(conn, user_id, client),
         "menstrual_cycle": (
             upsert_menstrual_cycle(conn, user_id, client, today)
@@ -1374,6 +1434,11 @@ if __name__ == "__main__":
                 return {}
             return {"avgStressLevel": 32, "maxStressLevel": 68}
 
+        def get_hydration_data(self, date: str) -> dict:
+            if date != "2026-07-16":
+                return {}
+            return {"valueInML": 1850.0, "goalInML": 3000.0}
+
         def get_earned_badges(self) -> list:
             return [
                 {
@@ -1624,6 +1689,20 @@ if __name__ == "__main__":
     ).fetchone()
     assert stress_row["avg_level"] == 32, dict(stress_row)
     assert stress_row["max_level"] == 68, dict(stress_row)
+
+    assert upsert_garmin_hydration(conn, uid, fake, "2026-07-01") == 0
+    assert upsert_garmin_hydration(conn, uid, fake, "2026-07-16") == 1
+    hyd_row = conn.execute(
+        "SELECT volume_ml FROM garmin_hydration WHERE user_id = ? AND "
+        "local_date = '2026-07-16'", (uid,),
+    ).fetchone()
+    assert hyd_row["volume_ml"] == 1850.0, dict(hyd_row)
+    # Re-run: idempotent upsert, no duplicate row.
+    assert upsert_garmin_hydration(conn, uid, fake, "2026-07-16") == 1
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM garmin_hydration WHERE user_id = ?",
+        (uid,),
+    ).fetchone()["n"] == 1
 
     # Body composition: grams -> kg, weightless row skipped, and the
     # re-run stays idempotent (same uuid, no second weigh-in).
