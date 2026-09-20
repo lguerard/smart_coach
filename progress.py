@@ -877,18 +877,37 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     ).isoformat()
     targets = macro_targets(conn, user_id, yesterday)
     actual = yesterday_intake(conn, user_id, date)
+
+    # Distinct from the heuristic below: this one is a fact. The
+    # export either reached that date or it did not, and when it did
+    # not, the emptiness says nothing at all about what was eaten.
+    missing = export_reaches(conn, user_id, "nutrition", yesterday) is False
+
+    # Hydration syncs on its own schedule, independently of nutrition
+    # -- a real account had MyFitnessPal's meals reach the export for
+    # a day while its water total for that SAME day stayed a sync
+    # behind (nutrition through the 19th, hydration only through the
+    # 18th). A coverage check scoped to "nutrition" never sees that,
+    # so a hydration total left over from a stale ingest -- or simply
+    # absent -- got reported as yesterday's real water intake. Water
+    # is dropped from actual/gap entirely when its own table hasn't
+    # reached yesterday, rather than trusting a number nothing here
+    # can vouch for.
+    hydration_missing = (
+        export_reaches(conn, user_id, "hydration", yesterday) is False
+    )
+    if hydration_missing:
+        actual = {k: v for k, v in actual.items() if k != "hydration_ml"}
+
     gap = {
         actual_key: round(targets[target_key] - actual[actual_key], 1)
         for actual_key, target_key in _GAP_FIELDS
         if actual_key in actual and target_key in targets
     }
-    # Distinct from the heuristic below: this one is a fact. The
-    # export either reached that date or it did not, and when it did
-    # not, the emptiness says nothing at all about what was eaten.
-    missing = export_reaches(conn, user_id, "nutrition", yesterday) is False
     return {
         "date": yesterday, "targets": targets, "actual": actual, "gap": gap,
         "data_missing": missing,
+        "hydration_data_missing": hydration_missing,
         "log_looks_incomplete": (
             missing or _log_looks_incomplete(actual, targets)
         ),
@@ -1619,11 +1638,57 @@ if __name__ == "__main__":
     # A day the export did reach is judged on its contents as before.
     assert export_reaches(conn, uid, "nutrition", base.isoformat()) is True
     conn.execute(
-        "UPDATE hc_export_coverage SET last_date = ? WHERE user_id = ?",
+        "UPDATE hc_export_coverage SET last_date = ? WHERE user_id = ? "
+        "AND table_name = 'nutrition'",
         (end_date, uid),
     )
     conn.commit()
     assert nutrition_gap(conn, uid, end_date)["data_missing"] is False
+
+    # Hydration syncs independently of nutrition and lags behind it
+    # routinely -- the bug report this guards: MyFitnessPal's meals
+    # reached the export through yesterday while its water total for
+    # that SAME day stayed a sync behind. Nutrition being current
+    # must not vouch for hydration.
+    conn.execute(
+        "INSERT INTO hc_export_coverage (user_id, table_name, "
+        "first_date, last_date, observed_at) VALUES (?, 'hydration', "
+        "?, ?, '2026-07-28T04:00:00+00:00')",
+        (uid, base.isoformat(),
+         (dt.date.fromisoformat(yesterday) - dt.timedelta(days=1)).isoformat()),
+    )
+    conn.commit()
+    lagging = nutrition_gap(conn, uid, end_date)
+    assert lagging["data_missing"] is False, lagging  # nutrition is current
+    assert lagging["hydration_data_missing"] is True, lagging
+    assert "hydration_ml" not in lagging["actual"], lagging
+    assert "hydration_ml" not in lagging["gap"], lagging
+    # A stale row for yesterday already sitting in the table (from an
+    # earlier, now-superseded ingest) must not leak through either.
+    conn.execute(
+        "INSERT INTO hydration (uuid, user_id, start_utc, end_utc, "
+        "local_date, volume_ml) VALUES ('stale-hyd', ?, ?, ?, ?, 1126)",
+        (uid, f"{yesterday}T08:00:00+00:00",
+         f"{yesterday}T08:05:00+00:00", yesterday),
+    )
+    conn.commit()
+    still_lagging = nutrition_gap(conn, uid, end_date)
+    assert "hydration_ml" not in still_lagging["actual"], still_lagging
+    # Once hydration's own coverage catches up, it is trusted again.
+    conn.execute(
+        "UPDATE hc_export_coverage SET last_date = ? WHERE user_id = ? "
+        "AND table_name = 'hydration'",
+        (end_date, uid),
+    )
+    conn.commit()
+    caught_up = nutrition_gap(conn, uid, end_date)
+    assert caught_up["hydration_data_missing"] is False, caught_up
+    # 2100 from the base fixture's own hyd26 row (same date) + this
+    # test's 1126 -- summed, since both are now-legitimate readings
+    # once the table's coverage says the day is trustworthy.
+    assert caught_up["actual"]["hydration_ml"] == 3226, caught_up
+    conn.execute("DELETE FROM hydration WHERE uuid = 'stale-hyd'")
+    conn.commit()
 
     # This scenario's protein gap (~2.7g) is below the nudge threshold
     # (by design -- not every tiny miss is worth a calendar nudge);

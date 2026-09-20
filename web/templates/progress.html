@@ -62,6 +62,12 @@
     {% if gap.hydration_ml is defined %}
     <div class="flex justify-between"><span style="color: var(--muted);">Hydratation</span>
       <span class="font-medium" style="color: {{ 'var(--critical)' if gap.hydration_ml > 300 else 'var(--good)' }};">{{ '%+.0f'|format(-gap.hydration_ml) }} ml</span></div>
+    {% elif nutrition_y.hydration_data_missing %}
+    {# Hydration syncs on its own schedule and can lag behind meals
+       by a day even when the rest of the log is current -- say so
+       rather than silently dropping the row with no explanation. #}
+    <div class="flex justify-between"><span style="color: var(--muted);">Hydratation</span>
+      <span class="text-xs" style="color: var(--muted);">pas encore synchronisee</span></div>
     {% endif %}
     {% if gap.fat_g is defined and not nutrition_y.log_looks_incomplete %}
     <div class="flex justify-between"><span style="color: var(--muted);">Lipides</span>
