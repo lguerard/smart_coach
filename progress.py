@@ -896,15 +896,45 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     hydration_missing = (
         export_reaches(conn, user_id, "hydration", yesterday) is False
     )
+    hydration_fallback = None
     if hydration_missing:
         actual = {k: v for k, v in actual.items() if k != "hydration_ml"}
+        # Confirmed structural, not a one-off: two exports four days
+        # apart both had hydration's coverage exactly one day behind
+        # nutrition's -- MyFitnessPal writes the day's water as a
+        # single 00:00-23:59 total, finalised later than its meals,
+        # so it consistently misses the export that already has that
+        # day's food. Left as a flat "missing", this would go dark
+        # every single morning forever, not just on an off day. The
+        # day before usually HAS synced by then, so surface that
+        # instead of nothing -- clearly dated, never mistaken for
+        # yesterday's number.
+        day_before = (
+            dt.date.fromisoformat(yesterday) - dt.timedelta(days=1)
+        ).isoformat()
+        if export_reaches(conn, user_id, "hydration", day_before):
+            fallback_ml = conn.execute(
+                "SELECT SUM(volume_ml) AS total FROM hydration WHERE "
+                "user_id = ? AND local_date = ?", (user_id, day_before),
+            ).fetchone()["total"]
+            if fallback_ml is not None:
+                fallback_target = macro_targets(
+                    conn, user_id, day_before,
+                ).get("hydration_target_ml")
+                hydration_fallback = {
+                    "date": day_before, "actual_ml": round(fallback_ml),
+                }
+                if fallback_target is not None:
+                    hydration_fallback["gap_ml"] = round(
+                        fallback_target - fallback_ml, 1,
+                    )
 
     gap = {
         actual_key: round(targets[target_key] - actual[actual_key], 1)
         for actual_key, target_key in _GAP_FIELDS
         if actual_key in actual and target_key in targets
     }
-    return {
+    result = {
         "date": yesterday, "targets": targets, "actual": actual, "gap": gap,
         "data_missing": missing,
         "hydration_data_missing": hydration_missing,
@@ -912,6 +942,9 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
             missing or _log_looks_incomplete(actual, targets)
         ),
     }
+    if hydration_fallback is not None:
+        result["hydration_fallback"] = hydration_fallback
+    return result
 
 
 # Below this share of the calorie target, a day reads as "barely
@@ -1674,6 +1707,38 @@ if __name__ == "__main__":
     conn.commit()
     still_lagging = nutrition_gap(conn, uid, end_date)
     assert "hydration_ml" not in still_lagging["actual"], still_lagging
+    # No fallback yet: coverage reaches day_before (set up above) but
+    # there is no actual reading there in this fixture.
+    assert "hydration_fallback" not in still_lagging, still_lagging
+
+    # The structural case this exists for: yesterday's hydration is
+    # never going to show up in time (confirmed against two real
+    # exports four days apart, both exactly one day behind on
+    # hydration specifically), but the day before it has a real,
+    # covered reading -- surface that, clearly dated, rather than
+    # going dark on hydration every single morning.
+    day_before = (
+        dt.date.fromisoformat(yesterday) - dt.timedelta(days=1)
+    ).isoformat()
+    conn.execute(
+        "INSERT INTO hydration (uuid, user_id, start_utc, end_utc, "
+        "local_date, volume_ml) VALUES ('fallback-hyd', ?, ?, ?, ?, "
+        "2400)",
+        (uid, f"{day_before}T08:00:00+00:00",
+         f"{day_before}T08:05:00+00:00", day_before),
+    )
+    conn.commit()
+    with_fallback = nutrition_gap(conn, uid, end_date)
+    assert "hydration_ml" not in with_fallback["actual"], with_fallback
+    fallback = with_fallback["hydration_fallback"]
+    assert fallback["date"] == day_before, fallback
+    assert fallback["actual_ml"] == 2400, fallback
+    assert fallback["gap_ml"] == round(
+        with_fallback["targets"]["hydration_target_ml"] - 2400, 1,
+    ), fallback
+    conn.execute("DELETE FROM hydration WHERE uuid = 'fallback-hyd'")
+    conn.commit()
+
     # Once hydration's own coverage catches up, it is trusted again.
     conn.execute(
         "UPDATE hc_export_coverage SET last_date = ? WHERE user_id = ? "

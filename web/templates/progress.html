@@ -65,9 +65,19 @@
     {% elif nutrition_y.hydration_data_missing %}
     {# Hydration syncs on its own schedule and can lag behind meals
        by a day even when the rest of the log is current -- say so
-       rather than silently dropping the row with no explanation. #}
+       rather than silently dropping the row with no explanation.
+       When a real reading exists for the day before, show it too:
+       this lag is structural (confirmed across exports days apart),
+       so "not synced yet" alone would mean this row goes blank
+       every single day. #}
     <div class="flex justify-between"><span style="color: var(--muted);">Hydratation</span>
-      <span class="text-xs" style="color: var(--muted);">pas encore synchronisee</span></div>
+      <span class="text-xs" style="color: var(--muted);">
+        {% if nutrition_y.hydration_fallback %}
+        avant-hier {{ (nutrition_y.hydration_fallback.actual_ml / 1000)|round(1) }}L
+        {% else %}
+        pas encore synchronisee
+        {% endif %}
+      </span></div>
     {% endif %}
     {% if gap.fat_g is defined and not nutrition_y.log_looks_incomplete %}
     <div class="flex justify-between"><span style="color: var(--muted);">Lipides</span>
