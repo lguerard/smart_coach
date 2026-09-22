@@ -43,6 +43,16 @@ def run_for_user(conn, user: dict) -> None:
     nutrition = metrics.nutrition_for_date(conn, user_id, today)
     weekly = progress.weekly_progress(conn, user_id, today)
 
+    # Illness/overreaching watch runs before today's session-type
+    # deload guardrail (not tied to any one session type), so if it
+    # fires, apply_deload_guardrail below picks up the already-cut
+    # level for today's type rather than cutting on top of it later.
+    illness = training.illness_watch(conn, user_id, today)
+    illness_deload = (
+        training.apply_illness_deload(conn, user_id, today)
+        if illness["suspected"] else {}
+    )
+
     weekday = dt.date.fromisoformat(today).weekday()
     template = training.schedule_for_user(conn, user_id)[weekday]
     session_type = template.get("session_type")
@@ -81,15 +91,31 @@ def run_for_user(conn, user: dict) -> None:
         description = training.format_description_fr(
             session_type, level, values, status,
         )
-        if deload["deload_triggered"]:
-            reason_fr = (
-                "3 rouges d'affilee" if deload["trigger"] == "red_streak"
-                else "fatigue accumulee (TSB)"
+        # Illness sets deload_until BEFORE this call runs, so
+        # apply_deload_guardrail sees an already-active window and
+        # reports deload_triggered=False for its own trigger -- true
+        # in the narrow sense (this call didn't trigger it), but the
+        # calendar/message still need to say WHY tonight got lighter.
+        illness_triggered_today = session_type in illness_deload
+        deload_triggered_today = (
+            deload["deload_triggered"] or illness_triggered_today
+        )
+        if deload_triggered_today:
+            trigger = (
+                "illness" if illness_triggered_today
+                else deload["trigger"]
             )
-            reason_en = (
-                "3 reds in a row" if deload["trigger"] == "red_streak"
-                else "accumulated fatigue (TSB)"
-            )
+            reason_fr = {
+                "illness": "signes compatibles avec une maladie/"
+                           "surmenage",
+                "red_streak": "3 rouges d'affilee",
+                "tsb": "fatigue accumulee (TSB)",
+            }[trigger]
+            reason_en = {
+                "illness": "signs consistent with illness/overreaching",
+                "red_streak": "3 reds in a row",
+                "tsb": "accumulated fatigue (TSB)",
+            }[trigger]
             deload_note = (
                 f"SEMAINE DE DELOAD ({reason_fr})" if language == "fr"
                 else f"DELOAD WEEK ({reason_en})"
@@ -98,8 +124,8 @@ def run_for_user(conn, user: dict) -> None:
         today_session = {
             "type": session_type, "status": status, "level": level,
             "values": values, "description_fr": description,
-            "in_deload": deload["in_deload"],
-            "deload_triggered": deload["deload_triggered"],
+            "in_deload": deload["in_deload"] or illness_triggered_today,
+            "deload_triggered": deload_triggered_today,
         }
         # Calendar update happens this morning for tonight's session,
         # so it should reflect everything the coach knows today, not
@@ -190,6 +216,7 @@ def run_for_user(conn, user: dict) -> None:
         "weekly_progress": weekly,
         "today_session": today_session,
         "today_targets": progress.macro_targets(conn, user_id, today),
+        "illness_watch": illness,
         # Precomputed rather than left to the LLM: the message quotes
         # what is LEFT to eat today, and this project never asks the
         # model to do arithmetic on figures it is meant to repeat.

@@ -198,6 +198,142 @@ def _trigger_deload(
     }
 
 
+# Illness/overreaching watch: independent physiological signals
+# agreeing on the same day, sustained across days, rather than any
+# single vote -- a hard training day alone can spike RHR or dent
+# readiness, but RHR, HRV and readiness all bad together, more than
+# one day running, is a much more specific pattern. Reuses the exact
+# thresholds each vote already uses (RHR_SPIKE_RED_MIN,
+# TRAINING_READINESS_POOR, HRV "LOW"), not new ones invented for
+# this -- there is no clinical basis here to pick a different cutoff,
+# only a basis to combine the ones already tuned.
+ILLNESS_WATCH_DAYS = 3
+ILLNESS_MIN_SIGNALS = 2  # of {RHR spike, HRV low, readiness poor}
+ILLNESS_MIN_DISTRESSED_DAYS = 2  # of ILLNESS_WATCH_DAYS
+
+
+def _distress_signals(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> list[str]:
+    """Which of the three independent recovery signals were bad on
+    one date.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date.
+
+    Returns:
+        list[str]: Short French labels for each signal that was bad
+        that day (empty list if none, or if there is no data at all).
+    """
+    wellness = metrics.daily_wellness(conn, user_id, date)
+    baseline = rhr_baseline(conn, user_id, date)
+    signals = []
+    resting_hr = wellness.get("resting_hr")
+    if resting_hr is not None and baseline is not None:
+        spike = resting_hr - baseline
+        if spike >= RHR_SPIKE_RED_MIN:
+            signals.append(f"FC repos {spike:+.0f} vs base")
+    if wellness.get("hrv_status") == "LOW":
+        signals.append("VFC basse")
+    readiness = wellness.get("training_readiness_score")
+    if readiness is not None and readiness < TRAINING_READINESS_POOR:
+        signals.append(f"recuperation {readiness:.0f}/100")
+    return signals
+
+
+def illness_watch(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict:
+    """Flag a pattern of recovery signals consistent with illness or
+    serious overreaching -- not a diagnosis, a reason to back off.
+
+    A day counts as "distressed" when at least
+    ``ILLNESS_MIN_SIGNALS`` of {resting HR spiking above baseline,
+    HRV status LOW, training readiness below the poor threshold} are
+    true together. ``suspected`` is true when at least
+    ``ILLNESS_MIN_DISTRESSED_DAYS`` of the last ``ILLNESS_WATCH_DAYS``
+    days (today included) were distressed -- sustained agreement
+    across independent signals and across days, deliberately harder
+    to trigger than any single vote, since what this feeds is telling
+    someone to train less, not just to expect a harder session.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date (today).
+
+    Returns:
+        dict: ``suspected`` (bool), ``distressed_days`` (int, out of
+        ``ILLNESS_WATCH_DAYS``), and ``signals`` (the union of every
+        distress label seen in the window, most recent day's signals
+        first) -- ``signals`` is empty when ``suspected`` is False.
+    """
+    per_day = []
+    for offset in range(ILLNESS_WATCH_DAYS):
+        day = (
+            dt.date.fromisoformat(date) - dt.timedelta(days=offset)
+        ).isoformat()
+        per_day.append((day, _distress_signals(conn, user_id, day)))
+    distressed_days = [
+        (day, signals) for day, signals in per_day
+        if len(signals) >= ILLNESS_MIN_SIGNALS
+    ]
+    suspected = len(distressed_days) >= ILLNESS_MIN_DISTRESSED_DAYS
+    all_signals: list[str] = []
+    for _, signals in distressed_days:
+        for signal in signals:
+            if signal not in all_signals:
+                all_signals.append(signal)
+    return {
+        "suspected": suspected,
+        "distressed_days": len(distressed_days),
+        "signals": all_signals if suspected else [],
+    }
+
+
+def apply_illness_deload(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict[str, dict]:
+    """Force a deload across every session type at once.
+
+    apply_deload_guardrail is scoped to one session_type, tied to
+    that type's own red streak -- the right shape for "this exercise
+    has been going badly," the wrong one for "the body is fighting
+    something," which has no opinion about which session type is
+    scheduled today. Called once illness_watch says suspected, this
+    cuts every type in one pass instead of waiting for each one to
+    separately rack up its own red streak, which a sick week spread
+    across different session types might never do.
+
+    Idempotent by design: a type already inside an active deload
+    window is left alone rather than cut again, so calling this every
+    morning the watch stays suspected does not compound the cut.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date (today) -- deload window start.
+
+    Returns:
+        dict[str, dict]: ``_trigger_deload`` result per session type
+        this call actually cut; types already in deload are omitted
+        entirely (empty dict if illness was already accounted for
+        everywhere).
+    """
+    triggered = {}
+    for session_type in SESSION_LABEL_FR:
+        deload_until = get_deload_until(conn, user_id, session_type)
+        if deload_until is not None and date <= deload_until:
+            continue  # already reduced -- don't cut further
+        level = get_level(conn, user_id, session_type)
+        triggered[session_type] = _trigger_deload(
+            conn, user_id, session_type, level, date, "illness",
+        )
+    return triggered
+
+
 def apply_deload_guardrail(
     conn: sqlite3.Connection, user_id: int, session_type: str, status: str,
     date: str, tsb: Optional[float] = None,
@@ -951,6 +1087,104 @@ if __name__ == "__main__":
     assert baseline is not None and 55 <= baseline <= 58
     assert rhr_baseline(conn, other_uid, "2026-07-01") is None  # isolated
 
+    # Illness watch: independent baseline (2026-07-06..07-19, flat
+    # 56 bpm) so "2026-07-20" onward has a clean, unambiguous 56 bpm
+    # reference distinct from the 2026-07-01 fixture above.
+    conn.executemany(
+        "INSERT INTO resting_heart_rate VALUES (?, ?, ?, ?, ?)",
+        [
+            (f"ib{i}", uid, f"2026-07-{i:02d}T06:00:00+00:00",
+             f"2026-07-{i:02d}", 56)
+            for i in range(6, 20)
+        ],
+    )
+    conn.commit()
+    assert rhr_baseline(conn, uid, "2026-07-20") == 56.0
+
+    # A single bad signal, even a large one, is not "distressed" --
+    # ILLNESS_MIN_SIGNALS(2) exists specifically to filter this out.
+    conn.execute(
+        "INSERT INTO resting_heart_rate VALUES ('is1', ?, "
+        "'2026-07-20T06:00:00+00:00', '2026-07-20', 70)", (uid,),
+    )  # +14 vs baseline, on its own
+    conn.commit()
+    only_one = illness_watch(conn, uid, "2026-07-20")
+    assert only_one["suspected"] is False, only_one
+    assert only_one["distressed_days"] == 0, only_one
+
+    # Two signals together make that same day count...
+    conn.execute(
+        "INSERT INTO garmin_hrv (user_id, local_date, status) "
+        "VALUES (?, '2026-07-20', 'LOW')", (uid,),
+    )
+    conn.commit()
+    two_signals = illness_watch(conn, uid, "2026-07-20")
+    assert two_signals["distressed_days"] == 1, two_signals
+    assert two_signals["suspected"] is False, two_signals  # only 1 day
+
+    # ...and a second distressed day (today) tips it to suspected --
+    # ILLNESS_MIN_DISTRESSED_DAYS(2) of the last ILLNESS_WATCH_DAYS(3).
+    conn.execute(
+        "INSERT INTO resting_heart_rate VALUES ('is2', ?, "
+        "'2026-07-21T06:00:00+00:00', '2026-07-21', 68)", (uid,),
+    )
+    conn.execute(
+        "INSERT INTO garmin_hrv (user_id, local_date, status) "
+        "VALUES (?, '2026-07-21', 'LOW')", (uid,),
+    )
+    conn.execute(
+        "INSERT INTO garmin_training_readiness (user_id, local_date, "
+        "score) VALUES (?, '2026-07-21', 30)", (uid,),
+    )
+    conn.commit()
+    suspected = illness_watch(conn, uid, "2026-07-21")
+    assert suspected["suspected"] is True, suspected
+    assert suspected["distressed_days"] == 2, suspected
+    assert "VFC basse" in suspected["signals"], suspected
+    assert any("recuperation" in s for s in suspected["signals"]), suspected
+    assert any("FC repos" in s for s in suspected["signals"]), suspected
+    # A clean day (07-19, part of the baseline itself) contributes no
+    # signals and isn't in the union.
+    assert not any("07-19" in s for s in suspected["signals"])
+
+    # Isolation: another user's readings never feed uid's watch.
+    conn.execute(
+        "INSERT INTO resting_heart_rate VALUES ('is-other', ?, "
+        "'2026-07-21T06:00:00+00:00', '2026-07-21', 120)", (other_uid,),
+    )
+    conn.commit()
+    assert illness_watch(conn, other_uid, "2026-07-21") == {
+        "suspected": False, "distressed_days": 0, "signals": [],
+    }
+
+    # apply_illness_deload cuts every known type in one pass...
+    for session_type in SESSION_LABEL_FR:
+        set_level(conn, uid, session_type, 6)
+    illness_cut = apply_illness_deload(conn, uid, "2026-07-21")
+    assert set(illness_cut) == set(SESSION_LABEL_FR), illness_cut
+    for session_type in SESSION_LABEL_FR:
+        assert get_level(conn, uid, session_type) == 4, session_type  # 6-2
+        assert illness_cut[session_type]["trigger"] == "illness"
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM deload_events WHERE user_id = ? AND "
+        "trigger = 'illness'", (uid,),
+    ).fetchone()["n"] == len(SESSION_LABEL_FR)
+
+    # ...and is idempotent: calling it again the next morning, still
+    # inside the same 7-day window, cuts nothing further.
+    again_cut = apply_illness_deload(conn, uid, "2026-07-22")
+    assert again_cut == {}, again_cut
+    for session_type in SESSION_LABEL_FR:
+        assert get_level(conn, uid, session_type) == 4, session_type
+
+    # A type that had ALREADY deloaded for its own red streak, before
+    # illness_watch ever fired, is left alone rather than cut twice.
+    set_level(conn, uid, "treadmill", 6)
+    set_deload_until(conn, uid, "treadmill", "2026-08-01")
+    partial_cut = apply_illness_deload(conn, uid, "2026-07-25")
+    assert "treadmill" not in partial_cut, partial_cut
+    assert get_level(conn, uid, "treadmill") == 6  # untouched
+
     # Deload guardrail: 3 reds in a row triggers a forced cut + window,
     # not just the normal -1/day.
     set_level(conn, uid, "lower_body", 6)
@@ -970,7 +1204,7 @@ if __name__ == "__main__":
     ).isoformat()
     assert conn.execute(
         "SELECT COUNT(*) AS n FROM deload_events WHERE user_id = ? AND "
-        "session_type = 'lower_body'", (uid,),
+        "session_type = 'lower_body' AND trigger = 'red_streak'", (uid,),
     ).fetchone()["n"] == 1
 
     # A green day mid-window doesn't bump the level -- deload holds.
@@ -1012,7 +1246,8 @@ if __name__ == "__main__":
     assert tsb_r["level"] == 4  # 6 - DELOAD_LEVEL_CUT(2)
     assert conn.execute(
         "SELECT trigger FROM deload_events WHERE user_id = ? AND "
-        "session_type = 'calisthenics'", (uid,),
+        "session_type = 'calisthenics' AND triggered_at = ?",
+        (uid, tsb_day),
     ).fetchone()["trigger"] == "tsb"
     # Already in deload -> a second critical reading doesn't re-cut.
     again = apply_deload_guardrail(
