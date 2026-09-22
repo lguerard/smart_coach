@@ -867,7 +867,11 @@ def history_snapshot(
         rpe, avg_hr, max_hr, kcal -- absent keys mean no data),
         ``statuses_last_7_days`` (date, status),
         ``adherence_last_7_days`` (date, planned, done, duration_min
-        -- ends yesterday: today's session hasn't happened yet), and
+        -- ends yesterday: today's session hasn't happened yet),
+        ``session_skipped_yesterday`` ({date, session_type} if
+        yesterday had a planned session that was not done, else
+        None -- pulled out of adherence_last_7_days so it cannot be
+        missed the way one row in a week-long list can), and
         ``training_load`` ({date, ctl, atl, tsb} or ``{}``).
     """
     start = (
@@ -956,10 +960,25 @@ def history_snapshot(
     ]
 
     load = training_load.latest_training_load(conn, user_id)
+    # A skipped session sitting inside adherence_last_7_days is easy
+    # for the LLM to miss or soften into nothing -- it is one row
+    # among several, competing for attention with everything else in
+    # the payload. Yesterday specifically is pulled out and named,
+    # the same reason activity_yesterday/nutrition_gap exist: it is
+    # the one skip actually worth a sentence in this morning's
+    # message, not a pattern buried in a week of rows.
+    yesterday_row = next(
+        (row for row in adherence if row["date"] == yesterday), None,
+    )
+    session_skipped_yesterday = (
+        {"date": yesterday, "session_type": yesterday_row["planned"]}
+        if yesterday_row and not yesterday_row["done"] else None
+    )
     return {
         "activities_last_7_days": activities,
         "statuses_last_7_days": statuses,
         "adherence_last_7_days": adherence,
+        "session_skipped_yesterday": session_skipped_yesterday,
         "training_load": {
             "date": load["local_date"], "ctl": round(load["ctl"], 1),
             "atl": round(load["atl"], 1), "tsb": round(load["tsb"], 1),
@@ -1258,6 +1277,17 @@ if __name__ == "__main__":
     assert snap["training_load"] == {
         "date": "2026-07-12", "ctl": 10.1, "atl": 20.5, "tsb": -10.3,
     }
+    # Yesterday (07-12) was planned AND done -- nothing to flag.
+    assert snap["session_skipped_yesterday"] is None, snap
+
+    # One day earlier, yesterday becomes 07-11: planned (treadmill)
+    # but no exercise_sessions row exists for it -- a real skip,
+    # pulled out on its own rather than left inside the adherence list.
+    skip_snap = history_snapshot(conn, uid, "2026-07-12")
+    assert skip_snap["session_skipped_yesterday"] == {
+        "date": "2026-07-11", "session_type": "treadmill",
+    }, skip_snap
+
     # label_override wins when the old session is in range.
     old_snap = history_snapshot(conn, uid, "2026-07-02")
     assert old_snap["activities_last_7_days"][0]["label"] == "tapis"
@@ -1265,7 +1295,8 @@ if __name__ == "__main__":
     empty = history_snapshot(conn, other_uid, "2026-01-01")
     assert empty == {
         "activities_last_7_days": [], "statuses_last_7_days": [],
-        "adherence_last_7_days": [], "training_load": {},
+        "adherence_last_7_days": [], "session_skipped_yesterday": None,
+        "training_load": {},
     }, empty
 
     print("metrics.py: all checks passed")
