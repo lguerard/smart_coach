@@ -628,6 +628,17 @@ DEFAULT_SETTINGS = {
     "age_years": "",
     "sex": "",
     "bmr_manual_kcal": "",
+    # "1" (default): TDEE trusts the device's own trailing-7-day
+    # total_calories_burned average outright -- it already bundles
+    # the device's basal estimate with real measured activity, and
+    # is usually the better number. "0": ignore it and rebuild TDEE
+    # from bmr_for_date (manual override, if set, otherwise the
+    # formula) + measured active_calories instead -- for someone who
+    # has good reason to distrust the device's basal component
+    # specifically (bmr_manual_kcal has no effect at all while this
+    # stays "1", since the device total is never broken back down
+    # into its basal and activity parts to swap just one out).
+    "trust_device_tdee": "1",
     "rclone_remote": "",  # this user's Drive folder (multi-user: one export per person)
     "calendar_name": "",  # this user's target Google Calendar display name
     "ntfy_topic": "",  # this user's own ntfy topic (falls back to env NTFY_TOPIC)

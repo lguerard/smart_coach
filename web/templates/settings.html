@@ -99,13 +99,25 @@
   </div>
 
   <div class="card p-4 space-y-3">
-    <h2 class="font-semibold text-sm">Metabolisme de base (BMR)</h2>
+    <h2 class="font-semibold text-sm">Depense energetique (TDEE / BMR)</h2>
     <p class="text-xs" style="color: var(--muted);">
-      Utilise en priorite une valeur mesuree par la montre si disponible,
-      sinon la valeur manuelle, sinon ces champs (formule Mifflin-St Jeor).
+      Par defaut, la cible calorique se base sur la depense totale
+      rapportee par la montre (moyenne 7 jours) -- elle inclut deja
+      son estimation du metabolisme de base, ce qui rend le BMR
+      ci-dessous SANS EFFET tant que la case est cochee. Decochez-la
+      si vous avez de bonnes raisons de penser que ce metabolisme de
+      base est surestime : la cible repasse alors par le BMR manuel
+      (sinon la formule Mifflin-St Jeor) + les calories actives
+      mesurees.
     </p>
+    <label class="flex items-center gap-2 text-sm">
+      <input name="trust_device_tdee" type="checkbox" value="1"
+        {{ "checked" if settings.trust_device_tdee != "0" }}>
+      Faire confiance a la depense totale de la montre
+    </label>
     <label class="block text-sm">
-      BMR manuel (kcal/jour, optionnel)
+      BMR manuel (kcal/jour, optionnel -- ignore si la case ci-dessus
+      est cochee)
       <input name="bmr_manual_kcal" value="{{ settings.bmr_manual_kcal }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>

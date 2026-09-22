@@ -318,8 +318,13 @@ def tdee_estimate(
 
     Prefers the trailing 7-day average of the device's own
     total_calories_burned; falls back to BMR + trailing average
-    active_calories when the device doesn't report a TDEE directly.
-    Only looks at days before ``date`` (today is always incomplete).
+    active_calories when the device doesn't report a TDEE directly,
+    or when Settings' ``trust_device_tdee`` is turned off (see
+    :func:`bmr_for_date` and db.DEFAULT_SETTINGS for why that switch
+    exists -- the device total is never decomposed to swap out just
+    its basal component, so bmr_manual_kcal has no effect at all
+    unless this is off). Only looks at days before ``date`` (today
+    is always incomplete).
 
     Returns:
         float | None: kcal/day, or ``None`` if no BMR is derivable
@@ -330,12 +335,15 @@ def tdee_estimate(
         dt.date.fromisoformat(date) - dt.timedelta(days=7)
     ).isoformat()
     end = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+    trust_device = (
+        db.get_setting(conn, user_id, "trust_device_tdee") or "1"
+    ) == "1"
     avg_total = conn.execute(
         "SELECT AVG(daily_total) AS avg FROM (SELECT local_date, "
         "SUM(kcal) AS daily_total FROM total_calories_burned WHERE "
         "user_id = ? AND local_date BETWEEN ? AND ? GROUP BY "
         "local_date)", (user_id, start, end),
-    ).fetchone()["avg"]
+    ).fetchone()["avg"] if trust_device else None
     if avg_total is not None:
         return avg_total
     bmr = bmr_for_date(conn, user_id, date, weight_kg)
@@ -1493,6 +1501,39 @@ if __name__ == "__main__":
     tdee = tdee_estimate(conn, uid, end_date, weight_at_end)
     expected_bmr = 10 * weight_at_end + 6.25 * 178 - 5 * 34 + 5
     assert abs(tdee - (expected_bmr + 400)) < 0.5, tdee
+
+    # Device TDEE present and trusted by default: it wins outright
+    # over BMR+active, even though it disagrees with the formula.
+    for offset in range(20, 27):
+        day_date = (base + dt.timedelta(days=offset)).isoformat()
+        conn.execute(
+            "INSERT INTO total_calories_burned VALUES (?, ?, ?, ?, ?, "
+            "3000)",
+            (f"tcb{offset}", uid, f"{day_date}T23:00:00+00:00",
+             f"{day_date}T23:59:00+00:00", day_date),
+        )
+    conn.commit()
+    device_tdee = tdee_estimate(conn, uid, end_date, weight_at_end)
+    assert device_tdee == 3000, device_tdee
+
+    # trust_device_tdee=0: the device average is ignored outright,
+    # even though it exists, back to BMR + active -- the lever
+    # someone who trusts their own known basal over the device's
+    # needs, since bmr_manual_kcal alone can't reach this path while
+    # a device total is present.
+    db.set_setting(conn, uid, "trust_device_tdee", "0")
+    distrust_tdee = tdee_estimate(conn, uid, end_date, weight_at_end)
+    assert abs(distrust_tdee - (expected_bmr + 400)) < 0.5, distrust_tdee
+
+    # Combined with a manual BMR override, the athlete's own known
+    # basal (not the formula, not the device) drives TDEE.
+    db.set_setting(conn, uid, "bmr_manual_kcal", "1500")
+    manual_tdee = tdee_estimate(conn, uid, end_date, weight_at_end)
+    assert manual_tdee == 1500 + 400, manual_tdee
+    db.set_setting(conn, uid, "bmr_manual_kcal", "")
+    db.set_setting(conn, uid, "trust_device_tdee", "1")
+    conn.execute("DELETE FROM total_calories_burned WHERE user_id = ?", (uid,))
+    conn.commit()
 
     targets = macro_targets(conn, uid, end_date)
     assert targets["protein_target_g"] == round(weight_at_end * 1.8)

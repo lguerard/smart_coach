@@ -1242,6 +1242,10 @@ async def save_settings(request: Request):
         conn, user_id, "track_menstrual_cycle",
         "1" if "track_menstrual_cycle" in form else "0",
     )
+    db.set_setting(
+        conn, user_id, "trust_device_tdee",
+        "1" if "trust_device_tdee" in form else "0",
+    )
     for session_type in training.SESSION_LABEL_FR:
         field = f"level_{session_type}"
         if field in form and str(form[field]).strip():
