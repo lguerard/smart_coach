@@ -39,10 +39,19 @@
      of colouring it red. Hydration keeps its own row either way: it
      comes from its own records. #}
   {% if nutrition_y.data_missing %}
+  {% set nf = nutrition_y.nutrition_fallback %}
+  {% if nf %}
+  <p class="text-sm mb-2" style="color: var(--muted);">
+    Repas d'hier pas encore synchronise. Avant-hier ({{ nf.date }}) :
+    {{ nf.actual.calories_kcal }} kcal, {{ nf.actual.protein_g }}g de
+    proteines.
+  </p>
+  {% else %}
   <p class="text-sm mb-2" style="color: var(--muted);">
     L'export du telephone ne couvre pas cette journee : donnees
     manquantes, pas un jeune.
   </p>
+  {% endif %}
   {% elif nutrition_y.log_looks_incomplete %}
   <p class="text-sm mb-2" style="color: var(--muted);">
     Journal d'hier trop incomplet pour en tirer un ecart fiable.

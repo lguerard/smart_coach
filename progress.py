@@ -898,8 +898,11 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     Returns:
         dict: ``targets``, ``actual``, ``gap`` (target minus actual,
         positive = still short, negative = exceeded; only for fields
-        present in both), ``date`` (yesterday's date), and
-        ``log_looks_incomplete`` -- see below.
+        present in both), ``date`` (yesterday's date),
+        ``log_looks_incomplete`` -- see below -- and, only when
+        ``data_missing`` is true and the day before was itself fully
+        covered by the export, ``nutrition_fallback`` (that day's own
+        ``date``/``actual``/``gap``, never merged into yesterday's).
 
     The gap is only as good as the logging behind it, and food
     logging reaches this database through a chain (the logging app ->
@@ -924,6 +927,38 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     # export either reached that date or it did not, and when it did
     # not, the emptiness says nothing at all about what was eaten.
     missing = export_reaches(conn, user_id, "nutrition", yesterday) is False
+
+    # Same lag hydration has, just less consistent about which day it
+    # hits: a real account had MyFitnessPal's meals fully logged and
+    # visible in the app, but the export the ingest actually ran
+    # against that morning was an earlier, less-complete snapshot --
+    # the export coverage table said yesterday was missing even
+    # though, by the time anyone looked, it plainly was not. Only
+    # kicks in on the FACT (missing), never on the ratio heuristic
+    # below: a day that genuinely has some food logged but reads as
+    # sparse should surface as sparse, not get silently swapped for a
+    # different day's numbers.
+    nutrition_fallback = None
+    if missing:
+        day_before = (
+            dt.date.fromisoformat(yesterday) - dt.timedelta(days=1)
+        ).isoformat()
+        if export_reaches(conn, user_id, "nutrition", day_before):
+            fallback_actual = intake_for_date(conn, user_id, day_before)
+            if fallback_actual.get("calories_kcal") is not None:
+                fallback_targets = macro_targets(conn, user_id, day_before)
+                nutrition_fallback = {
+                    "date": day_before, "actual": fallback_actual,
+                    "gap": {
+                        actual_key: round(
+                            fallback_targets[target_key]
+                            - fallback_actual[actual_key], 1,
+                        )
+                        for actual_key, target_key in _GAP_FIELDS
+                        if actual_key in fallback_actual
+                        and target_key in fallback_targets
+                    },
+                }
 
     # Hydration syncs on its own schedule, independently of nutrition
     # -- a real account had MyFitnessPal's meals reach the export for
@@ -994,6 +1029,8 @@ def nutrition_gap(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     }
     if hydration_fallback is not None:
         result["hydration_fallback"] = hydration_fallback
+    if nutrition_fallback is not None:
+        result["nutrition_fallback"] = nutrition_fallback
     return result
 
 
@@ -1751,6 +1788,44 @@ if __name__ == "__main__":
     stale = nutrition_gap(conn, uid, end_date)
     assert stale["data_missing"] is True, stale
     assert stale["log_looks_incomplete"] is True, stale
+    # Coverage stops two days short here (last_date = yesterday - 2),
+    # so the day before yesterday isn't covered either -- no fallback
+    # to offer.
+    assert "nutrition_fallback" not in stale, stale
+
+    # The real bug report: export coverage said yesterday was missing
+    # even though the athlete's food was fully logged and visible in
+    # the app -- an earlier, less-complete snapshot got ingested than
+    # what became available later. day_before (base+25, already
+    # carrying the fixture's normal 1900 kcal/140g-protein row from
+    # the base loop) IS covered once coverage reaches one day less
+    # than "yesterday" needs -- surface it, clearly dated.
+    day_before = (
+        dt.date.fromisoformat(yesterday) - dt.timedelta(days=1)
+    ).isoformat()
+    conn.execute(
+        "UPDATE hc_export_coverage SET last_date = ? WHERE user_id = ? "
+        "AND table_name = 'nutrition'",
+        (day_before, uid),
+    )
+    conn.commit()
+    assert export_reaches(conn, uid, "nutrition", yesterday) is False
+    assert export_reaches(conn, uid, "nutrition", day_before) is True
+    with_nutrition_fallback = nutrition_gap(conn, uid, end_date)
+    assert with_nutrition_fallback["data_missing"] is True
+    # Food is gone (yesterday's export coverage is missing), but
+    # hydration is untouched -- it is its own, separate signal.
+    assert "calories_kcal" not in with_nutrition_fallback["actual"]
+    assert with_nutrition_fallback["actual"]["hydration_ml"] == 2100
+    fb = with_nutrition_fallback["nutrition_fallback"]
+    assert fb["date"] == day_before, fb
+    assert fb["actual"]["calories_kcal"] == 1900, fb
+    assert fb["actual"]["protein_g"] == 140.0, fb
+    day_before_target = macro_targets(conn, uid, day_before)
+    assert fb["gap"]["calories_kcal"] == round(
+        day_before_target["calorie_target_kcal"] - 1900, 1,
+    ), fb
+
     # A day the export did reach is judged on its contents as before.
     assert export_reaches(conn, uid, "nutrition", base.isoformat()) is True
     conn.execute(
