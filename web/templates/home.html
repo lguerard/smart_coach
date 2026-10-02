@@ -260,6 +260,70 @@
   {% endif %}
 </div>
 
+{% if movement.flags or movement.steps or movement.stress_avg is defined %}
+<div class="card p-5">
+  <h2 class="font-semibold mb-3 flex items-center gap-2">
+    <span style="color: var(--green);">●</span> Hier
+  </h2>
+  <div class="flex flex-wrap gap-2 text-xs">
+    {% if movement.steps %}
+    <span class="chip-{{ 'green' if movement.steps.verdict == 'reached' else 'yellow' if movement.steps.verdict == 'close' else 'red' }} px-3 py-1.5 rounded-full">
+      {{ movement.steps.value }} pas ({{ movement.steps.pct }}%)
+    </span>
+    {% endif %}
+    {% if movement.floors %}
+    <span class="chip-{{ 'green' if movement.floors.verdict == 'reached' else 'yellow' if movement.floors.verdict == 'close' else 'red' }} px-3 py-1.5 rounded-full">
+      {{ movement.floors.value|round|int }} etages / {{ movement.floors.goal }}
+    </span>
+    {% endif %}
+    {% if movement.intensity_week and movement.intensity_week.verdict != 'too_early' %}
+    <span class="chip-{{ 'green' if movement.intensity_week.verdict == 'reached' else 'yellow' if movement.intensity_week.verdict == 'close' else 'red' }} px-3 py-1.5 rounded-full">
+      {{ movement.intensity_week.value }} min d'intensite sur 7 j / {{ movement.intensity_week.goal }}
+    </span>
+    {% endif %}
+    {% if movement.sedentary_hours is defined %}
+    <span class="chip-{{ 'red' if 'sedentary_high' in movement.flags else 'green' }} px-3 py-1.5 rounded-full">
+      {{ movement.sedentary_hours }} h assis
+    </span>
+    {% endif %}
+    {% if movement.stress_avg is defined %}
+    <span class="chip-{{ 'yellow' if 'stress_high' in movement.flags else 'green' }} px-3 py-1.5 rounded-full">
+      stress {{ movement.stress_avg }}
+    </span>
+    {% endif %}
+    {% if movement.battery_lowest is defined %}
+    <span class="chip-{{ 'red' if 'battery_drained' in movement.flags else 'green' }} px-3 py-1.5 rounded-full">
+      batterie mini {{ movement.battery_lowest }}
+    </span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if desk_break and desk_break['items'] %}
+<div class="card p-5">
+  <h2 class="font-semibold mb-1 flex items-center gap-2">
+    <span style="color: var(--violet);">●</span> Pause bureau
+    <span class="text-xs font-normal" style="color: var(--muted);">~{{ desk_break.total_min }} min, silencieux</span>
+  </h2>
+  {% if desk_break.gentle_only %}
+  <p class="text-xs mb-2" style="color: var(--muted);">Journee douce : mobilite et respiration seulement.</p>
+  {% endif %}
+  <ul class="space-y-2 text-sm">
+    {% for item in desk_break['items'] %}
+    <li>
+      <span class="font-medium">{{ item.name }}</span>
+      <span class="text-xs" style="color: var(--muted);">({{ 'assis' if item.posture == 'seated' else 'debout' }}, {{ item.seconds }} s)</span><br>
+      <span style="color: var(--text-secondary);">{{ item.how }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% for note in desk_break.notes %}
+  <p class="text-xs mt-2" style="color: var(--text-secondary);">{{ note }}</p>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="card p-5">
   <div class="flex items-center justify-between mb-3">
     <h2 class="font-semibold flex items-center gap-2">

@@ -152,7 +152,18 @@ afterwards" below)
                            applies the deload guardrail (3 reds in a
                            row, OR a single critically negative TSB
                            reading -> forced lighter week) on top of
-                           the daily status/level; gcal.py checks the
+                           the daily status/level (training.plan_day:
+                           an illness -- declared with sick_until or
+                           read from RHR/HRV/readiness plus battery,
+                           stress and breathing -- turns the day into
+                           REST; a red day the level system cannot
+                           lighten further becomes a flat RECOVERY
+                           walk, never the same level-0 treadmill);
+                           metrics.movement_summary judges yesterday's
+                           steps/floors/intensity minutes/sitting time/
+                           stress/battery against the goals, and
+                           desk.py picks silent exercises for a shared
+                           office from those flags; gcal.py checks the
                            user's real calendar for conflicts and
                            moves tonight's slot if needed before
                            updating the event; garmin_api.py pushes
@@ -164,9 +175,11 @@ afterwards" below)
                            relevant); achievements.py checks/
                            announces unlocks; notify.py pushes it;
                            logged to coach_log
-  16:00  run_checkin.py   afternoon: nudges if hydration/steps are
-                           meaningfully behind pace -- silent if on
-                           track (no running commentary)
+  16:00  run_checkin.py   afternoon: refreshes today's Garmin
+                           rollups, then nudges if hydration/steps are
+                           meaningfully behind pace or you have sat
+                           7 h+, with one silent desk exercise --
+                           silent if on track (no running commentary)
   21:00  run_checkin.py   evening: nudges to wind down early if the
                            last 3 nights are meaningfully short on
                            sleep -- silent otherwise

@@ -9,6 +9,7 @@ budget the morning one had. One builder means a regenerated message is
 the same message with a different phrasing, not a poorer one.
 """
 
+import desk
 import metrics
 import progress
 import training
@@ -48,6 +49,10 @@ def build_payload(
     weekly = weekly if weekly is not None else progress.weekly_progress(
         conn, user_id, today,
     )
+    desk_break = desk.break_for_day(
+        conn, user_id, today, today_session.get("tier", "train"),
+        today_session.get("status"), language,
+    )
     return {
         "date": today,
         "language": language,
@@ -59,6 +64,11 @@ def build_payload(
         "activity_yesterday": metrics.activity_yesterday(
             conn, user_id, today,
         ),
+        # Yesterday judged against the person's own goals, with the
+        # verdicts already computed (see metrics.movement_summary).
+        "movement_yesterday": metrics.movement_summary(
+            conn, user_id, today,
+        ),
         "nutrition_today": nutrition,
         "weekly_progress": weekly,
         "today_session": today_session,
@@ -68,6 +78,9 @@ def build_payload(
         # what is LEFT to eat today, and this project never asks the
         # model to do arithmetic on figures it is meant to repeat.
         "today_remaining": progress.remaining_today(conn, user_id, today),
+        # Silent exercises for a shared office, picked from the same
+        # movement flags; absent on weekends or with desk_job off.
+        **({"desk_break": desk_break} if desk_break else {}),
         **({"weather_today": weather_today} if weather_today else {}),
         **metrics.history_snapshot(conn, user_id, today),
     }

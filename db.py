@@ -628,6 +628,14 @@ DEFAULT_SETTINGS = {
     "timezone": "Europe/Paris",
     "language": "fr",  # "fr" or "en" -- coaching message language
     "step_goal": "10000",
+    # Daily floors and weekly intensity minutes: the other two goals the
+    # movement summary judges yesterday against (150 is the WHO/Garmin
+    # weekly default for moderate minutes).
+    "floors_goal": "10",
+    # "1": the person sits at a desk on weekdays, so the coach adds a
+    # silent, invisible desk break (desk.py) and an afternoon nudge.
+    "desk_job": "1",
+    "intensity_weekly_goal_min": "150",
     "protein_target_g_per_kg": "1.8",
     "fat_target_g_per_kg": "0.9",
     "hydration_target_ml_per_kg": "35",

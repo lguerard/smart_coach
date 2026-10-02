@@ -42,6 +42,7 @@ from webauthn.helpers.structs import (
 import achievements
 import coach_payload
 import db
+import desk
 import gcal
 import llm
 import metrics
@@ -548,6 +549,8 @@ def home(request: Request) -> HTMLResponse:
              targets.get("hydration_target_ml"), "ml"),
             ("Pas", wellness.get("steps_today"),
              wellness.get("step_goal"), ""),
+            ("Etages", wellness.get("floors_climbed_today"),
+             int(db.get_setting(conn, user_id, "floors_goal") or 0), ""),
         ) if target
     ]
     coach_score = achievements.score(conn, user_id)
@@ -565,11 +568,18 @@ def home(request: Request) -> HTMLResponse:
     )
     in_deload = bool(deload_until and deload_until >= date)
     off_title = day_template["title"]
+    # Yesterday's movement against the goals, and the silent desk break
+    # picked from it -- the same two the morning message is given.
+    movement = metrics.movement_summary(conn, user_id, date)
+    desk_break = desk.break_for_day(
+        conn, user_id, date, tier, entry["status"] if entry else None,
+    )
 
     return templates.TemplateResponse(
         request, "home.html", {
             "date": date, "entry": entry, "values": session_values,
             "off_title": off_title, "tier": tier,
+            "movement": movement, "desk_break": desk_break,
             "tier_reasons": tier_reasons,
             "sick_until": training.sick_until(conn, user_id),
             "sick_today": training.is_self_reported_sick(
@@ -1266,6 +1276,9 @@ async def save_settings(request: Request):
     db.set_setting(
         conn, user_id, "track_menstrual_cycle",
         "1" if "track_menstrual_cycle" in form else "0",
+    )
+    db.set_setting(
+        conn, user_id, "desk_job", "1" if "desk_job" in form else "0",
     )
     db.set_setting(
         conn, user_id, "trust_device_tdee",

@@ -463,7 +463,7 @@ ILLNESS_FAST_PATH_SIGNALS = 3
 # together -- a stressful week and a poor night look the same from the
 # wrist -- they only count next to a core signal.
 BODY_BATTERY_POOR = 40  # morning peak below this: never really recharged
-STRESS_HIGH = 51  # Garmin's "medium" band starts at 51 (0-100 scale)
+STRESS_HIGH = metrics.STRESS_HIGH  # Garmin's "medium" band starts at 51
 RESPIRATION_RISE_BRPM = 2.0  # waking rate above the personal baseline
 RESPIRATION_BASELINE_DAYS = 14
 
@@ -809,6 +809,33 @@ def _training_readiness_vote(wellness: dict) -> Optional[str]:
     return "yellow"
 
 
+def _body_battery_vote(wellness: dict) -> Optional[str]:
+    """Morning body battery peak: never really recharged -> yellow.
+
+    Capped at yellow on purpose. Body battery and stress are the
+    watch's own blend of the same heart-rate and HRV signals the other
+    votes already read, so letting them also turn a day red would count
+    one bad night twice -- but a day that was not recharged is not a day
+    to be pushed up a level either, which is all yellow does.
+    """
+    peak = wellness.get("body_battery_highest")
+    if peak is None:
+        return None
+    return "yellow" if peak < BODY_BATTERY_POOR else "green"
+
+
+def _stress_vote(wellness: dict) -> Optional[str]:
+    """Yesterday's whole-day stress average: high -> yellow, capped.
+
+    Yesterday's, not today's: at wake-up today's average only covers the
+    night. Capped at yellow for the same reason as the battery vote.
+    """
+    average = wellness.get("stress_avg_yesterday")
+    if average is None:
+        return None
+    return "yellow" if average >= STRESS_HIGH else "green"
+
+
 # Two sessions in a row felt too hard means the level is wrong, whatever
 # this morning's recovery says -- one bad evening is noise, two is a
 # pattern. Same, mirrored, for a level that has become too easy.
@@ -904,6 +931,12 @@ def _all_votes(
          _HRV_STATUS_LABEL_FR.get(hrv_status or "", "")),
         ("Recuperation", _training_readiness_vote(wellness),
          "" if readiness is None else f"{readiness:.0f}/100"),
+        ("Batterie", _body_battery_vote(wellness),
+         "" if wellness.get("body_battery_highest") is None
+         else f"pic {wellness['body_battery_highest']:.0f}/100 ce matin"),
+        ("Stress (veille)", _stress_vote(wellness),
+         "" if wellness.get("stress_avg_yesterday") is None
+         else f"moyenne {wellness['stress_avg_yesterday']:.0f}/100"),
         ("Ressenti", _feedback_vote(feedback),
          ", ".join(
              _FEEDBACK_LABEL_FR.get(r, r)
@@ -1513,6 +1546,28 @@ if __name__ == "__main__":
     assert adjust_level(3, "red") == 2
 
     assert compute_status({}, None) == "yellow"
+    # Battery and stress hold a day back, never turn it red alone: they
+    # are the watch's blend of signals the other votes already read.
+    well = {"sleep_score": 90}
+    assert compute_status({**well, "body_battery_highest": 80}, None) == "green"
+    assert compute_status({**well, "body_battery_highest": 30}, None) == "yellow"
+    assert compute_status({**well, "body_battery_highest": 3}, None) == "yellow"
+    assert compute_status({**well, "stress_avg_yesterday": 30}, None) == "green"
+    assert compute_status({**well, "stress_avg_yesterday": 70}, None) == "yellow"
+    assert compute_status({"stress_avg_yesterday": 99}, None) == "yellow"
+    # ...but a real red signal still wins over them.
+    assert compute_status(
+        {"sleep_score": 40, "body_battery_highest": 80}, None,
+    ) == "red"
+    labels = {
+        row["label"]: row for row in explain_status(
+            {**well, "body_battery_highest": 30, "stress_avg_yesterday": 70},
+            None,
+        )
+    }
+    assert labels["Batterie"]["vote"] == "yellow", labels
+    assert "30" in labels["Batterie"]["detail"], labels
+    assert "70" in labels["Stress (veille)"]["detail"], labels
     assert compute_status({"sleep_score": 40}, None) == "red"
     assert compute_status(
         {"sleep_score": 80, "recent_minutes": 100, "previous_minutes": 100},

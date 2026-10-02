@@ -13,6 +13,7 @@ import sqlite3
 import sys
 
 import db
+import desk
 import metrics
 import notify
 import progress
@@ -21,6 +22,10 @@ import progress
 # daily hydration/step targets -- a tunable starting point, same
 # posture as training.py's thresholds.
 AFTERNOON_PACE_PCT = 0.6
+
+# Sitting time by mid-afternoon that makes a desk break worth sending
+# on its own, without a steps/hydration gap.
+SEDENTARY_AFTERNOON_H = 7
 
 SLEEP_DEBT_WINDOW_DAYS = 3
 # Average sleep this far under target over the window triggers the
@@ -54,6 +59,69 @@ def _recent_avg_sleep_hours(
     return sum(hours) / len(hours) if hours else None
 
 
+def _refresh_garmin_today(conn: sqlite3.Connection, user: dict) -> None:
+    """Re-fetch today's Garmin rollups so the check-in reads this
+    afternoon, not the 07:15 snapshot.
+
+    The ingest runs once, in the morning, when today's steps and floors
+    are close to zero -- so without this the 16:00 pace check compared a
+    morning snapshot against an afternoon target and always found a gap.
+    Best-effort: a Garmin failure leaves the check-in on what it has.
+    """
+    try:
+        from ingest import garmin_api
+
+        garmin_api.fetch_and_upsert(conn, user["id"], user["username"], days=1)
+    except Exception as error:
+        print(f"{user['username']}: garmin refresh skipped -- {error}")
+
+
+def _desk_nudge(
+    conn: sqlite3.Connection, user_id: int, today: str, language: str,
+    behind: bool, wellness: dict,
+) -> str:
+    """One silent exercise for the afternoon message, or ``""``.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        today (str): ISO local date.
+        language (str): ``fr`` or ``en``.
+        behind (bool): Steps/hydration are behind pace.
+        wellness (dict): Today's ``metrics.daily_wellness``.
+
+    Returns:
+        str: A line starting with a space-free label, or ``""`` when it
+        is not a desk day or there is no reason to send one.
+    """
+    if not desk.desk_mode(conn, user_id, today):
+        return ""
+    flags = []
+    if behind:
+        flags.append("steps_low")
+    sedentary = wellness.get("sedentary_seconds")
+    if sedentary is not None and sedentary / 3600 >= SEDENTARY_AFTERNOON_H:
+        flags.append("sedentary_high")
+    if not flags:
+        return ""
+    entry = conn.execute(
+        "SELECT status, tier FROM coach_log WHERE user_id = ? AND "
+        "local_date = ? ORDER BY id DESC LIMIT 1", (user_id, today),
+    ).fetchone()
+    plan = desk.build_break(
+        today, flags, (entry["tier"] if entry and entry["tier"] else "train"),
+        entry["status"] if entry else None, language, items=1,
+    )
+    if not plan["items"]:
+        return ""
+    item = plan["items"][0]
+    label = (
+        "Pause bureau silencieuse" if language == "fr"
+        else "Silent desk break"
+    )
+    return f"\n{label} : {item['name']} -- {item['how']}"
+
+
 def afternoon_checkin(
     conn: sqlite3.Connection, user: dict, date: str | None = None,
 ) -> None:
@@ -70,6 +138,8 @@ def afternoon_checkin(
     user_id = user["id"]
     language = db.get_setting(conn, user_id, "language") or "fr"
     ntfy_topic = db.get_setting(conn, user_id, "ntfy_topic") or None
+    if date is None:
+        _refresh_garmin_today(conn, user)
     today = date or dt.datetime.now(
         metrics.local_tz(conn, user_id)
     ).date().isoformat()
@@ -92,19 +162,34 @@ def afternoon_checkin(
 
     step_goal = wellness.get("step_goal")
     steps_actual = wellness.get("steps_today") or 0
-    if step_goal and steps_actual < AFTERNOON_PACE_PCT * step_goal:
+    steps_behind = bool(
+        step_goal and steps_actual < AFTERNOON_PACE_PCT * step_goal
+    )
+    if steps_behind:
         missing_steps = round(AFTERNOON_PACE_PCT * step_goal - steps_actual)
         gaps_fr.append(f"{missing_steps} pas de retard sur l'objectif")
         gaps_en.append(f"{missing_steps} steps behind goal")
 
-    if not gaps_fr:
+    desk_line = _desk_nudge(
+        conn, user_id, today, language,
+        behind=steps_behind,
+        wellness=wellness,
+    )
+    if not gaps_fr and not desk_line:
         return  # on track -- no nudge
 
-    message = (
-        "Point de 16h : " + ", ".join(gaps_fr) + "."
-        if language == "fr" else
-        "4pm check-in: " + ", ".join(gaps_en) + "."
-    )
+    if gaps_fr:
+        message = (
+            "Point de 16h : " + ", ".join(gaps_fr) + "."
+            if language == "fr" else
+            "4pm check-in: " + ", ".join(gaps_en) + "."
+        )
+    else:
+        message = (
+            "Point de 16h : tu es reste assis longtemps." if language == "fr"
+            else "4pm check-in: you have been sitting a long while."
+        )
+    message += desk_line
     notify.notify(message, title="Smart Coach", topic=ntfy_topic)
 
 
@@ -239,5 +324,51 @@ if __name__ == "__main__":
     evening_checkin(conn, user, "2026-07-13")
     assert len(sent) == 1, sent
     assert "Dette de sommeil" in sent[0][0], sent
+
+
+    # Desk break in the afternoon message: a step gap on a weekday
+    # carries one silent exercise; the same gap on a Sunday does not.
+    sent.clear()
+    db.set_setting(conn, uid, "step_goal", "10000")
+    afternoon_checkin(conn, user, "2026-07-15")  # Wednesday, no steps
+    assert "Pause bureau silencieuse" in sent[0][0], sent
+    sent.clear()
+    afternoon_checkin(conn, user, "2026-07-19")  # Sunday
+    assert sent and "Pause bureau" not in sent[0][0], sent
+    sent.clear()
+    db.set_setting(conn, uid, "desk_job", "0")
+    afternoon_checkin(conn, user, "2026-07-15")
+    assert sent and "Pause bureau" not in sent[0][0], sent
+    db.set_setting(conn, uid, "desk_job", "1")
+
+    # Sitting all day alone is worth a message, with no pace gap at all.
+    sent.clear()
+    day = "2026-07-16"  # Thursday
+    conn.execute(
+        "INSERT INTO steps VALUES ('s16', ?, '2026-07-16T08:00:00+00:00', "
+        "'2026-07-16T08:10:00+00:00', ?, 9000)", (uid, day),
+    )
+    conn.execute(
+        "INSERT INTO hydration VALUES ('h16', ?, "
+        "'2026-07-16T08:00:00+00:00', '2026-07-16T08:01:00+00:00', ?, 2500)",
+        (uid, day),
+    )
+    conn.execute(
+        "INSERT INTO garmin_daily_summary (user_id, local_date, "
+        "sedentary_seconds) VALUES (?, ?, 9 * 3600)", (uid, day),
+    )
+    conn.commit()
+    afternoon_checkin(conn, user, day)
+    assert len(sent) == 1 and "assis" in sent[0][0], sent
+    assert "Pause bureau silencieuse" in sent[0][0], sent
+    # ...and little sitting with no gap stays silent.
+    sent.clear()
+    conn.execute(
+        "UPDATE garmin_daily_summary SET sedentary_seconds = 3 * 3600 "
+        "WHERE user_id = ?", (uid,),
+    )
+    conn.commit()
+    afternoon_checkin(conn, user, day)
+    assert sent == [], sent
 
     print("run_checkin.py: all checks passed (no live push sent)")

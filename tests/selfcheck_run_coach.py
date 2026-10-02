@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import coach_payload  # noqa: E402
 import db  # noqa: E402
+import desk  # noqa: E402
 import gcal  # noqa: E402
 import llm  # noqa: E402
 import metrics  # noqa: E402
@@ -83,6 +84,7 @@ def _logged(conn, uid):
 
 
 if __name__ == "__main__":
+    desk.DESK_WEEKDAYS = range(7)  # whatever day the check runs on
     # A red morning at level 0: a flat easy walk, everywhere.
     _reset()
     _install({"sleep_score": 40})
@@ -95,10 +97,15 @@ if __name__ == "__main__":
     session = calls["payloads"][0]["today_session"]
     assert session["type"] == "recovery", session
     assert session["scheduled_type"] == "treadmill", session
+    # Red day: the desk break is gentle (no strength set).
+    brk = calls["payloads"][0]["desk_break"]
+    assert brk["gentle_only"] and brk["items"], brk
+    assert all(i["kind"] != "strength" for i in brk["items"]), brk
     row = _logged(conn, user["id"])
     assert row["tier"] == training.TIER_RECOVERY and row["tier_reason"], dict(row)
     # The payload carries the same blocks a regenerated message gets.
-    for key in ("activity_yesterday", "illness_watch", "today_remaining"):
+    for key in ("activity_yesterday", "illness_watch", "today_remaining",
+                "movement_yesterday"):
         assert key in calls["payloads"][0], key
 
     # Declared illness: rest. Nothing pushed, yesterday's workout taken

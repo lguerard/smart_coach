@@ -600,6 +600,125 @@ def activity_yesterday(
     return result
 
 
+# Thresholds for movement_summary. Plain judgement calls, not clinical
+# cut-offs: the point is a consistent yardstick between days.
+STRESS_HIGH = 51  # Garmin's "medium" band starts at 51 (0-100 scale)
+SEDENTARY_HIGH_H = 11  # awake-and-still hours: a desk day
+MOVEMENT_LOW_PCT = 70  # under this share of a goal: "low"
+BATTERY_DRAINED = 15  # yesterday's lowest body battery under this: drained
+MOVEMENT_WEEK_DAYS = 7
+
+
+def _goal_row(value, goal) -> Optional[dict]:
+    """``{value, goal, pct, verdict}`` for one metric against its goal."""
+    if value is None or not goal:
+        return None
+    pct = round(100 * value / goal)
+    return {
+        "value": value, "goal": goal, "pct": pct,
+        "verdict": (
+            "reached" if pct >= 100
+            else "low" if pct < MOVEMENT_LOW_PCT else "close"
+        ),
+    }
+
+
+def movement_summary(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict:
+    """Yesterday's movement and strain, judged against the person's goals.
+
+    The raw numbers were already in the payload, but the model was left
+    to decide whether 2765 steps, 4 floors and a 23 body-battery floor
+    are good or bad, and in practice it quoted a few and ignored the
+    rest. The verdicts are computed here, once, so every signal --
+    steps, floors, intensity minutes, sitting time, stress, battery --
+    reaches the message with its meaning attached, and the desk-break
+    suggestions can be driven by the same flags.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): Today's ISO local date -- yesterday is judged.
+
+    Returns:
+        dict: ``date`` plus, where data exists, ``steps``, ``floors``,
+        ``intensity_week`` (weighted minutes over the last 7 days up to
+        yesterday: vigorous counts double, as Garmin counts it) -- each
+        ``{value, goal, pct, verdict}`` -- and ``sedentary_hours``,
+        ``stress_avg``, ``battery_lowest``; ``flags`` lists the ones
+        worth acting on (``steps_low``, ``floors_low``,
+        ``intensity_low``, ``sedentary_high``, ``stress_high``,
+        ``battery_drained``) so callers branch on names, not numbers.
+    """
+    yesterday_wellness = activity_yesterday(conn, user_id, date)
+    result: dict = {"date": yesterday_wellness["date"]}
+
+    steps = _goal_row(
+        yesterday_wellness.get("steps"),
+        yesterday_wellness.get("step_goal")
+        or int(db.get_setting(conn, user_id, "step_goal") or 0),
+    )
+    floors = _goal_row(
+        yesterday_wellness.get("floors_climbed"),
+        int(db.get_setting(conn, user_id, "floors_goal") or 0),
+    )
+    window_start = (
+        dt.date.fromisoformat(date)
+        - dt.timedelta(days=MOVEMENT_WEEK_DAYS)
+    ).isoformat()
+    week = conn.execute(
+        "SELECT COUNT(*) AS days, "
+        "SUM(COALESCE(moderate_intensity_min, 0) + "
+        "2 * COALESCE(vigorous_intensity_min, 0)) AS minutes "
+        "FROM garmin_daily_summary WHERE user_id = ? AND local_date >= ? "
+        "AND local_date < ? AND (moderate_intensity_min IS NOT NULL "
+        "OR vigorous_intensity_min IS NOT NULL)",
+        (user_id, window_start, date),
+    ).fetchone()
+    intensity = None
+    if week and week["days"]:
+        # Only judged once the week has enough days behind it to be a
+        # week: three days in, 40 minutes is on pace, not "low".
+        goal = int(db.get_setting(
+            conn, user_id, "intensity_weekly_goal_min",
+        ) or 0)
+        intensity = _goal_row(week["minutes"], goal)
+        if intensity and week["days"] < MOVEMENT_WEEK_DAYS - 2:
+            intensity["verdict"] = "too_early"
+            intensity["days_counted"] = week["days"]
+    for key, row in (
+        ("steps", steps), ("floors", floors), ("intensity_week", intensity),
+    ):
+        if row:
+            result[key] = row
+
+    flags = []
+    if steps and steps["verdict"] == "low":
+        flags.append("steps_low")
+    if floors and floors["verdict"] == "low":
+        flags.append("floors_low")
+    if intensity and intensity["verdict"] == "low":
+        flags.append("intensity_low")
+    sedentary = yesterday_wellness.get("sedentary_seconds")
+    if sedentary is not None:
+        result["sedentary_hours"] = round(sedentary / 3600, 1)
+        if sedentary / 3600 >= SEDENTARY_HIGH_H:
+            flags.append("sedentary_high")
+    stress = yesterday_wellness.get("stress_avg_level")
+    if stress is not None:
+        result["stress_avg"] = stress
+        if stress >= STRESS_HIGH:
+            flags.append("stress_high")
+    lowest = yesterday_wellness.get("body_battery_lowest")
+    if lowest is not None:
+        result["battery_lowest"] = lowest
+        if lowest < BATTERY_DRAINED:
+            flags.append("battery_drained")
+    result["flags"] = flags
+    return result
+
+
 def garmin_daily_summary(
     conn: sqlite3.Connection, user_id: int, date: str,
 ) -> dict:
@@ -667,6 +786,16 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         **latest_body_comp(conn, user_id, date),
         **garmin_wellness(conn, user_id, date),
     }
+    # Yesterday's whole-day stress: at wake-up today's own average only
+    # covers the night, so this is the one the status vote can use.
+    stress_before = conn.execute(
+        "SELECT avg_level FROM garmin_stress WHERE user_id = ? AND "
+        "local_date = ?", (user_id, (
+            dt.date.fromisoformat(date) - dt.timedelta(days=1)
+        ).isoformat()),
+    ).fetchone()
+    if stress_before and stress_before["avg_level"] is not None:
+        wellness["stress_avg_yesterday"] = stress_before["avg_level"]
     hydration = sum_for_date(conn, user_id, "hydration", "volume_ml", date)
     distance = sum_for_date(conn, user_id, "distance", "meters", date)
     floors = sum_for_date(conn, user_id, "floors_climbed", "floors", date)
@@ -1362,5 +1491,67 @@ if __name__ == "__main__":
         "adherence_last_7_days": [], "session_skipped_yesterday": None,
         "training_load": {},
     }, empty
+
+    # --- movement_summary: every signal judged against a goal --------
+    mv_conn = db.connect(Path(tempfile.mkdtemp()) / "mv.db")
+    db.init_db(mv_conn)
+    mv = db.create_user(mv_conn, "mover", "password1234")
+    db.set_setting(mv_conn, mv, "step_goal", "10000")
+    # The reported day: a desk job. 2765 steps, 4 floors, sat all day,
+    # stressed, battery drained to 23.
+    mv_conn.execute(
+        "INSERT INTO garmin_daily_summary (user_id, local_date, "
+        "total_steps, floors_ascended, sedentary_seconds, "
+        "moderate_intensity_min, vigorous_intensity_min) VALUES "
+        "(?, '2026-10-01', 2765, 4, 46800, 6, 0)", (mv,),
+    )
+    mv_conn.execute(
+        "INSERT INTO garmin_stress (user_id, local_date, avg_level, "
+        "max_level) VALUES (?, '2026-10-01', 58, 90)", (mv,),
+    )
+    mv_conn.execute(
+        "INSERT INTO garmin_body_battery (user_id, local_date, charged, "
+        "drained, highest, lowest) VALUES (?, '2026-10-01', 30, 70, 61, "
+        "9)", (mv,),
+    )
+    mv_conn.commit()
+    summary = movement_summary(mv_conn, mv, "2026-10-02")
+    assert summary["steps"] == {
+        "value": 2765, "goal": 10000, "pct": 28, "verdict": "low",
+    }, summary
+    assert summary["floors"]["verdict"] == "low", summary  # 4 of 10
+    assert summary["sedentary_hours"] == 13.0, summary
+    assert summary["stress_avg"] == 58 and summary["battery_lowest"] == 9
+    assert summary["flags"] == [
+        "steps_low", "floors_low", "sedentary_high", "stress_high",
+        "battery_drained",
+    ], summary
+    # One day of a week is "too early", never "low".
+    assert summary["intensity_week"]["verdict"] == "too_early", summary
+    assert "intensity_low" not in summary["flags"]
+    # A full week short of the goal IS low; vigorous counts double.
+    for offset in range(2, 8):
+        day = (dt.date(2026, 10, 2) - dt.timedelta(days=offset)).isoformat()
+        mv_conn.execute(
+            "INSERT INTO garmin_daily_summary (user_id, local_date, "
+            "total_steps, moderate_intensity_min, vigorous_intensity_min) "
+            "VALUES (?, ?, 9000, 5, 5)", (mv, day),
+        )
+    mv_conn.commit()
+    week = movement_summary(mv_conn, mv, "2026-10-02")["intensity_week"]
+    assert week["value"] == 6 + 6 * 15, week  # 6 + six days of 5 + 2*5
+    assert week["verdict"] == "low" and week["pct"] == 64, week
+    # Goals met -> no flag; nothing known -> no judgement invented.
+    db.set_setting(mv_conn, mv, "step_goal", "2000")
+    db.set_setting(mv_conn, mv, "floors_goal", "3")
+    met = movement_summary(mv_conn, mv, "2026-10-02")
+    assert met["steps"]["verdict"] == "reached", met
+    assert "steps_low" not in met["flags"] and "floors_low" not in met["flags"]
+    assert movement_summary(mv_conn, mv, "2026-01-01")["flags"] == []
+
+    # Yesterday's whole-day stress is what the status vote reads.
+    assert daily_wellness(mv_conn, mv, "2026-10-02")[
+        "stress_avg_yesterday"
+    ] == 58
 
     print("metrics.py: all checks passed")
