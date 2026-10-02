@@ -113,11 +113,36 @@ def check_modules() -> None:
             check(f"Module {module}", OK)
 
 
+def _orphans(names: set[str], found: list[str]) -> list[str]:
+    """Credential entries stored under a name that is not an account.
+
+    Parameters:
+        names (set[str]): The real account names.
+        found (list[str]): Names seen on disk (token file or folder
+            suffixes).
+
+    Returns:
+        list[str]: Those on disk that match no account, sorted.
+    """
+    return sorted(name for name in found if name not in names)
+
+
 def check_garmin_tokens(conn: sqlite3.Connection) -> None:
     # Read the path rather than importing garmin_api: that import pulls
     # the whole Garmin client in, and a doctor must not fail on the very
     # thing it is meant to diagnose.
     token_root = Path(os.environ.get("GARMIN_TOKEN_DIR", "data/garmin-tokens"))
+    accounts = {row["username"] for row in conn.execute("SELECT username FROM users")}
+    if token_root.exists():
+        for stray in _orphans(
+            accounts, [d.name for d in token_root.iterdir() if d.is_dir()],
+        ):
+            check(
+                f"Jetons Garmin orphelins ({stray})", WARN,
+                f"aucun compte ne s'appelle {stray!r} : ces jetons ne "
+                "servent a personne. Si ce sont les bons, renommez le "
+                f"dossier {token_root}/{stray} avec le nom du compte",
+            )
     for user in conn.execute("SELECT username FROM users"):
         name = f"Jetons Garmin ({user['username']})"
         token_dir = token_root / user["username"]
@@ -143,13 +168,38 @@ def check_calendar(conn: sqlite3.Connection) -> None:
     if not (config / "calendar_client_secret.json").exists():
         check("Google Calendar", WARN, "client OAuth absent — etape 3 du guide")
         return
-    for user in conn.execute("SELECT username FROM users"):
-        token = config / f"calendar_token_{user['username']}.json"
+    accounts = {row["username"] for row in conn.execute("SELECT username FROM users")}
+    prefix, suffix = "calendar_token_", ".json"
+    strays = _orphans(
+        accounts,
+        [
+            f.name[len(prefix):-len(suffix)]
+            for f in config.glob(f"{prefix}*{suffix}")
+        ],
+    )
+    for stray in strays:
+        # The live failure: an e-mail address typed as the account name
+        # wrote a valid, fresh token that nothing reads, while the old
+        # dead one kept getting a green tick.
         check(
-            f"Calendrier ({user['username']})",
-            OK if token.exists() else WARN,
-            "" if token.exists() else "consentement manquant — setup_calendar.py",
+            f"Calendrier jeton orphelin ({stray})", WARN,
+            f"aucun compte ne s'appelle {stray!r}, donc personne ne lit "
+            f"{prefix}{stray}{suffix}. Si c'est le bon jeton, renommez-le "
+            f"{prefix}<compte>{suffix} (ecrase l'ancien)",
         )
+    # Imported here, not at the top: a doctor must still run when the
+    # Google client library is the thing that is broken.
+    try:
+        import gcal
+    except Exception as error:  # noqa: BLE001
+        check("Calendrier", WARN, f"module gcal inutilisable ({error})")
+        return
+    for user in conn.execute("SELECT username FROM users"):
+        status, detail = gcal.token_health(user["username"])
+        level = {"ok": OK, "unreachable": WARN}.get(
+            status, WARN if status == "missing" else FAIL,
+        )
+        check(f"Calendrier ({user['username']})", level, detail)
 
 
 def check_rclone() -> None:

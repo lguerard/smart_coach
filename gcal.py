@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -31,6 +32,101 @@ CONFIG_DIR = Path.home() / ".config/smart_coach"
 
 WINDOW_BEFORE_MIN = 30
 WINDOW_AFTER_MIN = 90
+
+
+class CalendarAuthError(RuntimeError):
+    """The Calendar token cannot be used, with a message for a human.
+
+    The raw exception Google raises for a dead token is a tuple of an
+    OAuth error string and a dict, and it used to land verbatim at the
+    bottom of the morning notification -- accurate, and no help to
+    anyone not already fluent in OAuth.
+    """
+
+
+def setup_command(username: str) -> str:
+    """The exact command that re-authorizes one account.
+
+    Parameters:
+        username (str): The smart_coach account name.
+
+    Returns:
+        str: A command to run from the deployment folder.
+    """
+    return (
+        "docker compose run --rm -it -p 8765:8765 smart_coach-worker "
+        f"python setup_calendar.py {username} --manual"
+    )
+
+
+def _refusal_message(username: str, error: Exception) -> str:
+    """Plain-language reason for a refused token, with the fix.
+
+    Parameters:
+        username (str): The account the token belongs to.
+        error (Exception): What ``creds.refresh`` raised.
+
+    Returns:
+        str: One short French paragraph.
+    """
+    if "invalid_grant" in str(error):
+        # Google invalidates a refresh token after 7 days while the
+        # OAuth consent screen is in Testing mode -- by far the most
+        # common reason, and invisible until the screen is checked.
+        reason = (
+            "l'autorisation Google a expire ou ete revoquee. Si cela "
+            "revient chaque semaine, l'ecran de consentement OAuth est "
+            "reste en mode Test (7 jours de validite) : passez-le en "
+            "production"
+        )
+    else:
+        # RefreshError carries (message, response-dict); only the
+        # message is for a human.
+        detail = error.args[0] if error.args else str(error)
+        reason = f"Google refuse le jeton ({detail})"
+    return f"{reason}. Relancez : {setup_command(username)}"
+
+
+def token_health(username: str) -> tuple[str, str]:
+    """Actually try the stored token, not just look for its file.
+
+    A token file that exists says nothing about whether Google still
+    honours it: doctor.py reported the calendar as fine for a week
+    while every morning's update failed, because it only checked that
+    the file was there -- and the file it found was a dead one,
+    while a fresh authorization had been written under a different
+    name that nothing reads.
+
+    Parameters:
+        username (str): The smart_coach account name.
+
+    Returns:
+        tuple[str, str]: ``(status, detail)`` where status is ``ok``,
+        ``missing`` (no file), ``refused`` (Google rejects it -- needs
+        re-authorizing) or ``unreachable`` (could not ask Google, which
+        proves nothing about the token).
+    """
+    token_file = CONFIG_DIR / f"calendar_token_{username}.json"
+    if not token_file.exists():
+        return "missing", f"consentement manquant : {setup_command(username)}"
+    try:
+        creds = Credentials.from_authorized_user_file(
+            str(token_file), SCOPES
+        )
+    except (ValueError, OSError) as error:
+        return "refused", f"fichier de jeton illisible ({error})"
+    if not creds.refresh_token:
+        return "refused", (
+            "pas de jeton de renouvellement. Relancez : "
+            f"{setup_command(username)}"
+        )
+    try:
+        creds.refresh(Request())
+    except RefreshError as error:
+        return "refused", _refusal_message(username, error)
+    except Exception as error:  # noqa: BLE001 -- network, DNS, proxy...
+        return "unreachable", f"Google injoignable ({error})"
+    return "ok", ""
 
 
 def get_calendar_service(username: str):
@@ -57,13 +153,17 @@ def get_calendar_service(username: str):
             str(token_file), SCOPES
         )
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except RefreshError as error:
+            raise CalendarAuthError(
+                _refusal_message(username, error)
+            ) from error
     if not creds or not creds.valid:
         if not sys.stdin.isatty():
-            raise RuntimeError(
-                f"Calendar token missing/expired for {username!r}. Run "
-                "`python run_coach.py` once in a terminal to grant "
-                "Calendar access."
+            raise CalendarAuthError(
+                f"jeton Calendar absent pour {username!r}. "
+                f"Lancez : {setup_command(username)}"
             )
         if not CLIENT_SECRET_FILE.exists():
             raise RuntimeError(
@@ -453,5 +553,86 @@ if __name__ == "__main__":
         "created-Sport"
     )
     assert missing_service.calendars_api.created == ["Sport"]
+
+    # --- token handling: a dead token must say so in plain words ---
+    import tempfile
+
+    real_config_dir = CONFIG_DIR
+    CONFIG_DIR = Path(tempfile.mkdtemp())
+    real_from_file = Credentials.from_authorized_user_file
+
+    class _FakeCreds:
+        expired = True
+        valid = False
+        refresh_token = "r"
+
+        def __init__(self, outcome):
+            self._outcome = outcome
+
+        def refresh(self, request):
+            if self._outcome is not None:
+                raise self._outcome
+
+    def _install(outcome, refresh_token="r"):
+        creds = _FakeCreds(outcome)
+        creds.refresh_token = refresh_token
+        Credentials.from_authorized_user_file = staticmethod(
+            lambda path, scopes: creds
+        )
+
+    try:
+        # No file at all: tells you to run setup, with the account name.
+        status, detail = token_health("lguerard")
+        assert status == "missing", (status, detail)
+        assert "setup_calendar.py lguerard" in detail, detail
+
+        (CONFIG_DIR / "calendar_token_lguerard.json").write_text("{}")
+
+        # The exact refusal from the real deployment: a revoked/expired
+        # grant. The message must name the fix and the usual cause (the
+        # consent screen left in Testing mode), not echo the OAuth tuple.
+        dead = RefreshError(
+            "invalid_grant: Token has been expired or revoked.",
+            {"error": "invalid_grant"},
+        )
+        _install(dead)
+        status, detail = token_health("lguerard")
+        assert status == "refused", (status, detail)
+        assert "setup_calendar.py lguerard --manual" in detail, detail
+        assert "mode Test" in detail, detail
+        assert "{'error'" not in detail, detail  # no raw dict dump
+        try:
+            get_calendar_service("lguerard")
+        except CalendarAuthError as error:
+            assert "setup_calendar.py lguerard" in str(error), error
+        else:
+            raise AssertionError("a dead token must raise CalendarAuthError")
+
+        # A refusal that is NOT invalid_grant is reported as what it is,
+        # without claiming the Testing-mode cause.
+        _install(RefreshError("unauthorized_client", {"error": "x"}))
+        status, detail = token_health("lguerard")
+        assert status == "refused" and "mode Test" not in detail, detail
+        assert "unauthorized_client" in detail, detail
+        assert "{'error'" not in detail, detail  # message only, no dict
+
+        # Google unreachable proves nothing about the token: it must
+        # not read as "needs re-authorizing".
+        _install(ConnectionError("dns down"))
+        status, detail = token_health("lguerard")
+        assert status == "unreachable", (status, detail)
+
+        # No refresh token (a consent that never asked for offline
+        # access) cannot ever renew itself.
+        _install(None, refresh_token=None)
+        status, _ = token_health("lguerard")
+        assert status == "refused", status
+
+        # A healthy token passes.
+        _install(None)
+        assert token_health("lguerard") == ("ok", "")
+    finally:
+        Credentials.from_authorized_user_file = real_from_file
+        CONFIG_DIR = real_config_dir
 
     print("gcal.py: all checks passed (no live Calendar call made)")

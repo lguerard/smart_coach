@@ -26,7 +26,23 @@ def main() -> int:
         help="the Smart Coach account these Garmin tokens belong to "
         "(the name you signed up with)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="use this name even though no account is called that",
+    )
     args = parser.parse_args()
+
+    if not args.force:
+        import db
+
+        conn = db.connect()
+        db.init_db(conn)
+        problem = db.unknown_account_message(conn, args.username)
+        conn.close()
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
 
     try:
         garmin_api.get_client(args.username)

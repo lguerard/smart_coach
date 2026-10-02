@@ -858,6 +858,45 @@ def all_users(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def unknown_account_message(
+    conn: sqlite3.Connection, username: str,
+) -> str | None:
+    """Why ``username`` is not an account on this deployment, if it isn't.
+
+    Garmin tokens and Calendar tokens are stored under the account
+    name, and the pipeline looks them up by that same name. A setup
+    command given any other spelling -- on a real deployment, the
+    Google e-mail address and the Garmin display name, one setup each
+    -- succeeds, writes a perfectly valid token where nothing will ever
+    read it, and leaves the old dead one in place. Nothing fails until
+    the morning message, days later.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        username (str): The name the setup command was given.
+
+    Returns:
+        str | None: A message listing the real account names, or
+        ``None`` when the name is fine. Also ``None`` while no account
+        exists yet, since the guide has you run these setups before
+        creating the first one.
+    """
+    names = [
+        row["username"]
+        for row in conn.execute("SELECT username FROM users ORDER BY id")
+    ]
+    if not names or username in names:
+        return None
+    return (
+        f"No Smart Coach account is called {username!r}. "
+        f"Accounts on this deployment: {', '.join(names)}.\n"
+        "Use the account name (the one you sign in with), not an "
+        "e-mail address: credentials are stored under it, and any other "
+        "spelling writes them where nothing will ever read them.\n"
+        "Pass --force to use this name anyway."
+    )
+
+
 def pending_users(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Self-signed-up accounts awaiting admin approval."""
     return conn.execute(
@@ -1033,6 +1072,21 @@ if __name__ == "__main__":
 
     assert get_user(test_conn, alice)["username"] == "alice"
     assert {u["username"] for u in all_users(test_conn)} == {"alice", "bob"}
+
+    # A setup command given anything but a real account name must be
+    # refused with the real names listed -- the live failure was an
+    # e-mail address typed where the account name belongs, which
+    # silently wrote a working token that nothing would ever read.
+    assert unknown_account_message(test_conn, "alice") is None
+    wrong = unknown_account_message(test_conn, "alice@gmail.com")
+    assert wrong is not None and "alice" in wrong and "bob" in wrong, wrong
+    assert "--force" in wrong, wrong
+    # Before any account exists the guide has you run these setups
+    # first, so there is nothing to compare against yet.
+    empty_path = Path(tempfile.mkdtemp()) / "empty.db"
+    empty_conn = connect(empty_path)
+    init_db(empty_conn)
+    assert unknown_account_message(empty_conn, "anyone") is None
 
     # First user is the admin and always approved; a self-signup is
     # pending (invisible to the pipeline loop) until approved.
