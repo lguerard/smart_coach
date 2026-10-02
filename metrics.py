@@ -557,12 +557,20 @@ def activity_yesterday(
         user_id (int): Owning user.
         date (str): Today's ISO local date -- yesterday is derived.
 
+    Stress and body battery are here for the same reason as the step
+    count: this morning's own reading only covers the night, so it
+    says little about how demanding the day was -- yesterday's
+    whole-day average does.
+
     Returns:
         dict: ``date`` plus whichever of ``steps``, ``distance_km``,
         ``floors_climbed``, ``hydration_ml``, ``calories_burned``,
         ``active_kcal``, ``intensity_moderate_min``,
         ``intensity_vigorous_min``, ``active_seconds``,
-        ``sedentary_seconds`` and ``step_goal`` have data.
+        ``highly_active_seconds``, ``sedentary_seconds``,
+        ``stress_avg_level``, ``stress_max_level``,
+        ``body_battery_drained``, ``body_battery_lowest`` and
+        ``step_goal`` have data.
     """
     yesterday = (
         dt.date.fromisoformat(date) - dt.timedelta(days=1)
@@ -580,7 +588,12 @@ def activity_yesterday(
         ("intensity_moderate_min", "intensity_moderate_min"),
         ("intensity_vigorous_min", "intensity_vigorous_min"),
         ("active_seconds", "active_seconds"),
+        ("highly_active_seconds", "highly_active_seconds"),
         ("sedentary_seconds", "sedentary_seconds"),
+        ("stress_avg_level", "stress_avg_level"),
+        ("stress_max_level", "stress_max_level"),
+        ("body_battery_drained", "body_battery_drained"),
+        ("body_battery_lowest", "body_battery_lowest"),
     ):
         if source in full:
             result[key] = full[source]
@@ -1139,6 +1152,24 @@ if __name__ == "__main__":
     assert yday["hydration_ml"] == 500, yday
     # ...and it inherits the rollup fallback for a day HC never synced.
     assert activity_yesterday(conn, uid, "2026-07-15")["steps"] == 8200
+
+    # Yesterday's whole-day stress and battery, not this morning's
+    # night-only reading.
+    conn.execute(
+        "INSERT INTO garmin_stress (user_id, local_date, avg_level, "
+        "max_level) VALUES (?, '2026-07-14', 47, 91)", (uid,),
+    )
+    conn.execute(
+        "INSERT INTO garmin_body_battery (user_id, local_date, charged, "
+        "drained, highest, lowest) VALUES (?, '2026-07-14', 55, 71, 80, "
+        "9)", (uid,),
+    )
+    conn.commit()
+    busy = activity_yesterday(conn, uid, "2026-07-15")
+    assert busy["stress_avg_level"] == 47, busy
+    assert busy["stress_max_level"] == 91, busy
+    assert busy["body_battery_drained"] == 71, busy
+    assert busy["body_battery_lowest"] == 9, busy
 
     # HC stays authoritative where it has the day (it merges every app
     # writing to the phone, not just the watch)...

@@ -1068,21 +1068,81 @@ def upsert_menstrual_cycle(
     return 1
 
 
+# Days re-fetched for the whole-day rollups on every run: today plus
+# the ones just behind it. Garmin answers for a date as it currently
+# stands, so a past day asked for again returns its FINAL totals.
+ROLLUP_REFRESH_DAYS = 3
+
+
+def _recent_days(today: str, count: int) -> list[str]:
+    """``count`` ISO dates ending at ``today``, oldest first.
+
+    Parameters:
+        today (str): ISO local date.
+        count (int): How many days, ``today`` included.
+
+    Returns:
+        list[str]: Oldest first, ``today`` last.
+    """
+    end = dt.date.fromisoformat(today)
+    return [
+        (end - dt.timedelta(days=offset)).isoformat()
+        for offset in range(count - 1, -1, -1)
+    ]
+
+
+def _upsert_recent(upsert, conn, user_id: int, client, days: list[str]) -> int:
+    """Run a per-date upsert over several days, today last.
+
+    This exists because the whole-day rollups (steps, active minutes,
+    floors, stress...) were fetched once, at the morning ingest, for
+    the day then in progress -- so the row for any past day stayed
+    frozen at its 07:15 snapshot. A real account read "211 steps
+    yesterday" the morning after a 5,514-step day, because the phone
+    export had not reached that day yet and this stale row was the
+    fallback. Fetching the days behind today again overwrites those
+    rows with their final totals.
+
+    Today's fetch is required, as before: a failure there propagates.
+    A failure on an earlier day is reported and skipped -- refreshing
+    history must never cost today's data.
+
+    Parameters:
+        upsert: One of the ``upsert_*(conn, user_id, client, date)``.
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        days (list[str]): Dates, oldest first, today last.
+
+    Returns:
+        int: Sum of what each call upserted.
+    """
+    total = 0
+    for day in days[:-1]:
+        try:
+            total += upsert(conn, user_id, client, day)
+        except Exception as error:  # noqa: BLE001 -- best effort by design
+            print(
+                f"garmin: {upsert.__name__}({day}) skipped: {error}",
+                file=sys.stderr,
+            )
+    return total + upsert(conn, user_id, client, days[-1])
+
+
 def fetch_and_upsert(
     conn: sqlite3.Connection, user_id: int, username: str,
     days: int = LOOKBACK_DAYS,
 ) -> dict[str, int]:
     """Pull one user's Garmin activities, sleep and wellness into the db.
 
-    HRV/training-readiness/body-battery/stress/respiration/SpO2/
-    intensity-minutes/VO2max are fetched for today's local date only
-    (not backfilled over ``days``) -- they're inputs for today's
-    coaching run, not historical training data. Hydration is the one
-    exception fetched for both today AND yesterday: unlike those,
-    someone reads yesterday's completed total back the next morning
-    (progress.intake_for_date), and Garmin's API returns a completed
-    day's true value on demand rather than an ingest-time snapshot,
-    so there is no staleness cost to asking for both.
+    HRV/training-readiness/VO2max/SpO2 are fetched for today's local
+    date only (not backfilled over ``days``) -- they're inputs for
+    today's coaching run, not historical training data. The
+    whole-day rollups are different: the morning message judges
+    YESTERDAY from them (steps, active minutes, floors, stress,
+    body battery, hydration), and a row fetched once at 07:15 holds
+    only the first minutes of that day. They are therefore re-fetched
+    for today and the days just behind it -- see ``_upsert_recent``.
 
     Parameters:
         conn (sqlite3.Connection): smart_coach db connection.
@@ -1110,9 +1170,7 @@ def fetch_and_upsert(
     )
     weigh_ins = upsert_body_composition(conn, user_id, client, tz, days)
     today = dt.datetime.now(tz).date().isoformat()
-    yesterday = (
-        dt.datetime.now(tz).date() - dt.timedelta(days=1)
-    ).isoformat()
+    recent = _recent_days(today, ROLLUP_REFRESH_DAYS)
     counts = {
         "exercise_sessions": sessions,
         "exercise_hr_samples": hr_samples,
@@ -1124,18 +1182,25 @@ def fetch_and_upsert(
         "training_readiness": upsert_training_readiness(
             conn, user_id, client, today,
         ),
-        "body_battery": upsert_body_battery(conn, user_id, client, today),
-        "stress": upsert_stress(conn, user_id, client, today),
-        "daily_summary": upsert_daily_summary(conn, user_id, client, today),
-        "respiration": upsert_respiration(conn, user_id, client, today),
+        "body_battery": _upsert_recent(
+            upsert_body_battery, conn, user_id, client, recent,
+        ),
+        "stress": _upsert_recent(
+            upsert_stress, conn, user_id, client, recent,
+        ),
+        "daily_summary": _upsert_recent(
+            upsert_daily_summary, conn, user_id, client, recent,
+        ),
+        "respiration": _upsert_recent(
+            upsert_respiration, conn, user_id, client, recent,
+        ),
         "spo2": upsert_spo2(conn, user_id, client, today),
-        "intensity_minutes": upsert_intensity_minutes(
-            conn, user_id, client, today,
+        "intensity_minutes": _upsert_recent(
+            upsert_intensity_minutes, conn, user_id, client, recent,
         ),
         "vo2max": upsert_vo2max(conn, user_id, client, today),
-        "hydration": (
-            upsert_garmin_hydration(conn, user_id, client, today)
-            + upsert_garmin_hydration(conn, user_id, client, yesterday)
+        "hydration": _upsert_recent(
+            upsert_garmin_hydration, conn, user_id, client, recent,
         ),
         "badges": upsert_badges(conn, user_id, client),
         "menstrual_cycle": (
@@ -1434,6 +1499,18 @@ if __name__ == "__main__":
                 return {}
             return {"avgStressLevel": 32, "maxStressLevel": 68}
 
+        def get_stats(self, date: str) -> dict:
+            if date != "2026-07-15":
+                return {}
+            return {
+                "totalSteps": 5514, "dailyStepGoal": 7500,
+                "floorsAscended": 12.0, "restingHeartRate": 55,
+                "moderateIntensityMinutes": 18,
+                "vigorousIntensityMinutes": 4,
+                "sedentarySeconds": 52000, "activeSeconds": 6000,
+                "highlyActiveSeconds": 900,
+            }
+
         def get_hydration_data(self, date: str) -> dict:
             if date != "2026-07-16":
                 return {}
@@ -1689,6 +1766,64 @@ if __name__ == "__main__":
     ).fetchone()
     assert stress_row["avg_level"] == 32, dict(stress_row)
     assert stress_row["max_level"] == 68, dict(stress_row)
+
+    # The whole-day rollups must be re-fetched for past days. A row
+    # written at the morning ingest holds only that morning's first
+    # minutes: a real account read "211 steps yesterday" for a
+    # 5,514-step day, because the phone export had not reached that
+    # day yet and this frozen row was the fallback.
+    assert _recent_days("2026-07-16", 3) == [
+        "2026-07-14", "2026-07-15", "2026-07-16",
+    ]
+    conn.execute(
+        "INSERT INTO garmin_daily_summary (user_id, local_date, "
+        "total_steps) VALUES (?, '2026-07-15', 211)", (uid,),
+    )
+    conn.commit()
+    import metrics as _metrics
+    assert _metrics.activity_yesterday(conn, uid, "2026-07-16")[
+        "steps"
+    ] == 211  # the bug: the morning snapshot
+    refreshed = _upsert_recent(
+        upsert_daily_summary, conn, uid, fake,
+        _recent_days("2026-07-16", 3),
+    )
+    assert refreshed == 1, refreshed  # only 07-15 has data in the fake
+    final = _metrics.activity_yesterday(conn, uid, "2026-07-16")
+    assert final["steps"] == 5514, final
+    assert final["floors_climbed"] == 12.0, final
+    assert final["intensity_moderate_min"] == 18, final
+    assert final["intensity_vigorous_min"] == 4, final
+    assert final["sedentary_seconds"] == 52000, final
+
+    # Refreshing history is best effort; today's fetch is not.
+    calls = []
+
+    def _flaky(conn_, user_, client_, day):
+        calls.append(day)
+        if day == "2026-07-14":
+            raise RuntimeError("garmin hiccup")
+        if day == "2026-07-16":
+            raise ConnectionError("today failed")
+        return 1
+
+    try:
+        _upsert_recent(_flaky, conn, uid, fake, _recent_days("2026-07-16", 3))
+    except ConnectionError:
+        pass
+    else:
+        raise AssertionError("a failed fetch for today must propagate")
+    # Oldest first, and the past-day failure did not stop the rest.
+    assert calls == ["2026-07-14", "2026-07-15", "2026-07-16"], calls
+
+    def _past_only_flaky(conn_, user_, client_, day):
+        if day == "2026-07-14":
+            raise RuntimeError("garmin hiccup")
+        return 1
+
+    assert _upsert_recent(
+        _past_only_flaky, conn, uid, fake, _recent_days("2026-07-16", 3),
+    ) == 2  # 07-14 skipped, the other two counted
 
     assert upsert_garmin_hydration(conn, uid, fake, "2026-07-01") == 0
     assert upsert_garmin_hydration(conn, uid, fake, "2026-07-16") == 1
