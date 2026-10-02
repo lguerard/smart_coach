@@ -214,14 +214,19 @@
     {% endif %}
     <div class="flex-1 min-w-0">
       <h1 class="text-lg font-semibold flex items-center gap-2 flex-wrap">
-        {{ session_label_fr.get(entry.session_type, off_title) }}
-        {% if in_deload %}
+        {% if tier == 'rest' %}Repos{% elif tier == 'recovery' %}Marche de recuperation{% else %}{{ session_label_fr.get(entry.session_type, off_title) }}{% endif %}
+        {% if in_deload and tier == 'train' %}
         <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background: color-mix(in srgb, var(--violet) 20%, transparent); color: var(--violet);">
           🛡 deload
         </span>
         {% endif %}
       </h1>
-      {% if entry.level is not none %}
+      {% if tier != 'train' and entry.session_type %}
+      <p class="text-sm mt-1" style="color: var(--text-secondary);">
+        a la place de {{ off_title }}
+      </p>
+      {% endif %}
+      {% if entry.level is not none and tier == 'train' %}
       <form method="post" action="/today/level" class="flex items-center gap-1 text-sm mt-1" style="color: var(--text-secondary);">
         Niveau
         <input name="level" type="number" min="0" max="10" value="{{ entry.level }}"
@@ -236,9 +241,20 @@
 
   {% if description %}
   <p class="text-sm mt-3 p-3 rounded-xl" style="background: color-mix(in srgb, var(--surface-1-solid) 60%, transparent); color: var(--text-secondary);">
-    {{ description.split(': ', 1)[1].split(' (statut')[0] }}
+    {% if tier == 'train' %}{{ description.split(': ', 1)[1].split(' (statut')[0] }}{% else %}{{ description }}{% endif %}
   </p>
   {% endif %}
+  <form method="post" action="/sick" class="flex items-center gap-2 flex-wrap text-xs mt-3" style="color: var(--muted);">
+    {% if sick_today %}
+    <span>Malade jusqu'au {{ sick_until }}.</span>
+    <button name="days" value="0" class="px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--blue);">Je vais mieux</button>
+    {% else %}
+    <span>Malade ?</span>
+    <button name="days" value="1" class="px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--blue);">Aujourd'hui</button>
+    <button name="days" value="3" class="px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--blue);">3 jours</button>
+    {% endif %}
+    <span>(pris en compte des demain matin)</span>
+  </form>
   {% if cal_note %}
   <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
   {% endif %}

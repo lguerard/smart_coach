@@ -40,6 +40,7 @@ from webauthn.helpers.structs import (
 )
 
 import achievements
+import coach_payload
 import db
 import gcal
 import llm
@@ -467,17 +468,23 @@ def home(request: Request) -> HTMLResponse:
     date = today_str(conn, user_id)
     entry = latest_coach_entry(conn, user_id, date)
 
+    weekday = dt.date.fromisoformat(date).weekday()
+    day_template = training.schedule_for_user(conn, user_id)[weekday]
     session_values = None
     description = None
-    if entry and entry["session_type"]:
-        session_values = training.session_values(
-            entry["session_type"], entry["level"],
-            training.session_cap_min(conn, user_id),
+    tier = training.TIER_TRAIN
+    tier_reasons: list[str] = []
+    if entry and (entry["session_type"] or entry["tier"]):
+        # Rebuilt from the log, not recomputed: what the dashboard shows
+        # is what the morning run decided (rest, recovery walk or the
+        # session), including on a day the level system sat out.
+        plan = training.plan_from_log(
+            conn, user_id, date, day_template, entry,
         )
-        description = training.format_description_fr(
-            entry["session_type"], entry["level"], session_values,
-            entry["status"],
-        )
+        session_values = plan["values"]
+        description = plan["description"]
+        tier = plan["tier"]
+        tier_reasons = plan["tier_reasons"]
     # Per source, not one global date: the two feeds fail independently
     # -- Garmin tokens expire, the phone stops exporting to Drive -- and
     # a single "last sync" line hides whichever one is stuck behind the
@@ -506,7 +513,8 @@ def home(request: Request) -> HTMLResponse:
     pending_feedback = conn.execute(
         "SELECT local_date, session_type FROM coach_log "
         "WHERE user_id = ? AND local_date IN (?, ?) "
-        "AND session_type IS NOT NULL AND local_date NOT IN "
+        "AND session_type IS NOT NULL "
+        "AND COALESCE(tier, 'train') = 'train' AND local_date NOT IN "
         "(SELECT local_date FROM session_feedback WHERE user_id = ?) "
         "ORDER BY local_date DESC LIMIT 1",
         (user_id, date, yesterday, user_id),
@@ -556,13 +564,17 @@ def home(request: Request) -> HTMLResponse:
         if entry and entry["session_type"] else None
     )
     in_deload = bool(deload_until and deload_until >= date)
-    weekday = dt.date.fromisoformat(date).weekday()
-    off_title = training.schedule_for_user(conn, user_id)[weekday]["title"]
+    off_title = day_template["title"]
 
     return templates.TemplateResponse(
         request, "home.html", {
             "date": date, "entry": entry, "values": session_values,
-            "off_title": off_title,
+            "off_title": off_title, "tier": tier,
+            "tier_reasons": tier_reasons,
+            "sick_until": training.sick_until(conn, user_id),
+            "sick_today": training.is_self_reported_sick(
+                conn, user_id, date,
+            ),
             "description": description,
             "session_label_fr": training.SESSION_LABEL_FR,
             "status_label_fr": training.STATUS_LABEL_FR,
@@ -600,6 +612,7 @@ async def submit_feedback(request: Request):
     row = conn.execute(
         "SELECT session_type FROM coach_log WHERE user_id = ? AND "
         "local_date = ? AND session_type IS NOT NULL "
+        "AND COALESCE(tier, 'train') = 'train' "
         "ORDER BY id DESC LIMIT 1", (user_id, date),
     ).fetchone()
     # No session that day means nothing to rate -- a crafted form post
@@ -635,32 +648,19 @@ def regenerate(request: Request) -> HTMLResponse:
             },
         )
 
-    wellness = metrics.daily_wellness(conn, user_id, date)
-    nutrition = metrics.nutrition_for_date(conn, user_id, date)
-    weekly = progress.weekly_progress(conn, user_id, date)
-    deload_until = (
-        training.get_deload_until(conn, user_id, entry["session_type"])
-        if entry["session_type"] else None
-    )
-    today_session = {"type": "off_system"} if not entry["session_type"] else {
-        "type": entry["session_type"], "status": entry["status"],
-        "level": entry["level"],
-        "values": training.session_values(
-            entry["session_type"], entry["level"],
-            training.session_cap_min(conn, user_id),
-        ),
-        "in_deload": bool(deload_until and deload_until >= date),
-        "deload_triggered": False,  # regenerate never re-triggers one
-    }
-    message = llm.coach({
-        "date": date,
-        "language": db.get_setting(conn, user_id, "language") or "fr",
-        "wellness_today": wellness,
-        "nutrition_today": nutrition, "weekly_progress": weekly,
-        "today_session": today_session,
-        "today_targets": progress.macro_targets(conn, user_id, date),
-        **metrics.history_snapshot(conn, user_id, date),
-    })
+    language = db.get_setting(conn, user_id, "language") or "fr"
+    day_template = training.schedule_for_user(
+        conn, user_id,
+    )[dt.date.fromisoformat(date).weekday()]
+    plan = training.plan_from_log(conn, user_id, date, day_template, entry)
+    # The same builder as the morning run: a regenerated message is the
+    # same message rephrased, not one missing yesterday's activity, the
+    # illness watch or what is left to eat.
+    message = llm.coach(coach_payload.build_payload(
+        conn, user_id, date, language,
+        training.session_payload(plan, day_template, language),
+        training.illness_watch(conn, user_id, date),
+    ))
     conn.execute(
         "UPDATE coach_log SET message = ?, created_at = ? WHERE id = ? "
         "AND user_id = ?",
@@ -672,6 +672,25 @@ def regenerate(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "_message.html", {"entry": entry, "error": None},
     )
+
+
+@app.post("/sick")
+async def declare_sick(request: Request):
+    """Self-report being ill (or being better), from the Home card.
+
+    The person's word beats any inference from the sensors, so this
+    sets ``sick_until`` (see ``training.set_sick``) and the next morning
+    run rests accordingly; ``days=0`` clears it.
+    """
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    try:
+        days = max(0, min(14, int(form.get("days", ""))))
+    except (TypeError, ValueError):
+        return RedirectResponse("/", status_code=303)
+    training.set_sick(conn, user_id, today_str(conn, user_id), days)
+    return RedirectResponse("/", status_code=303)
 
 
 @app.post("/today/level")
@@ -687,7 +706,13 @@ async def edit_today_level(request: Request):
     user_id = current_user_id(request)
     date = today_str(conn, user_id)
     entry = latest_coach_entry(conn, user_id, date)
-    if not entry or not entry["session_type"]:
+    # A rest or recovery day has no level to edit: the form is not shown
+    # for it, and a crafted post must not turn the rest back into a
+    # session behind the coach's back.
+    if (
+        not entry or not entry["session_type"]
+        or (entry["tier"] or training.TIER_TRAIN) != training.TIER_TRAIN
+    ):
         return RedirectResponse(url="/", status_code=303)
     form = await request.form()
     try:

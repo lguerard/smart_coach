@@ -90,6 +90,13 @@
       <input name="city" value="{{ settings.city }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
+    <label class="block text-sm">
+      Malade jusqu'au (AAAA-MM-JJ, optionnel -- jusqu'a cette date incluse,
+      le coach propose du repos au lieu d'une seance ; vide = pas malade)
+      <input name="sick_until" value="{{ settings.sick_until }}"
+        placeholder="2026-10-05"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
     <label class="flex items-center justify-between text-sm">
       Suivre le cycle menstruel (donnee Garmin, contexte coach uniquement)
       <input name="track_menstrual_cycle" type="checkbox" value="1"

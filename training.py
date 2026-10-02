@@ -198,6 +198,252 @@ def _trigger_deload(
     }
 
 
+# --- Tiers: what a day actually asks for ---------------------------
+#
+# The level system has a floor. At level 0 the treadmill session is
+# still 5.5 km/h at 12% incline for 20 minutes, which is a real
+# workout, and every red day after that changes nothing: a person ill
+# for a week was handed the identical prescription each morning,
+# because "lighter" had run out of room. Below the floor there are two
+# more steps, neither of which has a level:
+#
+#   recovery  an easy flat walk, in place of the scheduled session
+#   rest      no session at all
+TIER_TRAIN, TIER_RECOVERY, TIER_REST = "train", "recovery", "rest"
+TIER_LABEL_FR = {
+    TIER_TRAIN: "entrainement", TIER_RECOVERY: "recuperation",
+    TIER_REST: "repos",
+}
+RECOVERY_VALUES = {"speed_kmh": 4.5, "incline_pct": 0, "duration_min": 20}
+
+
+def sick_until(conn: sqlite3.Connection, user_id: int) -> Optional[str]:
+    """The date the person said they are ill until, if it is set.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+
+    Returns:
+        str | None: ISO date, or None when unset or not a valid date.
+    """
+    value = (db.get_setting(conn, user_id, "sick_until") or "").strip()
+    try:
+        dt.date.fromisoformat(value)
+    except ValueError:
+        return None
+    return value
+
+
+def is_self_reported_sick(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> bool:
+    """Whether ``date`` falls inside a declared illness.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date.
+
+    Returns:
+        bool: True up to and including the ``sick_until`` date.
+    """
+    until = sick_until(conn, user_id)
+    return until is not None and date <= until
+
+
+def set_sick(
+    conn: sqlite3.Connection, user_id: int, today: str, days: int,
+) -> Optional[str]:
+    """Declare an illness for ``days`` days counting today, or clear it.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        today (str): ISO local date.
+        days (int): 1 means today only; 0 (or less) clears the flag.
+
+    Returns:
+        str | None: The new ``sick_until`` date, None when cleared.
+    """
+    if days <= 0:
+        db.set_setting(conn, user_id, "sick_until", "")
+        return None
+    until = (
+        dt.date.fromisoformat(today) + dt.timedelta(days=days - 1)
+    ).isoformat()
+    db.set_setting(conn, user_id, "sick_until", until)
+    return until
+
+
+def consecutive_red_days(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> int:
+    """Run of red days immediately before ``date``.
+
+    Across every session type, unlike ``get_red_streak`` which belongs
+    to one type: what a red day says about the body does not depend on
+    which session happened to be scheduled. A day with no coach_log row
+    ends the run, and the latest row wins when a day was logged twice.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date (today, excluded).
+
+    Returns:
+        int: How many days in a row, ending yesterday, were red.
+    """
+    rows = conn.execute(
+        "SELECT local_date, status FROM coach_log WHERE id IN ("
+        "SELECT MAX(id) FROM coach_log WHERE user_id = ? AND "
+        "local_date < ? GROUP BY local_date) ORDER BY local_date DESC",
+        (user_id, date),
+    ).fetchall()
+    run = 0
+    expected = dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    for row in rows:
+        if row["local_date"] != expected.isoformat() or row["status"] != "red":
+            break
+        run += 1
+        expected -= dt.timedelta(days=1)
+    return run
+
+
+def previous_tier(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> str:
+    """What yesterday asked for; ``train`` when unknown.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date (today).
+
+    Returns:
+        str: One of the ``TIER_*`` constants.
+    """
+    yesterday = (
+        dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    ).isoformat()
+    row = conn.execute(
+        "SELECT tier FROM coach_log WHERE user_id = ? AND local_date = ? "
+        "ORDER BY id DESC LIMIT 1", (user_id, yesterday),
+    ).fetchone()
+    return (row["tier"] if row and row["tier"] else TIER_TRAIN)
+
+
+def tier_before_guardrail(
+    conn: sqlite3.Connection, user_id: int, date: str, illness: dict,
+) -> Optional[dict]:
+    """Rest or recovery decided without needing today's level.
+
+    Checked BEFORE the deload guardrail on purpose: when the body is
+    the problem, the day should not also be scored against the level
+    system -- no further level cut, no red streak counted on a day the
+    session is not even happening.
+
+    Order of precedence: a declared illness, then the sensors' own
+    reading of one (``illness_watch``), then the first day back after a
+    rest, which is a walk and not the full session again.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date (today).
+        illness (dict): ``illness_watch`` output.
+
+    Returns:
+        dict | None: ``{"tier", "reasons"}``, or None to carry on with
+        the normal level-based flow.
+    """
+    if is_self_reported_sick(conn, user_id, date):
+        return {
+            "tier": TIER_REST,
+            "reasons": [f"tu es declare malade jusqu'au {sick_until(conn, user_id)}"],
+        }
+    if illness.get("suspected"):
+        shown = ", ".join(illness.get("signals", [])[:3])
+        return {
+            "tier": TIER_REST,
+            "reasons": [
+                "signes compatibles avec une maladie ou un gros "
+                f"surmenage ({shown})"
+            ],
+        }
+    if previous_tier(conn, user_id, date) == TIER_REST:
+        return {
+            "tier": TIER_RECOVERY,
+            "reasons": ["reprise douce apres un jour de repos"],
+        }
+    return None
+
+
+def tier_after_guardrail(
+    status: Optional[str], level: Optional[int], red_days_before: int,
+) -> Optional[dict]:
+    """Recovery forced by red days the level system cannot absorb.
+
+    Parameters:
+        status (str | None): Today's ``compute_status`` result.
+        level (int | None): Today's level AFTER the guardrail.
+        red_days_before (int): ``consecutive_red_days`` for yesterday
+            backwards.
+
+    Returns:
+        dict | None: ``{"tier": recovery, "reasons"}`` when today is
+        red and either the level is already at its floor (nothing left
+        to cut) or it is the second red day running; None otherwise.
+    """
+    if status != "red" or level is None:
+        return None
+    if level <= LEVEL_MIN:
+        return {
+            "tier": TIER_RECOVERY,
+            "reasons": [
+                "jour rouge et niveau deja au minimum : la seance ne "
+                "peut plus s'alleger"
+            ],
+        }
+    if red_days_before >= 1:
+        return {
+            "tier": TIER_RECOVERY,
+            "reasons": [f"{red_days_before + 1}e jour rouge de suite"],
+        }
+    return None
+
+
+def describe_tier_fr(
+    tier: str, scheduled_title: str, reasons: list[str],
+    values: Optional[dict] = None,
+) -> str:
+    """French calendar/coach description of a rest or recovery day.
+
+    Parameters:
+        tier (str): ``TIER_REST`` or ``TIER_RECOVERY``.
+        scheduled_title (str): The session the week plan had scheduled.
+        reasons (list[str]): Why, from the tier functions above.
+        values (dict | None): ``RECOVERY_VALUES`` for a recovery day.
+
+    Returns:
+        str: One sentence, reasons included.
+    """
+    why = " ; ".join(reasons)
+    if tier == TIER_REST:
+        return (
+            f"REPOS - pas de seance aujourd'hui ({scheduled_title} "
+            f"annule) : {why}. Hydrate-toi, dors, et au plus une marche "
+            "tranquille si l'envie est la."
+        )
+    values = values or RECOVERY_VALUES
+    return (
+        "RECUPERATION - marche tranquille a plat : "
+        f"{values['speed_kmh']} km/h, inclinaison "
+        f"{values['incline_pct']}%, {values['duration_min']} min continu, "
+        f"a la place de {scheduled_title} ({why})."
+    )
+
+
 # Illness/overreaching watch: independent physiological signals
 # agreeing on the same day, sustained across days, rather than any
 # single vote -- a hard training day alone can spike RHR or dent
@@ -208,15 +454,56 @@ def _trigger_deload(
 # this -- there is no clinical basis here to pick a different cutoff,
 # only a basis to combine the ones already tuned.
 ILLNESS_WATCH_DAYS = 3
-ILLNESS_MIN_SIGNALS = 2  # of {RHR spike, HRV low, readiness poor}
+ILLNESS_MIN_SIGNALS = 2  # bad signals on one day, at least one a core one
 ILLNESS_MIN_DISTRESSED_DAYS = 2  # of ILLNESS_WATCH_DAYS
+# Enough on a single day to act without waiting for a second one: three
+# independent signals agreeing, one of them core, is not a bad night.
+ILLNESS_FAST_PATH_SIGNALS = 3
+# Supporting signals. None of these can make a day distressed alone or
+# together -- a stressful week and a poor night look the same from the
+# wrist -- they only count next to a core signal.
+BODY_BATTERY_POOR = 40  # morning peak below this: never really recharged
+STRESS_HIGH = 51  # Garmin's "medium" band starts at 51 (0-100 scale)
+RESPIRATION_RISE_BRPM = 2.0  # waking rate above the personal baseline
+RESPIRATION_BASELINE_DAYS = 14
+
+
+def respiration_baseline(
+    conn: sqlite3.Connection, user_id: int, date: str,
+    days: int = RESPIRATION_BASELINE_DAYS,
+) -> Optional[float]:
+    """Mean waking respiration rate over the ``days`` before ``date``.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date, excluded from the window.
+        days (int): Window length.
+
+    Returns:
+        float | None: Mean breaths per minute, or None with fewer than
+        5 readings (a baseline from two nights is not one).
+    """
+    start = (dt.date.fromisoformat(date) - dt.timedelta(days=days)).isoformat()
+    end = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+    row = conn.execute(
+        "SELECT AVG(avg_waking) AS mean, COUNT(avg_waking) AS n FROM "
+        "garmin_respiration WHERE user_id = ? AND local_date BETWEEN ? "
+        "AND ?", (user_id, start, end),
+    ).fetchone()
+    return row["mean"] if row["n"] >= 5 else None
 
 
 def _distress_signals(
     conn: sqlite3.Connection, user_id: int, date: str,
-) -> list[str]:
-    """Which of the three independent recovery signals were bad on
-    one date.
+) -> list[tuple[str, bool]]:
+    """Which recovery signals were bad on one date.
+
+    Core signals are the autonomic ones -- resting HR above baseline,
+    HRV status LOW, training readiness poor. Supporting signals are
+    body battery that never recharged, high stress, and a waking
+    respiration rate above the personal baseline: each real, none
+    specific to illness, so they only add weight beside a core one.
 
     Parameters:
         conn (sqlite3.Connection): smart_coach db connection.
@@ -224,23 +511,47 @@ def _distress_signals(
         date (str): ISO local date.
 
     Returns:
-        list[str]: Short French labels for each signal that was bad
-        that day (empty list if none, or if there is no data at all).
+        list[tuple[str, bool]]: ``(French label, is_core)`` for each
+        signal that was bad that day (empty if none, or if there is no
+        data at all).
     """
     wellness = metrics.daily_wellness(conn, user_id, date)
     baseline = rhr_baseline(conn, user_id, date)
-    signals = []
+    signals: list[tuple[str, bool]] = []
     resting_hr = wellness.get("resting_hr")
     if resting_hr is not None and baseline is not None:
         spike = resting_hr - baseline
         if spike >= RHR_SPIKE_RED_MIN:
-            signals.append(f"FC repos {spike:+.0f} vs base")
+            signals.append((f"FC repos {spike:+.0f} vs base", True))
     if wellness.get("hrv_status") == "LOW":
-        signals.append("VFC basse")
+        signals.append(("VFC basse", True))
     readiness = wellness.get("training_readiness_score")
     if readiness is not None and readiness < TRAINING_READINESS_POOR:
-        signals.append(f"recuperation {readiness:.0f}/100")
+        signals.append((f"recuperation {readiness:.0f}/100", True))
+    battery = wellness.get("body_battery_highest")
+    if battery is not None and battery < BODY_BATTERY_POOR:
+        signals.append((f"batterie corporelle {battery:.0f}", False))
+    stress = wellness.get("stress_avg_level")
+    if stress is not None and stress >= STRESS_HIGH:
+        signals.append((f"stress {stress:.0f}", False))
+    breathing = wellness.get("respiration_avg_waking")
+    breathing_base = respiration_baseline(conn, user_id, date)
+    if (
+        breathing is not None and breathing_base is not None
+        and breathing - breathing_base >= RESPIRATION_RISE_BRPM
+    ):
+        signals.append(
+            (f"respiration {breathing:.0f} vs base {breathing_base:.0f}", False)
+        )
     return signals
+
+
+def _is_distressed(signals: list[tuple[str, bool]]) -> bool:
+    """Enough signals on one day, at least one of them core."""
+    return (
+        len(signals) >= ILLNESS_MIN_SIGNALS
+        and any(core for _, core in signals)
+    )
 
 
 def illness_watch(
@@ -249,15 +560,18 @@ def illness_watch(
     """Flag a pattern of recovery signals consistent with illness or
     serious overreaching -- not a diagnosis, a reason to back off.
 
-    A day counts as "distressed" when at least
-    ``ILLNESS_MIN_SIGNALS`` of {resting HR spiking above baseline,
-    HRV status LOW, training readiness below the poor threshold} are
-    true together. ``suspected`` is true when at least
+    A day counts as "distressed" when at least ``ILLNESS_MIN_SIGNALS``
+    signals are bad together and at least one is a core one (see
+    ``_distress_signals``). ``suspected`` is true when at least
     ``ILLNESS_MIN_DISTRESSED_DAYS`` of the last ``ILLNESS_WATCH_DAYS``
-    days (today included) were distressed -- sustained agreement
-    across independent signals and across days, deliberately harder
-    to trigger than any single vote, since what this feeds is telling
-    someone to train less, not just to expect a harder session.
+    days (today included) were distressed -- or when today alone shows
+    ``ILLNESS_FAST_PATH_SIGNALS`` signals including a core one, since a
+    person who woke up with a resting HR spike, low HRV and a body
+    battery that never filled should not be sent out on the treadmill
+    to wait for a second day to confirm it. Deliberately harder to
+    trigger than any single vote: what this feeds is telling someone to
+    train less, and the sensors' own reading is only half the story --
+    ``sick_until`` in Settings is the other half.
 
     Parameters:
         conn (sqlite3.Connection): smart_coach db connection.
@@ -277,15 +591,22 @@ def illness_watch(
         ).isoformat()
         per_day.append((day, _distress_signals(conn, user_id, day)))
     distressed_days = [
-        (day, signals) for day, signals in per_day
-        if len(signals) >= ILLNESS_MIN_SIGNALS
+        (day, signals) for day, signals in per_day if _is_distressed(signals)
     ]
-    suspected = len(distressed_days) >= ILLNESS_MIN_DISTRESSED_DAYS
+    today_signals = per_day[0][1]
+    fast_path = (
+        len(today_signals) >= ILLNESS_FAST_PATH_SIGNALS
+        and any(core for _, core in today_signals)
+    )
+    suspected = (
+        len(distressed_days) >= ILLNESS_MIN_DISTRESSED_DAYS or fast_path
+    )
     all_signals: list[str] = []
-    for _, signals in distressed_days:
-        for signal in signals:
-            if signal not in all_signals:
-                all_signals.append(signal)
+    shown = distressed_days if distressed_days else [(date, today_signals)]
+    for _, signals in shown:
+        for label, _core in signals:
+            if label not in all_signals:
+                all_signals.append(label)
     return {
         "suspected": suspected,
         "distressed_days": len(distressed_days),
@@ -972,6 +1293,213 @@ def format_description_fr(
     )
 
 
+_DELOAD_REASON = {
+    "red_streak": ("3 rouges d'affilee", "3 reds in a row"),
+    "tsb": ("fatigue accumulee (TSB)", "accumulated fatigue (TSB)"),
+}
+
+
+def _render_session(
+    conn: sqlite3.Connection, user_id: int, session_type: Optional[str],
+    level: Optional[int], status: Optional[str], tier: str,
+    reasons: list[str], title: str,
+) -> tuple[dict, Optional[str]]:
+    """Values and French description for whatever the day asks for.
+
+    One place for this so the morning run, the dashboard and a
+    regenerated message can never describe the same day differently.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        session_type (str | None): The scheduled type, None off-system.
+        level (int | None): Today's level for that type.
+        status (str | None): Today's green/yellow/red.
+        tier (str): ``TIER_TRAIN`` / ``TIER_RECOVERY`` / ``TIER_REST``.
+        reasons (list[str]): Why the tier is not training.
+        title (str): The scheduled session's title.
+
+    Returns:
+        tuple[dict, str | None]: ``(values, description)``; description
+        is None for an ordinary off-system day.
+    """
+    if tier == TIER_REST:
+        return {}, describe_tier_fr(TIER_REST, title, reasons)
+    if tier == TIER_RECOVERY:
+        values = dict(RECOVERY_VALUES)
+        return values, describe_tier_fr(TIER_RECOVERY, title, reasons, values)
+    if session_type is None:
+        return {}, None
+    values = session_values(
+        session_type, level, session_cap_min(conn, user_id),
+    )
+    return values, format_description_fr(session_type, level, values, status)
+
+
+def plan_day(
+    conn: sqlite3.Connection, user_id: int, date: str, template: dict,
+    wellness: dict, illness: dict, tsb: Optional[float] = None,
+    language: str = "fr",
+) -> dict:
+    """Everything the morning decides about today's training.
+
+    Pulled out of run_coach.py so the part that matters -- what the
+    person is actually told to do -- is a function with tests instead of
+    a pipeline that needs a calendar, a watch and a phone to run. It
+    still writes state (levels, deload windows, red streaks), exactly as
+    the inline code did; the calendar and the watch stay in the caller.
+
+    Order of decisions: an illness (declared, or read from the sensors)
+    cuts every session type and rests the day, skipping the level
+    system entirely; otherwise the normal level adjustment runs and a
+    red day it cannot absorb becomes a recovery walk.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date (today).
+        template (dict): Today's ``schedule_for_user`` entry.
+        wellness (dict): ``metrics.daily_wellness`` for today.
+        illness (dict): ``illness_watch`` output.
+        tsb (float | None): Yesterday's training stress balance.
+        language (str): ``fr`` or ``en``, for the deload note.
+
+    Returns:
+        dict: ``session_type`` (the scheduled one), ``status``,
+        ``level``, ``tier``, ``tier_reasons``, ``values``,
+        ``description`` (None for an ordinary off-system day),
+        ``in_deload``, ``deload_triggered`` and ``illness_deload``.
+    """
+    session_type = template.get("session_type")
+    sick = bool(illness.get("suspected")) or is_self_reported_sick(
+        conn, user_id, date,
+    )
+    illness_deload = apply_illness_deload(conn, user_id, date) if sick else {}
+    tier_info = tier_before_guardrail(conn, user_id, date, illness)
+
+    status = level = None
+    deload = {"in_deload": False, "deload_triggered": False}
+    if session_type is not None:
+        status = compute_status(
+            wellness, rhr_baseline(conn, user_id, date),
+            recent_feedback(conn, user_id, session_type),
+        )
+        if tier_info is None:
+            deload = apply_deload_guardrail(
+                conn, user_id, session_type, status, date, tsb=tsb,
+            )
+            level = deload["level"]
+            tier_info = tier_after_guardrail(
+                status, level, consecutive_red_days(conn, user_id, date),
+            )
+        else:
+            # A rest or recovery day is not scored against the level
+            # system: no further cut, no red counted for a session that
+            # is not happening.
+            level = get_level(conn, user_id, session_type)
+            until = get_deload_until(conn, user_id, session_type)
+            deload = {
+                "in_deload": bool(until and date <= until),
+                "deload_triggered": False,
+            }
+    tier = tier_info["tier"] if tier_info else TIER_TRAIN
+    reasons = list(tier_info["reasons"]) if tier_info else []
+    values, description = _render_session(
+        conn, user_id, session_type, level, status, tier, reasons,
+        template.get("title", ""),
+    )
+    if tier == TIER_TRAIN and deload.get("deload_triggered") and description:
+        reason_fr, reason_en = _DELOAD_REASON[deload["trigger"]]
+        note = (
+            f"SEMAINE DE DELOAD ({reason_fr})" if language == "fr"
+            else f"DELOAD WEEK ({reason_en})"
+        )
+        description = f"{description}\n{note}"
+    return {
+        "session_type": session_type, "status": status, "level": level,
+        "tier": tier, "tier_reasons": reasons, "values": values,
+        "description": description,
+        "in_deload": bool(deload.get("in_deload")),
+        "deload_triggered": bool(deload.get("deload_triggered")),
+        "illness_deload": illness_deload,
+    }
+
+
+def session_payload(plan: dict, template: dict, language: str = "fr") -> dict:
+    """The ``today_session`` block the coach message is written from.
+
+    Parameters:
+        plan (dict): ``plan_day`` output (or ``plan_from_log``).
+        template (dict): Today's ``schedule_for_user`` entry.
+        language (str): ``fr`` or ``en``, for the off-system note.
+
+    Returns:
+        dict: ``type`` is ``rest`` / ``recovery`` / the session type /
+        ``off_system``; ``scheduled_type`` is what the week plan said,
+        so the message can say what was replaced.
+    """
+    tier = plan["tier"]
+    if tier == TIER_TRAIN and plan["session_type"] is None:
+        return {
+            "type": "off_system", "tier": tier,
+            "note": (
+                f"{template['title']}, hors systeme de niveaux"
+                if language == "fr"
+                else f"{template['title']}, outside the level system"
+            ),
+        }
+    return {
+        "type": tier if tier != TIER_TRAIN else plan["session_type"],
+        "scheduled_type": plan["session_type"],
+        "scheduled_title": template.get("title"),
+        "tier": tier, "tier_reasons": plan["tier_reasons"],
+        "status": plan["status"], "level": plan["level"],
+        "values": plan["values"], "description_fr": plan["description"],
+        "in_deload": plan["in_deload"],
+        "deload_triggered": plan["deload_triggered"],
+    }
+
+
+def plan_from_log(
+    conn: sqlite3.Connection, user_id: int, date: str, template: dict,
+    entry: sqlite3.Row,
+) -> dict:
+    """Rebuild a day's plan from its coach_log row, changing nothing.
+
+    For the dashboard and for regenerating a message: both need today's
+    session described exactly as the morning run decided it, and neither
+    may re-run the decision, which moves levels and counts red days.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): ISO local date.
+        template (dict): That day's ``schedule_for_user`` entry.
+        entry (sqlite3.Row): The ``coach_log`` row.
+
+    Returns:
+        dict: Same shape as ``plan_day``; ``deload_triggered`` is always
+        False, since regenerating never re-triggers one.
+    """
+    session_type = entry["session_type"]
+    tier = entry["tier"] or TIER_TRAIN
+    reasons = [entry["tier_reason"]] if entry["tier_reason"] else []
+    values, description = _render_session(
+        conn, user_id, session_type, entry["level"], entry["status"],
+        tier, reasons, template.get("title", ""),
+    )
+    until = (
+        get_deload_until(conn, user_id, session_type) if session_type else None
+    )
+    return {
+        "session_type": session_type, "status": entry["status"],
+        "level": entry["level"], "tier": tier, "tier_reasons": reasons,
+        "values": values, "description": description,
+        "in_deload": bool(until and until >= date),
+        "deload_triggered": False, "illness_deload": {},
+    }
+
+
 if __name__ == "__main__":
     import tempfile
     from pathlib import Path
@@ -1156,6 +1684,396 @@ if __name__ == "__main__":
     assert illness_watch(conn, other_uid, "2026-07-21") == {
         "suspected": False, "distressed_days": 0, "signals": [],
     }
+
+    # --- plan_day: what the person is actually told to do ------------
+    def _fresh():
+        conn_ = db_module.connect(Path(tempfile.mkdtemp()) / "plan.db")
+        db_module.init_db(conn_)
+        return conn_, db_module.create_user(conn_, "planner", "password1234")
+
+    def _template(conn_, uid_, weekday):
+        return schedule_for_user(conn_, uid_)[weekday]
+
+    RED = {"sleep_score": 40}
+    GREEN = {"sleep_score": 90, "hrv_status": "BALANCED"}
+    HEALTHY = {"suspected": False, "distressed_days": 0, "signals": []}
+    D = "2026-10-05"  # a Monday: treadmill
+
+    # THE REPORTED CASE. Level 0, a red morning: the old flow could only
+    # hand back the level-0 session -- 5.5 km/h at 12% incline -- again
+    # and again. It must become an easy flat walk.
+    pc, pu = _fresh()
+    plan = plan_day(pc, pu, D, _template(pc, pu, 0), RED, HEALTHY)
+    assert get_level(pc, pu, "treadmill") == 0
+    assert plan["tier"] == TIER_RECOVERY, plan
+    assert plan["values"] == RECOVERY_VALUES, plan
+    assert plan["values"]["incline_pct"] == 0
+    assert plan["description"].startswith("RECUPERATION"), plan
+    assert "niveau deja au minimum" in plan["description"], plan
+    payload = session_payload(plan, _template(pc, pu, 0))
+    assert payload["type"] == "recovery", payload
+    assert payload["scheduled_type"] == "treadmill", payload
+    assert payload["tier_reasons"], payload
+
+    # A red day with room left to lighten still just lightens...
+    pc, pu = _fresh()
+    set_level(pc, pu, "treadmill", 3)
+    plan = plan_day(pc, pu, D, _template(pc, pu, 0), RED, HEALTHY)
+    assert plan["tier"] == TIER_TRAIN and plan["level"] == 2, plan
+    assert plan["description"].startswith("Niveau 2"), plan
+    # ...a green one progresses...
+    pc, pu = _fresh()
+    set_level(pc, pu, "treadmill", 3)
+    plan = plan_day(pc, pu, D, _template(pc, pu, 0), GREEN, HEALTHY)
+    assert plan["tier"] == TIER_TRAIN and plan["level"] == 4, plan
+    # ...and the second red day in a row is a walk even with room left.
+    pc, pu = _fresh()
+    set_level(pc, pu, "treadmill", 3)
+    pc.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message) VALUES (?, '2026-10-04T06:00:00', "
+        "'2026-10-04', 'red', 'upper_body', 3, 'm')", (pu,))
+    pc.commit()
+    plan = plan_day(pc, pu, D, _template(pc, pu, 0), RED, HEALTHY)
+    assert plan["tier"] == TIER_RECOVERY, plan
+    assert "2e jour rouge" in plan["tier_reasons"][0], plan
+
+    # Declared illness: no session, EVERY type cut, and the level
+    # system untouched -- no red counted for a session not happening.
+    pc, pu = _fresh()
+    for st in SESSION_LABEL_FR:
+        set_level(pc, pu, st, 6)
+    set_red_streak(pc, pu, "treadmill", 1)
+    set_sick(pc, pu, D, 3)
+    plan = plan_day(pc, pu, D, _template(pc, pu, 0), RED, HEALTHY)
+    assert plan["tier"] == TIER_REST, plan
+    assert plan["values"] == {} and plan["description"].startswith("REPOS")
+    assert "tu es declare malade" in plan["description"], plan
+    assert set(plan["illness_deload"]) == set(SESSION_LABEL_FR), plan
+    for st in SESSION_LABEL_FR:
+        assert get_level(pc, pu, st) == 4, st  # one cut of 2, not two
+    assert get_red_streak(pc, pu, "treadmill") == 0  # reset by the cut...
+    rest_payload = session_payload(plan, _template(pc, pu, 0))
+    assert rest_payload["type"] == "rest", rest_payload
+    assert rest_payload["scheduled_title"] == _template(pc, pu, 0)["title"]
+    # ...and a second sick morning cuts nothing further.
+    plan2 = plan_day(
+        pc, pu, "2026-10-06", _template(pc, pu, 1), RED, HEALTHY,
+    )
+    assert plan2["tier"] == TIER_REST and plan2["illness_deload"] == {}
+    for st in SESSION_LABEL_FR:
+        assert get_level(pc, pu, st) == 4, st
+
+    # Coming back: the first day after a rest is a walk, the next
+    # trains again -- at the reduced level, held through the deload.
+    pc.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, "
+        "'2026-10-07T06:00:00', '2026-10-07', 'red', 'upper_body', 4, "
+        "'m', 'rest')", (pu,))
+    pc.commit()
+    set_sick(pc, pu, D, 0)  # recovered
+    back = plan_day(pc, pu, "2026-10-08", _template(pc, pu, 3), GREEN, HEALTHY)
+    assert back["tier"] == TIER_RECOVERY, back
+    assert "reprise douce" in back["tier_reasons"][0], back
+    assert get_level(pc, pu, "upper_body") == 4  # neither cut nor raised
+    pc.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, "
+        "'2026-10-08T06:00:00', '2026-10-08', 'green', 'upper_body', 4, "
+        "'m', 'recovery')", (pu,))
+    pc.commit()
+    train = plan_day(pc, pu, "2026-10-09", _template(pc, pu, 4), GREEN, HEALTHY)
+    assert train["tier"] == TIER_TRAIN and train["level"] == 4, train
+    assert train["in_deload"] is True, train
+
+    # The sensors' own reading rests the day too, and an off-system day
+    # (Sunday's bike ride) is rested like any other.
+    pc, pu = _fresh()
+    watched = {"suspected": True, "distressed_days": 2,
+               "signals": ["VFC basse", "FC repos +9 vs base"]}
+    sunday = plan_day(pc, pu, "2026-10-11", _template(pc, pu, 6), {}, watched)
+    assert sunday["tier"] == TIER_REST and sunday["status"] is None, sunday
+    assert "VFC basse" in sunday["description"], sunday
+    sunday_payload = session_payload(sunday, _template(pc, pu, 6))
+    assert sunday_payload["type"] == "rest", sunday_payload
+    assert sunday_payload["scheduled_type"] is None, sunday_payload
+    # Healthy, the same day is the plain off-system one.
+    pc, pu = _fresh()
+    free = plan_day(pc, pu, "2026-10-11", _template(pc, pu, 6), {}, HEALTHY)
+    free_payload = session_payload(free, _template(pc, pu, 6))
+    assert free["tier"] == TIER_TRAIN and free["description"] is None, free
+    assert free_payload["type"] == "off_system", free_payload
+    assert "hors systeme de niveaux" in free_payload["note"], free_payload
+
+    # The deload note still rides on an ordinary training day.
+    pc, pu = _fresh()
+    set_level(pc, pu, "lower_body", 6)
+    set_red_streak(pc, pu, "lower_body", 2)
+    for lang, expected in (("fr", "SEMAINE DE DELOAD (3 rouges d'affilee)"),
+                           ("en", "DELOAD WEEK (3 reds in a row)")):
+        pc2, pu2 = _fresh()
+        set_level(pc2, pu2, "lower_body", 6)
+        set_red_streak(pc2, pu2, "lower_body", 2)
+        plan = plan_day(
+            pc2, pu2, "2026-10-06", _template(pc2, pu2, 1), RED, HEALTHY,
+            language=lang,
+        )
+        assert plan["deload_triggered"] is True, plan
+        assert expected in plan["description"], plan["description"]
+
+    # plan_from_log gives back the very same day -- the dashboard and a
+    # regenerated message must describe what the morning decided, never
+    # re-run it (that would move levels and count red days again).
+    pc, pu = _fresh()
+    set_sick(pc, pu, D, 2)
+    morning = plan_day(pc, pu, D, _template(pc, pu, 0), RED, HEALTHY)
+    pc.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier, tier_reason) VALUES (?, "
+        "'2026-10-05T06:00:00', ?, ?, ?, ?, 'm', ?, ?)",
+        (pu, D, morning["status"], morning["session_type"],
+         morning["level"], morning["tier"], morning["tier_reasons"][0]))
+    pc.commit()
+    entry = pc.execute("SELECT * FROM coach_log").fetchone()
+    levels_before = {st: get_level(pc, pu, st) for st in SESSION_LABEL_FR}
+    rebuilt = plan_from_log(pc, pu, D, _template(pc, pu, 0), entry)
+    assert rebuilt["tier"] == TIER_REST, rebuilt
+    assert rebuilt["description"] == morning["description"], rebuilt
+    assert levels_before == {
+        st: get_level(pc, pu, st) for st in SESSION_LABEL_FR
+    }, "rebuilding a plan must change nothing"
+    # A pre-tier row (NULL tier) reads as an ordinary training day.
+    pc.execute("UPDATE coach_log SET tier = NULL, tier_reason = NULL")
+    pc.commit()
+    old_entry = pc.execute("SELECT * FROM coach_log").fetchone()
+    legacy_plan = plan_from_log(pc, pu, D, _template(pc, pu, 0), old_entry)
+    assert legacy_plan["tier"] == TIER_TRAIN, legacy_plan
+    assert legacy_plan["description"].startswith("Niveau"), legacy_plan
+
+    # --- Wider illness watch: supporting signals and the fast path ---
+    watch_conn = db_module.connect(Path(tempfile.mkdtemp()) / "watch.db")
+    db_module.init_db(watch_conn)
+    wuid = db_module.create_user(watch_conn, "watcher", "password1234")
+    watch_conn.executemany(
+        "INSERT INTO resting_heart_rate VALUES (?, ?, ?, ?, 56)",
+        [(f"wb{i}", wuid, f"2026-11-{i:02d}T06:00:00+00:00",
+          f"2026-11-{i:02d}") for i in range(1, 15)],
+    )
+    # A waking respiration baseline of 14 brpm over five nights.
+    watch_conn.executemany(
+        "INSERT INTO garmin_respiration (user_id, local_date, "
+        "avg_waking) VALUES (?, ?, 14.0)",
+        [(wuid, f"2026-11-{i:02d}") for i in range(10, 15)],
+    )
+    watch_conn.commit()
+    assert respiration_baseline(watch_conn, wuid, "2026-11-15") == 14.0
+    assert respiration_baseline(watch_conn, wuid, "2026-11-12") is None  # 2
+
+    def _day(day, hrv=None, battery=None, stress=None, breathing=None,
+             rhr=None):
+        if hrv:
+            watch_conn.execute(
+                "INSERT INTO garmin_hrv (user_id, local_date, status) "
+                "VALUES (?, ?, ?)", (wuid, day, hrv))
+        if battery is not None:
+            watch_conn.execute(
+                "INSERT INTO garmin_body_battery (user_id, local_date, "
+                "highest) VALUES (?, ?, ?)", (wuid, day, battery))
+        if stress is not None:
+            watch_conn.execute(
+                "INSERT INTO garmin_stress (user_id, local_date, "
+                "avg_level) VALUES (?, ?, ?)", (wuid, day, stress))
+        if breathing is not None:
+            watch_conn.execute(
+                "INSERT INTO garmin_respiration (user_id, local_date, "
+                "avg_waking) VALUES (?, ?, ?)", (wuid, day, breathing))
+        if rhr is not None:
+            watch_conn.execute(
+                "INSERT INTO resting_heart_rate VALUES (?, ?, ?, ?, ?)",
+                (f"wr-{day}", wuid, f"{day}T06:00:00+00:00", day, rhr))
+        watch_conn.commit()
+
+    # Supporting signals alone -- a drained battery, high stress, fast
+    # breathing, three days running -- are a hard week, not an illness.
+    for day in ("2026-11-15", "2026-11-16", "2026-11-17"):
+        _day(day, battery=20, stress=75, breathing=18.0)
+    drained = illness_watch(watch_conn, wuid, "2026-11-17")
+    assert drained == {
+        "suspected": False, "distressed_days": 0, "signals": [],
+    }, drained
+
+    # Next to a core signal they count: HRV LOW + a battery that never
+    # filled is a distressed day, and two of them suspect an illness.
+    _day("2026-11-18", hrv="LOW", battery=25)
+    _day("2026-11-19", hrv="LOW", battery=30)
+    _day("2026-11-20")  # a clean day in the window
+    pair = illness_watch(watch_conn, wuid, "2026-11-19")
+    assert pair["suspected"] is True and pair["distressed_days"] == 2, pair
+    assert "VFC basse" in pair["signals"], pair
+    assert "batterie corporelle 25" in pair["signals"], pair
+
+    # Fourteen-day respiration baseline filler for the later dates.
+    watch_conn.executemany(
+        "INSERT INTO garmin_respiration (user_id, local_date, "
+        "avg_waking) VALUES (?, ?, 14.0)",
+        [(wuid, f"2026-11-{i:02d}") for i in range(20, 27)],
+    )
+    watch_conn.commit()
+
+    # ...and a resting-HR baseline near the fast-path date (14-day
+    # window), since rhr_baseline needs three readings inside it.
+    watch_conn.executemany(
+        "INSERT INTO resting_heart_rate VALUES (?, ?, ?, ?, 56)",
+        [(f"wf{n}", wuid, f"{d}T06:00:00+00:00", d) for n, d in enumerate(
+            [f"2026-11-{i:02d}" for i in range(21, 31)]
+            + [f"2026-12-{i:02d}" for i in range(1, 5)])],
+    )
+    watch_conn.commit()
+
+    # Stress bounds: 50 is still Garmin's "low" band, 51 is not.
+    _day("2026-11-24", hrv="LOW", stress=50)
+    assert illness_watch(watch_conn, wuid, "2026-11-24")["distressed_days"] == 0
+    watch_conn.execute(
+        "UPDATE garmin_stress SET avg_level = 51 WHERE local_date = "
+        "'2026-11-24'")
+    watch_conn.commit()
+    assert illness_watch(watch_conn, wuid, "2026-11-24")["distressed_days"] == 1
+
+    # Respiration only counts when it clears the personal baseline by
+    # the threshold -- checked well on both sides of it, computed
+    # rather than hard-coded so float rounding cannot make it flaky.
+    base = respiration_baseline(watch_conn, wuid, "2026-11-27")
+    assert base is not None
+    _day("2026-11-27", hrv="LOW", breathing=base + RESPIRATION_RISE_BRPM - 0.5)
+    assert illness_watch(watch_conn, wuid, "2026-11-27")["distressed_days"] == 0
+    watch_conn.execute(
+        "UPDATE garmin_respiration SET avg_waking = ? WHERE local_date = "
+        "'2026-11-27'", (base + RESPIRATION_RISE_BRPM + 0.5,))
+    watch_conn.commit()
+    risen = illness_watch(watch_conn, wuid, "2026-11-27")
+    assert risen["distressed_days"] == 1, risen
+
+    # The fast path: three signals on the morning itself, one of them
+    # core, acts at once -- no second day needed. Two signals on a
+    # single morning still wait for confirmation.
+    _day("2026-11-30", hrv="LOW", battery=22)
+    waiting = illness_watch(watch_conn, wuid, "2026-11-30")
+    assert waiting["suspected"] is False, waiting
+    assert waiting["distressed_days"] == 1, waiting
+    _day("2026-12-05", hrv="LOW", battery=22, rhr=66)
+    fast = illness_watch(watch_conn, wuid, "2026-12-05")
+    assert fast["suspected"] is True, fast
+    assert fast["distressed_days"] == 1, fast  # one day, but enough
+    assert "FC repos +10 vs base" in fast["signals"], fast
+    # Three SUPPORTING signals and no core one never take the fast path.
+    _day("2026-12-10", battery=20, stress=80, breathing=base + 4)
+    assert illness_watch(watch_conn, wuid, "2026-12-10")["suspected"] is False
+
+    # --- Tiers: rest and recovery sit below the level floor ---------
+    tier_conn = db_module.connect(Path(tempfile.mkdtemp()) / "tiers.db")
+    db_module.init_db(tier_conn)
+    tuid = db_module.create_user(tier_conn, "tiers", "password1234")
+
+    def _log(day, status, tier=None, created=None):
+        tier_conn.execute(
+            "INSERT INTO coach_log (user_id, created_at, local_date, "
+            "status, session_type, level, message, tier) VALUES "
+            "(?, ?, ?, ?, 'treadmill', 3, 'm', ?)",
+            (tuid, created or f"{day}T06:00:00+00:00", day, status, tier),
+        )
+        tier_conn.commit()
+
+    TODAY = "2026-10-02"
+    no_illness = {"suspected": False, "distressed_days": 0, "signals": []}
+
+    # The reported failure: nothing changes once the level is at its
+    # floor. Red at level 0 must now become a recovery walk...
+    floor = tier_after_guardrail("red", 0, 0)
+    assert floor["tier"] == TIER_RECOVERY, floor
+    assert "niveau deja au minimum" in floor["reasons"][0], floor
+    # ...a red day with room left to lighten keeps the normal flow...
+    assert tier_after_guardrail("red", 3, 0) is None
+    # ...until it is the second red day in a row, whatever the level.
+    second = tier_after_guardrail("red", 3, 1)
+    assert second["tier"] == TIER_RECOVERY, second
+    assert "2e jour rouge" in second["reasons"][0], second
+    assert "3e jour rouge" in tier_after_guardrail("red", 5, 2)["reasons"][0]
+    assert tier_after_guardrail("yellow", 0, 4) is None  # not red
+    assert tier_after_guardrail(None, None, 4) is None  # off-system day
+
+    # consecutive_red_days: per day across all types, a gap ends the
+    # run, and the latest row for a date wins.
+    assert consecutive_red_days(tier_conn, tuid, TODAY) == 0
+    _log("2026-10-01", "red")
+    _log("2026-09-30", "red")
+    _log("2026-09-29", "yellow")
+    _log("2026-09-28", "red")
+    assert consecutive_red_days(tier_conn, tuid, TODAY) == 2
+    _log("2026-10-01", "green", created="2026-10-01T09:00:00+00:00")
+    assert consecutive_red_days(tier_conn, tuid, TODAY) == 0  # re-logged
+    tier_conn.execute("DELETE FROM coach_log WHERE user_id = ?", (tuid,))
+    _log("2026-10-01", "red")
+    _log("2026-09-29", "red")  # 09-30 missing: the run stops at one
+    assert consecutive_red_days(tier_conn, tuid, TODAY) == 1
+    tier_conn.execute("DELETE FROM coach_log WHERE user_id = ?", (tuid,))
+    tier_conn.commit()
+
+    # Nothing wrong: the normal level-based flow carries on.
+    assert previous_tier(tier_conn, tuid, TODAY) == TIER_TRAIN
+    assert tier_before_guardrail(tier_conn, tuid, TODAY, no_illness) is None
+
+    # A declared illness wins, through the last day it covers.
+    assert set_sick(tier_conn, tuid, TODAY, 3) == "2026-10-04"
+    for day, sick in (("2026-10-02", True), ("2026-10-04", True),
+                      ("2026-10-05", False)):
+        assert is_self_reported_sick(tier_conn, tuid, day) is sick, day
+    declared = tier_before_guardrail(tier_conn, tuid, TODAY, no_illness)
+    assert declared["tier"] == TIER_REST, declared
+    assert "2026-10-04" in declared["reasons"][0], declared
+    # Past its date it no longer applies, and a bad value is ignored
+    # rather than crashing the morning run.
+    assert tier_before_guardrail(
+        tier_conn, tuid, "2026-10-05", no_illness,
+    ) is None
+    db_module.set_setting(tier_conn, tuid, "sick_until", "tomorrow-ish")
+    assert sick_until(tier_conn, tuid) is None
+    assert tier_before_guardrail(tier_conn, tuid, TODAY, no_illness) is None
+    assert set_sick(tier_conn, tuid, TODAY, 0) is None  # cleared
+    assert sick_until(tier_conn, tuid) is None
+
+    # The sensors' own reading of an illness rests the day too, and
+    # says why.
+    watched = {
+        "suspected": True, "distressed_days": 2,
+        "signals": ["VFC basse", "FC repos +9 vs base", "batterie 31"],
+    }
+    by_signals = tier_before_guardrail(tier_conn, tuid, TODAY, watched)
+    assert by_signals["tier"] == TIER_REST, by_signals
+    assert "VFC basse" in by_signals["reasons"][0], by_signals
+
+    # The first day after a rest is a walk, not the full session again.
+    _log("2026-10-01", "red", tier=TIER_REST)
+    assert previous_tier(tier_conn, tuid, TODAY) == TIER_REST
+    back = tier_before_guardrail(tier_conn, tuid, TODAY, no_illness)
+    assert back["tier"] == TIER_RECOVERY, back
+    # ...and after that walk, training resumes (illness already cut
+    # every level by apply_illness_deload).
+    tier_conn.execute("UPDATE coach_log SET tier = 'recovery'")
+    tier_conn.commit()
+    assert tier_before_guardrail(tier_conn, tuid, TODAY, no_illness) is None
+
+    # Descriptions name the session replaced and the reason.
+    rest_text = describe_tier_fr(
+        TIER_REST, "Tapis - marche rapide inclinee", ["malade"],
+    )
+    assert rest_text.startswith("REPOS") and "Tapis" in rest_text, rest_text
+    walk_text = describe_tier_fr(
+        TIER_RECOVERY, "Muscu bas du corps", ["2e jour rouge de suite"],
+        RECOVERY_VALUES,
+    )
+    assert "4.5 km/h" in walk_text and "inclinaison 0%" in walk_text, walk_text
+    assert "Muscu bas du corps" in walk_text, walk_text
 
     # apply_illness_deload cuts every known type in one pass...
     for session_type in SESSION_LABEL_FR:

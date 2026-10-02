@@ -879,12 +879,15 @@ def history_snapshot(
         dict: ``activities_last_7_days`` (date, label, duration_min,
         rpe, avg_hr, max_hr, kcal -- absent keys mean no data),
         ``statuses_last_7_days`` (date, status),
-        ``adherence_last_7_days`` (date, planned, done, duration_min
-        -- ends yesterday: today's session hasn't happened yet),
+        ``adherence_last_7_days`` (date, planned, tier, done,
+        duration_min -- ends yesterday: today's session hasn't
+        happened yet; only ``tier == "train"`` with ``done`` false is
+        a skipped session),
         ``session_skipped_yesterday`` ({date, session_type} if
-        yesterday had a planned session that was not done, else
-        None -- pulled out of adherence_last_7_days so it cannot be
-        missed the way one row in a week-long list can), and
+        yesterday had a planned training session that was not done,
+        else None -- a day told to rest or to walk is never a skip --
+        pulled out of adherence_last_7_days so it cannot be missed
+        the way one row in a week-long list can), and
         ``training_load`` ({date, ctl, atl, tsb} or ``{}``).
     """
     start = (
@@ -943,7 +946,7 @@ def history_snapshot(
     # achievements' streak logic -- not imported: achievements
     # imports metrics, importing back would cycle).
     planned = conn.execute(
-        "SELECT local_date, status, session_type FROM coach_log "
+        "SELECT local_date, status, session_type, tier FROM coach_log "
         "WHERE id IN (SELECT MAX(id) FROM coach_log WHERE user_id = ? "
         "AND local_date BETWEEN ? AND ? GROUP BY local_date) "
         "ORDER BY local_date", (user_id, start, date),
@@ -964,6 +967,9 @@ def history_snapshot(
         {
             "date": row["local_date"],
             "planned": row["session_type"],
+            # rest / recovery days were told NOT to do the scheduled
+            # session -- not doing it is the plan, not a lapse.
+            "tier": row["tier"] or "train",
             "done": row["local_date"] in done_min,
             "duration_min": done_min.get(row["local_date"], 0),
         }
@@ -985,7 +991,10 @@ def history_snapshot(
     )
     session_skipped_yesterday = (
         {"date": yesterday, "session_type": yesterday_row["planned"]}
-        if yesterday_row and not yesterday_row["done"] else None
+        if (
+            yesterday_row and not yesterday_row["done"]
+            and yesterday_row["tier"] == "train"
+        ) else None
     )
     return {
         "activities_last_7_days": activities,
@@ -1300,10 +1309,10 @@ if __name__ == "__main__":
     ]
     adherence = snap["adherence_last_7_days"]
     assert adherence == [
-        {"date": "2026-07-11", "planned": "treadmill", "done": False,
-         "duration_min": 0},
-        {"date": "2026-07-12", "planned": "upper_body", "done": True,
-         "duration_min": 30},
+        {"date": "2026-07-11", "planned": "treadmill", "tier": "train",
+         "done": False, "duration_min": 0},
+        {"date": "2026-07-12", "planned": "upper_body", "tier": "train",
+         "done": True, "duration_min": 30},
     ], adherence
     assert snap["training_load"] == {
         "date": "2026-07-12", "ctl": 10.1, "atl": 20.5, "tsb": -10.3,
@@ -1318,6 +1327,30 @@ if __name__ == "__main__":
     assert skip_snap["session_skipped_yesterday"] == {
         "date": "2026-07-11", "session_type": "treadmill",
     }, skip_snap
+
+    # A day told to rest, or to walk instead, is not a skipped
+    # session: the prompt used to answer "plusieurs jours rouges avec
+    # seances sautees : relance la regularite" to someone in bed.
+    for tier in ("rest", "recovery"):
+        conn.execute(
+            "UPDATE coach_log SET tier = ? WHERE user_id = ? AND "
+            "local_date = '2026-07-11'", (tier, uid),
+        )
+        conn.commit()
+        told = history_snapshot(conn, uid, "2026-07-12")
+        assert told["session_skipped_yesterday"] is None, (tier, told)
+        row = [r for r in told["adherence_last_7_days"]
+               if r["date"] == "2026-07-11"][0]
+        assert row["tier"] == tier and row["done"] is False, row
+    conn.execute(
+        "UPDATE coach_log SET tier = NULL WHERE user_id = ? AND "
+        "local_date = '2026-07-11'", (uid,),
+    )
+    conn.commit()
+    # ...and rows from before the column existed read as training.
+    assert history_snapshot(conn, uid, "2026-07-12")[
+        "session_skipped_yesterday"
+    ] == {"date": "2026-07-11", "session_type": "treadmill"}
 
     # label_override wins when the old session is in range.
     old_snap = history_snapshot(conn, uid, "2026-07-02")

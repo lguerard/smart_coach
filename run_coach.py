@@ -19,6 +19,7 @@ workout, and checks/announces achievement unlocks. One user's failure
 import datetime as dt
 
 import achievements
+import coach_payload
 import db
 import gcal
 import llm
@@ -43,95 +44,36 @@ def run_for_user(conn, user: dict) -> None:
     nutrition = metrics.nutrition_for_date(conn, user_id, today)
     weekly = progress.weekly_progress(conn, user_id, today)
 
-    # Illness/overreaching watch runs before today's session-type
-    # deload guardrail (not tied to any one session type), so if it
-    # fires, apply_deload_guardrail below picks up the already-cut
-    # level for today's type rather than cutting on top of it later.
+    # The whole training decision (illness, level, deload, rest or
+    # recovery instead of a session) lives in training.plan_day: this
+    # pipeline only carries it out on the calendar, the watch and the
+    # phone.
     illness = training.illness_watch(conn, user_id, today)
-    illness_deload = (
-        training.apply_illness_deload(conn, user_id, today)
-        if illness["suspected"] else {}
-    )
-
     weekday = dt.date.fromisoformat(today).weekday()
     template = training.schedule_for_user(conn, user_id)[weekday]
-    session_type = template.get("session_type")
-    today_session = {
-        "type": "off_system",
-        "note": (
-            f"{template['title']}, hors systeme de niveaux"
-            if language == "fr"
-            else f"{template['title']}, outside the level system"
-        ),
-    }
-    status = None
-    level = None
+    # Yesterday's TSB (today's isn't computed until after this pipeline
+    # runs, see the training_load call below) -- lets the guardrail force
+    # a deload on accumulated fatigue alone, not just 3 reds in a row.
+    latest_load = training_load.latest_training_load(conn, user_id)
+    plan = training.plan_day(
+        conn, user_id, today, template, wellness, illness,
+        tsb=latest_load["tsb"] if latest_load else None,
+        language=language,
+    )
+    today_session = training.session_payload(plan, template, language)
+    session_type = plan["session_type"]
+    status, level, tier = plan["status"], plan["level"], plan["tier"]
+    values = plan["values"]
     calendar_note = None
     workout_note = None
 
     if session_type is not None:
-        baseline = training.rhr_baseline(conn, user_id, today)
-        # How the last sessions of this type actually felt: the only
-        # signal that comes from the person rather than a sensor.
-        feedback = training.recent_feedback(conn, user_id, session_type)
-        status = training.compute_status(wellness, baseline, feedback)
-        # Yesterday's TSB (today's isn't computed until after this
-        # pipeline runs, see the training_load call below) -- lets
-        # the guardrail force a deload on accumulated fatigue alone,
-        # not just 3 reds in a row.
-        latest_load = training_load.latest_training_load(conn, user_id)
-        deload = training.apply_deload_guardrail(
-            conn, user_id, session_type, status, today,
-            tsb=latest_load["tsb"] if latest_load else None,
-        )
-        level = deload["level"]
-
-        cap_min = training.session_cap_min(conn, user_id)
-        values = training.session_values(session_type, level, cap_min)
-        description = training.format_description_fr(
-            session_type, level, values, status,
-        )
-        # Illness sets deload_until BEFORE this call runs, so
-        # apply_deload_guardrail sees an already-active window and
-        # reports deload_triggered=False for its own trigger -- true
-        # in the narrow sense (this call didn't trigger it), but the
-        # calendar/message still need to say WHY tonight got lighter.
-        illness_triggered_today = session_type in illness_deload
-        deload_triggered_today = (
-            deload["deload_triggered"] or illness_triggered_today
-        )
-        if deload_triggered_today:
-            trigger = (
-                "illness" if illness_triggered_today
-                else deload["trigger"]
-            )
-            reason_fr = {
-                "illness": "signes compatibles avec une maladie/"
-                           "surmenage",
-                "red_streak": "3 rouges d'affilee",
-                "tsb": "fatigue accumulee (TSB)",
-            }[trigger]
-            reason_en = {
-                "illness": "signs consistent with illness/overreaching",
-                "red_streak": "3 reds in a row",
-                "tsb": "accumulated fatigue (TSB)",
-            }[trigger]
-            deload_note = (
-                f"SEMAINE DE DELOAD ({reason_fr})" if language == "fr"
-                else f"DELOAD WEEK ({reason_en})"
-            )
-            description = f"{description}\n{deload_note}"
-        today_session = {
-            "type": session_type, "status": status, "level": level,
-            "values": values, "description_fr": description,
-            "in_deload": deload["in_deload"] or illness_triggered_today,
-            "deload_triggered": deload_triggered_today,
-        }
         # Calendar update happens this morning for tonight's session,
         # so it should reflect everything the coach knows today, not
         # just the workout numbers -- append a short, deterministic
         # nutrition/hydration nudge (no LLM call, so it's never blocked
         # on or delayed by the coaching-message step below).
+        description = plan["description"]
         nudge = progress.format_nutrition_nudge(
             weekly["nutrition_yesterday"], language,
         )
@@ -144,35 +86,39 @@ def run_for_user(conn, user: dict) -> None:
             )
         else:
             push_template = template
-            try:
-                # Real life first: if tonight's usual slot conflicts
-                # with something already on the user's day (a
-                # meeting, travel...), move the session rather than
-                # silently double-booking. Best-effort -- a failure
-                # here just keeps the original template time.
-                service = gcal.get_calendar_service(username)
-                busy_calendar = (
-                    db.get_setting(conn, user_id, "busy_calendar_name")
-                    or "primary"
-                )
-                new_start, moved = gcal.find_available_start(
-                    service, busy_calendar,
-                    dt.date.fromisoformat(today), template,
-                    values.get("duration_min") or template["duration_min"],
-                )
-                if moved:
-                    push_template = {**template, "start": new_start}
-                    moved_note = (
-                        f"(Horaire deplace a {new_start} -- journee "
-                        "chargee)" if language == "fr"
-                        else f"(Moved to {new_start} -- busy day)"
+            if tier != training.TIER_REST:
+                try:
+                    # Real life first: if tonight's usual slot conflicts
+                    # with something already on the user's day (a
+                    # meeting, travel...), move the session rather than
+                    # silently double-booking. Best-effort -- a failure
+                    # here just keeps the original template time.
+                    service = gcal.get_calendar_service(username)
+                    busy_calendar = (
+                        db.get_setting(conn, user_id, "busy_calendar_name")
+                        or "primary"
                     )
-                    calendar_description = (
-                        f"{calendar_description}\n{moved_note}"
+                    new_start, moved = gcal.find_available_start(
+                        service, busy_calendar,
+                        dt.date.fromisoformat(today), template,
+                        values.get("duration_min") or template["duration_min"],
                     )
-            except Exception:
-                pass
+                    if moved:
+                        push_template = {**template, "start": new_start}
+                        moved_note = (
+                            f"(Horaire deplace a {new_start} -- journee "
+                            "chargee)" if language == "fr"
+                            else f"(Moved to {new_start} -- busy day)"
+                        )
+                        calendar_description = (
+                            f"{calendar_description}\n{moved_note}"
+                        )
+                except Exception:
+                    pass
             try:
+                # A rest day keeps its slot with the rest note in it,
+                # rather than leaving yesterday's prescription on the
+                # calendar: the event must say what the message says.
                 gcal.push_description(
                     username, calendar_name,
                     dt.date.fromisoformat(today), push_template,
@@ -184,10 +130,15 @@ def run_for_user(conn, user: dict) -> None:
 
         try:
             watch_client = garmin_api.get_client(username)
-            garmin_api.push_workout_for_session(
-                conn, user_id, watch_client, session_type, level, values,
-                today,
-            )
+            if tier == training.TIER_REST:
+                garmin_api.retire_pushed_workout(conn, user_id, watch_client)
+            else:
+                garmin_api.push_workout_for_session(
+                    conn, user_id, watch_client,
+                    "recovery" if tier == training.TIER_RECOVERY
+                    else session_type,
+                    level, values, today,
+                )
         except Exception as error:
             workout_note = f"(Entrainement non envoye a la montre: {error})"
 
@@ -201,29 +152,11 @@ def run_for_user(conn, user: dict) -> None:
         except Exception:
             weather_today = None  # best-effort context only
 
-    payload = {
-        "date": today,
-        "language": language,
-        "wellness_today": wellness,
-        # The morning run fires just after wake-up, so wellness_today's
-        # movement counters are still ~0. Yesterday's are the ones that
-        # actually say something at this hour -- same reason
-        # weekly_progress.nutrition_yesterday exists.
-        "activity_yesterday": metrics.activity_yesterday(
-            conn, user_id, today,
-        ),
-        "nutrition_today": nutrition,
-        "weekly_progress": weekly,
-        "today_session": today_session,
-        "today_targets": progress.macro_targets(conn, user_id, today),
-        "illness_watch": illness,
-        # Precomputed rather than left to the LLM: the message quotes
-        # what is LEFT to eat today, and this project never asks the
-        # model to do arithmetic on figures it is meant to repeat.
-        "today_remaining": progress.remaining_today(conn, user_id, today),
-        **({"weather_today": weather_today} if weather_today else {}),
-        **metrics.history_snapshot(conn, user_id, today),
-    }
+    payload = coach_payload.build_payload(
+        conn, user_id, today, language, today_session, illness,
+        weekly=weekly, wellness=wellness, nutrition=nutrition,
+        weather_today=weather_today,
+    )
 
     message = llm.coach(payload)
     if calendar_note:
@@ -233,10 +166,12 @@ def run_for_user(conn, user: dict) -> None:
 
     conn.execute(
         "INSERT INTO coach_log (user_id, created_at, local_date, status, "
-        "session_type, level, message) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "session_type, level, message, tier, tier_reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             user_id, dt.datetime.now(dt.timezone.utc).isoformat(), today,
-            status, session_type, level, message,
+            status, session_type, level, message, tier,
+            "; ".join(plan["tier_reasons"]) or None,
         ),
     )
     conn.commit()

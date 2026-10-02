@@ -46,6 +46,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from garminconnect.workout import (
@@ -1220,13 +1221,17 @@ def fetch_and_upsert(
     return counts
 
 
-def _treadmill_workout(level: int, values: dict) -> FitnessEquipmentWorkout:
+def _treadmill_workout(
+    level: int, values: dict, name: Optional[str] = None,
+) -> FitnessEquipmentWorkout:
     """Build a single-step indoor-cardio workout for tonight's treadmill
     session.
 
     Parameters:
         level (int): Tonight's treadmill level (name only).
         values (dict): ``training.treadmill_values()`` output.
+        name (str | None): Workout name; defaults to the level-based
+            "Tapis niveau N".
 
     Returns:
         FitnessEquipmentWorkout: Ready to upload via
@@ -1248,7 +1253,7 @@ def _treadmill_workout(level: int, values: dict) -> FitnessEquipmentWorkout:
         workoutSteps=[create_interval_step(duration_s, step_order=1)],
     )
     return FitnessEquipmentWorkout(
-        workoutName=f"Smart Coach - Tapis niveau {level}",
+        workoutName=name or f"Smart Coach - Tapis niveau {level}",
         estimatedDurationInSecs=int(duration_s),
         description=(
             f"{values['speed_kmh']} km/h, inclinaison "
@@ -1377,7 +1382,49 @@ def build_workout(session_type: str, level: int, values: dict):
     """
     if session_type == "treadmill":
         return _treadmill_workout(level, values)
+    if session_type == "recovery":
+        # The same single-step walk, named for what it is: an easy flat
+        # walk replacing a session the day could not take.
+        return _treadmill_workout(
+            level, values, name="Smart Coach - Marche recuperation",
+        )
     return _circuit_workout(session_type, level, values)
+
+
+def retire_pushed_workout(
+    conn: sqlite3.Connection, user_id: int, client: Garmin,
+) -> bool:
+    """Take the last pushed workout off the watch, push nothing new.
+
+    For a rest day: the workout pushed on the last training day is
+    still sitting in the library, and leaving a treadmill session
+    sitting there on a day the coach said not to train is how a watch
+    contradicts the message sent to the phone. Best effort, like the
+    replacement inside ``push_workout_for_session``.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+
+    Returns:
+        bool: True when a pushed workout was on record.
+    """
+    old = conn.execute(
+        "SELECT workout_id FROM garmin_workout_pushes WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if not old:
+        return False
+    try:
+        client.delete_workout(old["workout_id"])
+    except Exception:  # noqa: BLE001 -- already gone on Garmin's side
+        pass
+    conn.execute(
+        "DELETE FROM garmin_workout_pushes WHERE user_id = ?", (user_id,),
+    )
+    conn.commit()
+    return True
 
 
 def push_workout_for_session(
@@ -1969,5 +2016,32 @@ if __name__ == "__main__":
         (uid,),
     ).fetchone()
     assert push_row2["workout_id"] == "1002"
+
+    # A recovery day pushes an easy FLAT walk under its own name -- the
+    # same single-step shape as the treadmill session, but never the
+    # 12%-incline one.
+    walk = build_workout(
+        "recovery", 0, training.RECOVERY_VALUES,
+    ).to_dict()
+    assert walk["workoutName"] == "Smart Coach - Marche recuperation", walk
+    assert "inclinaison 0%" in walk["description"], walk
+    assert "4.5 km/h" in walk["description"], walk
+    assert walk["estimatedDurationInSecs"] == 20 * 60, walk
+    wid3 = push_workout_for_session(
+        conn, uid, fake_watch, "recovery", 0, training.RECOVERY_VALUES,
+        "2026-07-18",
+    )
+    assert wid3 == "1003" and fake_watch.deleted == ["1001", "1002"]
+
+    # A rest day takes the last pushed workout off the watch and puts
+    # nothing in its place; with nothing on record it is a no-op.
+    assert retire_pushed_workout(conn, uid, fake_watch) is True
+    assert fake_watch.deleted == ["1001", "1002", "1003"], fake_watch.deleted
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM garmin_workout_pushes WHERE "
+        "user_id = ?", (uid,),
+    ).fetchone()["n"] == 0
+    assert retire_pushed_workout(conn, uid, fake_watch) is False
+    assert len(fake_watch.uploaded) == 3  # nothing was pushed for the rest
 
     print("garmin_api.py: all checks passed (no live Garmin call made)")

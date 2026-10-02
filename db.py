@@ -580,7 +580,16 @@ CREATE TABLE IF NOT EXISTS coach_log (
     status TEXT,
     session_type TEXT,
     level INTEGER,
-    message TEXT NOT NULL
+    message TEXT NOT NULL,
+    -- What the day actually asked for: train (the scheduled session at
+    -- its level), recovery (an easy flat walk instead) or rest (no
+    -- session). session_type stays the scheduled type, so a rest day
+    -- is told apart from a skipped one -- a missed session during an
+    -- illness is not something to nag about. NULL on older rows = train.
+    tier TEXT,
+    -- Why, in words, so the dashboard and a regenerated message can say
+    -- it without re-deriving a decision that depended on that morning.
+    tier_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_coach_log_user_date ON coach_log(user_id, local_date);
 """
@@ -628,6 +637,11 @@ DEFAULT_SETTINGS = {
     "age_years": "",
     "sex": "",
     "bmr_manual_kcal": "",
+    # "YYYY-MM-DD" while the person says they are ill, "" otherwise.
+    # Self-report beats inference: no sensor knows about a sore throat,
+    # and a watch that keeps prescribing the same treadmill session to
+    # someone in bed has lost them.
+    "sick_until": "",
     # "1" (default): TDEE trusts the device's own trailing-7-day
     # total_calories_burned average outright -- it already bundles
     # the device's basal estimate with real measured activity, and
@@ -738,6 +752,12 @@ def init_db(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"ALTER TABLE sleep_sessions ADD COLUMN {column} {column_type}"
             )
+    coach_cols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(coach_log)")
+    }
+    for column in ("tier", "tier_reason"):
+        if column not in coach_cols:
+            conn.execute(f"ALTER TABLE coach_log ADD COLUMN {column} TEXT")
     conn.commit()
 
 
@@ -1072,6 +1092,34 @@ if __name__ == "__main__":
 
     assert get_user(test_conn, alice)["username"] == "alice"
     assert {u["username"] for u in all_users(test_conn)} == {"alice", "bob"}
+
+    # A database from before coach_log.tier existed must gain the
+    # columns without losing its rows, and read old days as training.
+    legacy_path = Path(tempfile.mkdtemp()) / "legacy.db"
+    legacy = sqlite3.connect(legacy_path)
+    legacy.executescript(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, "
+        "password_salt TEXT NOT NULL, created_at TEXT NOT NULL, "
+        "is_admin INTEGER NOT NULL DEFAULT 0, approved INTEGER NOT NULL "
+        "DEFAULT 0);"
+        "CREATE TABLE coach_log (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "user_id INTEGER NOT NULL, created_at TEXT NOT NULL, local_date "
+        "TEXT NOT NULL, status TEXT, session_type TEXT, level INTEGER, "
+        "message TEXT NOT NULL);"
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message) VALUES (1, '2026-07-01T06:00:00', "
+        "'2026-07-01', 'red', 'treadmill', 0, 'old row');"
+    )
+    legacy.commit()
+    legacy.close()
+    migrated = connect(legacy_path)
+    init_db(migrated)
+    cols = {r["name"] for r in migrated.execute("PRAGMA table_info(coach_log)")}
+    assert {"tier", "tier_reason"} <= cols, cols
+    old_row = migrated.execute("SELECT * FROM coach_log").fetchone()
+    assert old_row["message"] == "old row" and old_row["tier"] is None
+    init_db(migrated)  # idempotent: a second run adds nothing, breaks nothing
 
     # A setup command given anything but a real account name must be
     # refused with the real names listed -- the live failure was an
