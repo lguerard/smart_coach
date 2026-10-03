@@ -170,9 +170,12 @@ afterwards" below)
                            tonight's session to the watch as a
                            scheduled workout; weather.py adds today's
                            forecast as context if a city is set;
-                           llm.py (claude -p) phrases the message
-                           (folding in cycle phase/weather if
-                           relevant); achievements.py checks/
+                           coach_brief.py decides the day's angle and
+                           the ONE point about yesterday worth making
+                           (all data-quality caveats applied there);
+                           llm.py (claude -p) writes that brief up as
+                           a short, warm message -- no sections --
+                           (try it: preview_message.py --live); achievements.py checks/
                            announces unlocks; notify.py pushes it;
                            logged to coach_log
   16:00  run_checkin.py   afternoon: refreshes today's Garmin
