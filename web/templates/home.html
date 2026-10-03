@@ -315,6 +315,7 @@
       <span class="font-medium">{{ item.name }}</span>
       <span class="text-xs" style="color: var(--muted);">({{ 'assis' if item.posture == 'seated' else 'debout' }}, {{ item.seconds }} s)</span><br>
       <span style="color: var(--text-secondary);">{{ item.how }}</span>
+      {% if item.when %}<br><span class="text-xs" style="color: var(--muted);">A faire : {{ item.when }}</span>{% endif %}
     </li>
     {% endfor %}
   </ul>

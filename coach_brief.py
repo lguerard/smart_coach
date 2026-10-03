@@ -22,6 +22,8 @@ Pure functions of the payload dict: no database, no clock.
 import datetime as dt
 from typing import Optional
 
+import aids
+
 # Protein or calorie gaps smaller than this are noise, not a point.
 PROTEIN_GAP_G = 15
 CALORIES_OVER_KCAL = 200
@@ -275,7 +277,10 @@ def desk_brief(payload: dict) -> dict:
         return {}
     brief = {
         "items": [
-            {"name": i["name"], "how": i["how"], "seconds": i["seconds"]}
+            {
+                "name": i["name"], "how": i["how"], "seconds": i["seconds"],
+                **({"when": i["when"]} if i.get("when") else {}),
+            }
             for i in items
         ],
         "gentle_only": bool(desk.get("gentle_only")),
@@ -331,6 +336,49 @@ def weekly_brief(payload: dict) -> dict:
     return brief
 
 
+def help_brief(
+    payload: dict, chosen_angle: str, point: dict, has_desk: bool,
+) -> dict:
+    """The concrete help for today, already sized.
+
+    A miss on food becomes a short list of real foods (desk-friendly when
+    the person works at one), a water gap becomes glasses, a rest day
+    becomes care points with when to see a doctor. The model repeats
+    these; it no longer makes amounts up.
+
+    Parameters:
+        payload (dict): ``coach_payload.build_payload`` output.
+        chosen_angle (str): ``angle(payload)``.
+        point (dict): ``yesterday_point`` output.
+        has_desk (bool): Whether a desk break is part of the day.
+
+    Returns:
+        dict: ``food`` / ``water`` / ``lighter_dinner`` / ``care``,
+        only the ones that apply.
+    """
+    language = payload.get("language", "fr")
+    date = payload.get("date")
+    help_: dict = {}
+    if point.get("topic") == "food" and date:
+        kind = point.get("kind")
+        if kind == "protein_short":
+            help_["food"] = aids.food_help(
+                point["gap_g"], date, language, office=has_desk,
+            )
+        elif kind == "calories_over":
+            help_["lighter_dinner"] = aids.lighter_dinner(
+                point["over_kcal"], language,
+            )
+        elif kind == "water_short":
+            help_["water"] = aids.water_help(point["gap_ml"], language)
+    if chosen_angle == ANGLE_REST:
+        help_["care"] = aids.care_help(
+            (payload.get("today_targets") or {}).get("hydration_target_ml"),
+            language,
+        )
+    return help_
+
+
 def build_brief(payload: dict) -> dict:
     """Reduce the full payload to what the message is written from.
 
@@ -339,9 +387,10 @@ def build_brief(payload: dict) -> dict:
 
     Returns:
         dict: ``language``, ``date``, ``angle``, ``body``, ``session``,
-        ``yesterday``, ``desk``, optional ``skipped`` /
-        ``green_streak`` / ``weather`` / ``weekly``. Small enough that
-        every field gets used.
+        ``yesterday``, ``desk``, ``help`` (sized foods/water/care),
+        ``next_step`` (what the closing line is built on), optional
+        ``skipped`` / ``green_streak`` / ``weather`` / ``weekly``. Small
+        enough that every field gets used.
     """
     chosen = angle(payload)
     brief = {
@@ -355,6 +404,17 @@ def build_brief(payload: dict) -> dict:
     desk = desk_brief(payload)
     if desk:
         brief["desk"] = desk
+    help_ = help_brief(payload, chosen, brief["yesterday"], bool(desk))
+    if help_:
+        brief["help"] = help_
+    # Off-system days have no session to adjust, so no stock close.
+    session_kind = (payload.get("today_session") or {}).get("type")
+    step = (
+        "" if session_kind == "off_system"
+        else aids.next_step(chosen, brief["language"])
+    )
+    if step:
+        brief["next_step"] = step
     skipped = payload.get("session_skipped_yesterday")
     if skipped:
         brief["skipped"] = skipped
@@ -506,7 +566,8 @@ if __name__ == "__main__":
     # Small on purpose: nothing in it that the message should not use.
     assert set(train) <= {
         "language", "date", "angle", "body", "session", "yesterday",
-        "desk", "skipped", "green_streak", "weather", "weekly",
+        "desk", "help", "next_step", "skipped", "green_streak",
+        "weather", "weekly",
     }, train
 
     # Weather is context for an outdoor-able training day only.
@@ -546,5 +607,46 @@ if __name__ == "__main__":
     assert "weight_trend" not in build_brief(_payload(
         date="2026-10-04", weekly_progress=thin,
     ))["weekly"]
+
+
+    # --- help and the closing step ---------------------------------------
+    short = _payload(weekly_progress=_food(gap={"protein_g": 38.0}),
+                     desk_break={"items": [
+                         {"name": "a", "how": "b", "seconds": 5,
+                          "when": "apres le dejeuner"},
+                     ]})
+    helped = build_brief(short)
+    assert helped["help"]["food"]["items"], helped
+    assert helped["help"]["food"]["covers_gap"], helped
+    assert helped["desk"]["items"][0]["when"] == "apres le dejeuner"
+    assert "tableau de bord" in helped["next_step"], helped
+    # No food miss, no food help; the closing step is still there.
+    plain = build_brief(_payload())
+    assert "help" not in plain and plain["next_step"], plain
+    # Water and calories get their own help.
+    assert build_brief(_payload(weekly_progress=_food(
+        gap={"hydration_ml": 900.0},
+    )))["help"]["water"]["glasses"] == 4
+    assert "lighter_dinner" in build_brief(_payload(
+        weekly_progress=_food(gap={"calories_kcal": -400.0}),
+    ))["help"]
+    # A rest day carries care points, with when to see a doctor, and a
+    # next step about the restart -- not a training prompt.
+    resting = build_brief(_payload(
+        today_session={"type": "rest", "tier_reasons": ["x"]},
+        today_targets={"hydration_target_ml": 2500},
+    ))
+    assert resting["help"]["care"]["drink_ml"] == 2500, resting
+    assert "fievre" in resting["help"]["care"]["see_doctor_if"], resting
+    assert "reprise" in resting["next_step"], resting
+    assert "tableau de bord" not in resting["next_step"], resting
+    # Off-system days have no session to adjust, so no stock close.
+    assert "next_step" not in build_brief(_payload(
+        today_session={"type": "off_system", "note": "x"},
+    ))
+    # English help comes back in English.
+    assert build_brief({**short, "language": "en"})["help"]["food"][
+        "items"
+    ][0]["name"] != helped["help"]["food"]["items"][0]["name"]
 
     print("coach_brief.py: all checks passed")

@@ -27,16 +27,19 @@ DESK = {"items": [
     {"name": "Montees sur pointes", "how": "Debout, une main sur le "
      "bureau, monte sur les pointes en 2 s, descends en 2 s. 20 "
      "repetitions, sans bruit.", "seconds": 60, "kind": "strength",
-     "posture": "standing"},
+     "posture": "standing", "when": "apres le dejeuner, quand l'energie "
+     "retombe"},
     {"name": "Ouverture de poitrine", "how": "Assis au bord de la "
      "chaise, mains jointes derriere le dos, ouvre la poitrine. "
      "Tiens 20-30 s.", "seconds": 30, "kind": "stretch",
-     "posture": "seated"},
+     "posture": "seated", "when": "en milieu de matinee, quand le dos "
+     "commence a tirer"},
 ], "gentle_only": False, "notes": []}
 GENTLE_DESK = {"items": [
     {"name": "Respiration carree", "how": "Inspire 4 s, retiens 4 s, "
      "expire 4 s, retiens 4 s. 6 cycles, yeux sur l'ecran.",
-     "seconds": 90, "kind": "breath", "posture": "seated"},
+     "seconds": 90, "kind": "breath", "posture": "seated",
+     "when": "avant ta prochaine reunion, ou quand les epaules montent"},
 ], "gentle_only": True, "notes": []}
 TREADMILL = {
     "type": "treadmill", "status": "green", "level": 4,
@@ -69,6 +72,7 @@ SCENARIOS = {
             "tier": "rest", "values": {},
             "tier_reasons": ["tu es declare malade jusqu'au 2026-10-08"],
         },
+        today_targets={"hydration_target_ml": 2500},
         illness_watch={"suspected": True, "signals": [
             "VFC basse", "FC de repos +6 vs ta base"]},
         movement_yesterday={"flags": ["steps_low", "sedentary_high"],

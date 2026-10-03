@@ -37,6 +37,26 @@ WALK_NOTE = {
           "of water -- beats one big effort.",
 }
 
+# When in the day each kind of break does the most good, in plain words.
+WHEN = {
+    "breath": {
+        "fr": "avant ta prochaine reunion, ou quand les epaules montent",
+        "en": "before your next meeting, or when your shoulders creep up",
+    },
+    "stretch": {
+        "fr": "en milieu de matinee, quand le dos commence a tirer",
+        "en": "mid-morning, when your back starts to pull",
+    },
+    "circulation": {
+        "fr": "toutes les heures, en finissant un mail",
+        "en": "every hour, while finishing an email",
+    },
+    "strength": {
+        "fr": "apres le dejeuner, quand l'energie retombe",
+        "en": "after lunch, when energy dips",
+    },
+}
+
 # kind: stretch | breath | circulation | strength. intensity: gentle
 # exercises are fine on any day; light and moderate are held back when
 # the day asks for rest.
@@ -301,6 +321,7 @@ def build_break(
                 "how": exercise["how"][language],
                 "seconds": exercise["seconds"],
                 "posture": exercise["posture"], "kind": exercise["kind"],
+                "when": WHEN[exercise["kind"]][language],
             }
             for exercise in chosen
         ],
@@ -365,6 +386,7 @@ if __name__ == "__main__":
         assert exercise["posture"] in ("seated", "standing")
         assert exercise["intensity"] in ("gentle", "light", "moderate")
         assert exercise["seconds"] > 0
+        assert exercise["kind"] in WHEN
         for lang in ("fr", "en"):
             assert exercise["name"][lang] and exercise["how"][lang]
 
@@ -379,6 +401,7 @@ if __name__ == "__main__":
     assert plan["items"][0]["kind"] == "breath", plan
     assert any(i["kind"] in ("strength", "circulation")
                for i in plan["items"]), plan
+    assert all(i["when"] for i in plan["items"]), plan
     assert len(plan["notes"]) == 2, plan
     assert 1 <= plan["total_min"] <= 8, plan
     assert plan == build_break(monday, flags), "must be deterministic"
