@@ -32,6 +32,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 from webauthn.helpers.structs import (
@@ -40,6 +41,7 @@ from webauthn.helpers.structs import (
 )
 
 import achievements
+import body
 import coach_payload
 import db
 import desk
@@ -1314,3 +1316,123 @@ async def save_settings(request: Request):
             schedule[str(weekday)] = entry
         db.set_setting(conn, user_id, "schedule", json.dumps(schedule))
     return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+
+# --- Private body photos ---------------------------------------------------
+# Owner-only everywhere: every route goes through body.* functions that
+# filter on the session's user id, so a guessed photo id from another
+# account answers 404, admins included. No response is cacheable.
+_PRIVATE_HEADERS = {
+    "Cache-Control": "no-store, private, max-age=0",
+    "Pragma": "no-cache",
+    "X-Robots-Tag": "noindex, nofollow",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def _body_redirect(note: str | None = None) -> RedirectResponse:
+    url = "/body" if not note else "/body?note=" + urllib.parse.quote(note)
+    return RedirectResponse(url, status_code=303, headers=_PRIVATE_HEADERS)
+
+
+def _analyze_in_thread(user_id: int, photo_id: int) -> str | None:
+    """Run one analysis on its own connection; returns an error note.
+
+    The model call takes up to a minute or two, so it runs off the event
+    loop, and sqlite connections cannot cross threads.
+    """
+    conn = db.connect()
+    try:
+        body.analyze_photo(conn, user_id, photo_id)
+        return None
+    except Exception as error:
+        return f"Analyse impossible : {error}"
+    finally:
+        conn.close()
+
+
+@app.get("/body", response_class=HTMLResponse)
+def body_page(request: Request) -> HTMLResponse:
+    """The private body tab: photos (blurred until tapped) and analyses."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    response = templates.TemplateResponse(
+        request, "body.html", {
+            "photos": body.list_photos(conn, user_id),
+            "poses": body.POSES,
+            "note": request.query_params.get("note"),
+            "username": request.session.get("username"),
+        },
+    )
+    response.headers.update(_PRIVATE_HEADERS)
+    return response
+
+
+@app.post("/body/upload")
+async def body_upload(request: Request):
+    """Store a photo (encrypted, metadata stripped), analyse if asked."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    upload = form.get("photo")
+    if "is_me" not in form:
+        return _body_redirect(
+            "Coche la case confirmant que c'est toi, adulte, sur la photo."
+        )
+    if upload is None or not hasattr(upload, "read"):
+        return _body_redirect("Aucune photo recue.")
+    raw = await upload.read(body.MAX_UPLOAD_BYTES + 1)
+    try:
+        photo_id = body.store_photo(
+            conn, user_id, raw, str(form.get("pose", "front")),
+            today_str(conn, user_id),
+        )
+    except body.PhotoError as error:
+        return _body_redirect(str(error))
+    if "analyze" in form:
+        note = await run_in_threadpool(_analyze_in_thread, user_id, photo_id)
+        if note:
+            return _body_redirect(note)
+    return _body_redirect()
+
+
+@app.get("/body/photo/{photo_id}")
+def body_photo(request: Request, photo_id: int) -> Response:
+    """The decrypted image, for its owner only, never cached."""
+    conn = get_conn()
+    try:
+        jpeg = body.read_photo(conn, current_user_id(request), photo_id)
+    except body.PhotoError:
+        jpeg = None
+    if jpeg is None:
+        return Response(status_code=404, headers=_PRIVATE_HEADERS)
+    return Response(
+        jpeg, media_type="image/jpeg",
+        headers={**_PRIVATE_HEADERS, "X-Content-Type-Options": "nosniff",
+                 "Content-Disposition": "inline"},
+    )
+
+
+@app.post("/body/{photo_id}/analyze")
+async def body_analyze(request: Request, photo_id: int):
+    """(Re)run the analysis of one photo -- the photo is sent to the model."""
+    user_id = current_user_id(request)
+    note = await run_in_threadpool(_analyze_in_thread, user_id, photo_id)
+    return _body_redirect(note)
+
+
+@app.post("/body/{photo_id}/delete")
+def body_delete(request: Request, photo_id: int):
+    """Delete one photo: the encrypted file and its row."""
+    conn = get_conn()
+    body.delete_photo(conn, current_user_id(request), photo_id)
+    return _body_redirect("Photo supprimee.")
+
+
+@app.post("/body/delete-all")
+def body_delete_all(request: Request):
+    """Delete every photo of the logged-in user."""
+    conn = get_conn()
+    count = body.delete_all(conn, current_user_id(request))
+    return _body_redirect(f"{count} photo(s) supprimee(s).")
+

@@ -20,6 +20,25 @@ Elle combine ces informations avec des données de santé et d'activité
 et les comptes de l'utilisateur, dans le seul but de générer son propre
 message de coaching quotidien.
 
+## Photos corporelles (onglet « Corps »)
+
+L'onglet « Corps » permet à chaque utilisateur d'enregistrer des photos de
+lui-même pour suivre sa morphologie.
+
+- Les photos sont ré-encodées à l'envoi (métadonnées EXIF et GPS
+  supprimées), puis **chiffrées** sur le serveur de l'utilisateur. Elles ne
+  sont jamais stockées dans la base de données ni servies par un chemin
+  public, et seul le compte qui les a envoyées peut les voir — aucun autre
+  compte, administrateur compris.
+- Elles ne sont jamais incluses dans les notifications, le calendrier ou le
+  message de coaching.
+- Une photo n'est envoyée au fournisseur du modèle de langage (Anthropic)
+  pour analyse que si l'utilisateur coche explicitement la case
+  d'analyse ; les conditions de conservation sont alors celles du compte
+  Anthropic utilisé.
+- L'utilisateur peut supprimer une photo, ou toutes, à tout moment : le
+  fichier chiffré et son analyse sont effacés immédiatement.
+
 ## Stockage et partage
 
 - Toutes les données restent dans la base de données locale du serveur

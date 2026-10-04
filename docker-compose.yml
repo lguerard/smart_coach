@@ -33,6 +33,10 @@ services:
       - ./data/db:/app/data/db
       - ./data/rclone:/root/.config/rclone
       - ./data/gcal-config:/root/.config/smart_coach
+      # Private body photos (encrypted) and their key. Web only: the
+      # worker never needs them. Exclude both from any cloud backup.
+      - ./data/body-photos:/app/data/body-photos
+      - ./data/secrets:/app/data/secrets
 
   # Public HTTPS front (optional):
   #   docker compose --profile public up -d

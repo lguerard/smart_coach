@@ -185,6 +185,7 @@
             <a href="/sessions" class="navlink {{ 'active' if request.url.path == '/sessions' }}">Seances</a>
             <a href="/data" class="navlink {{ 'active' if request.url.path == '/data' }}">Donnees</a>
             <a href="/achievements" class="navlink {{ 'active' if request.url.path == '/achievements' }}">Trophees</a>
+            <a href="/body" class="navlink {{ 'active' if request.url.path == '/body' }}">Corps 🔒</a>
             <a href="/settings" class="navlink {{ 'active' if request.url.path == '/settings' }}">Reglages</a>
             {% if request.session.get("username") %}
             <form method="post" action="/logout" class="inline">

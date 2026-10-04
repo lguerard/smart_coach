@@ -509,6 +509,26 @@ CREATE TABLE IF NOT EXISTS session_feedback (
 CREATE INDEX IF NOT EXISTS idx_session_feedback_type
     ON session_feedback(user_id, session_type, local_date);
 
+-- Private body photos (body.py). The image itself never lives in the
+-- database: it is stored encrypted on disk under data/body-photos and
+-- only its file name is kept here, so a copy of the database (backup,
+-- Drive sync, a support question) carries no picture. Owner-only by
+-- construction: every query filters on user_id, admins included.
+CREATE TABLE IF NOT EXISTS body_photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    local_date TEXT NOT NULL,
+    pose TEXT NOT NULL CHECK (pose IN ('front', 'side', 'back')),
+    file_name TEXT NOT NULL UNIQUE,
+    analysis TEXT,
+    analysis_error TEXT,
+    analyzed_at TEXT,
+    model TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_body_photos_user
+    ON body_photos(user_id, local_date);
+
 -- Rule-engine state, replacing garmin-coach's levels.json.
 -- red_streak/deload_until back the deload guardrail (training.py):
 -- 3 reds in a row forces a deload week, tracked per session type.

@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Corps - Smart Coach{% endblock %}
+{% block content %}
+<style>
+  .privacy-blur { filter: blur(28px) saturate(0.4); transition: filter 0.2s; cursor: pointer; }
+  .privacy-blur.revealed { filter: none; }
+  .body-photo { width: 100%; max-height: 70vh; object-fit: contain; border-radius: 0.75rem; background: var(--surface-1-solid); }
+  .analysis h3 { font-weight: 600; font-size: 0.875rem; margin-top: 0.75rem; margin-bottom: 0.25rem; }
+  .analysis p, .analysis li { font-size: 0.875rem; color: var(--text-secondary); }
+  .analysis ul { list-style: disc; padding-left: 1.1rem; }
+</style>
+
+<div class="card p-5 space-y-2">
+  <h1 class="text-lg font-semibold">Corps 🔒</h1>
+  <p class="text-sm" style="color: var(--text-secondary);">
+    Un espace privé pour suivre ta morphologie en photo. Ce que tu dois savoir :
+  </p>
+  <ul class="text-xs space-y-1 list-disc pl-4" style="color: var(--muted);">
+    <li>Les photos sont <strong>chiffrées</strong> sur ton serveur, nettoyées de leurs métadonnées (GPS, appareil), et visibles par <strong>toi seul</strong> : aucun autre compte, même administrateur.</li>
+    <li>Elles n'apparaissent jamais dans les notifications, le calendrier ou le message du matin.</li>
+    <li>L'analyse envoie la photo au modèle d'IA configuré (Anthropic), <strong>uniquement</strong> si tu coches la case.</li>
+    <li>Elles restent floutées jusqu'à ce que tu tapes dessus, et se refloutent quand tu quittes l'onglet.</li>
+    <li>Tu peux tout supprimer à tout moment.</li>
+  </ul>
+</div>
+
+{% if note %}
+<div class="card p-4"><p class="text-sm" style="color: var(--yellow);">{{ note }}</p></div>
+{% endif %}
+
+<form method="post" action="/body/upload" enctype="multipart/form-data" class="card p-5 space-y-3"
+  onsubmit="var b=this.querySelector('button[type=submit]'); b.disabled=true; b.textContent=this.analyze.checked ? 'Analyse en cours (1-2 min)...' : 'Envoi...';">
+  <h2 class="font-semibold text-sm">Nouvelle photo</h2>
+  <p class="text-xs" style="color: var(--muted);">
+    Conseils : lumière de face, fond neutre, téléphone à hauteur de poitrine à ~2 m, corps entier, bras le long du corps. Même heure (le matin à jeun) et même endroit à chaque fois pour bien comparer.
+  </p>
+  <input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required
+    class="block w-full text-sm">
+  <label class="block text-sm">
+    Pose
+    <select name="pose" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+      {% for key, label in poses.items() %}
+      <option value="{{ key }}">{{ label|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="flex items-start gap-2 text-sm">
+    <input name="is_me" type="checkbox" value="1" required class="mt-1">
+    <span>C'est bien moi sur la photo, et je suis majeur.</span>
+  </label>
+  <label class="flex items-start gap-2 text-sm">
+    <input name="analyze" type="checkbox" value="1" checked class="mt-1">
+    <span>Analyser maintenant (la photo est envoyée au modèle d'IA pour l'analyse).</span>
+  </label>
+  <button type="submit" class="text-sm px-4 py-2 rounded-lg text-white" style="background: var(--blue);">Enregistrer</button>
+</form>
+
+{% for photo in photos %}
+{% set a = photo.analysis %}
+<div class="card p-5 space-y-3">
+  <div class="flex items-center justify-between">
+    <p class="text-sm font-medium">{{ photo.local_date }} · {{ poses[photo.pose]|capitalize }}</p>
+    <div class="flex gap-2">
+      <form method="post" action="/body/{{ photo.id }}/analyze"
+        onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Analyse...';">
+        <button class="text-xs px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--blue);">
+          {{ 'Réanalyser' if a else 'Analyser' }}
+        </button>
+      </form>
+      <form method="post" action="/body/{{ photo.id }}/delete" onsubmit="return confirm('Supprimer cette photo et son analyse ?');">
+        <button class="text-xs px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--critical);">Supprimer</button>
+      </form>
+    </div>
+  </div>
+
+  <img src="/body/photo/{{ photo.id }}" alt="Photo privée ({{ poses[photo.pose] }})" loading="lazy"
+    class="body-photo privacy-blur" onclick="this.classList.toggle('revealed')">
+
+  {% if photo.analysis_error %}
+  <p class="text-xs" style="color: var(--yellow);">Dernière analyse échouée : {{ photo.analysis_error }}</p>
+  {% endif %}
+
+  {% if a and not a.usable %}
+  <p class="text-sm" style="color: var(--yellow);">Photo non analysable : {{ a.unusable_reason }}</p>
+  {% elif a %}
+  <div class="analysis">
+    <p class="text-sm" style="color: var(--text-primary);">{{ a.summary }}</p>
+
+    {% if a.see_professional %}
+    <div class="mt-3 p-3 rounded-xl text-sm" style="background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--text-primary);">
+      ⚕️ {{ a.see_professional }}
+    </div>
+    {% endif %}
+
+    {% if a.progress_vs_previous %}
+    <h3>Évolution depuis la dernière photo</h3>
+    <p>{{ a.progress_vs_previous }}</p>
+    {% endif %}
+
+    {% if a.priorities %}
+    <h3>Tes priorités</h3>
+    <ol class="space-y-2 list-decimal pl-5">
+      {% for p in a.priorities %}
+      <li><span class="font-medium" style="color: var(--text-primary);">{{ p.title }}</span> — {{ p.why }}<br><span>👉 {{ p.how }}</span></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+
+    {% if a.strengths %}
+    <h3>Ce qui va bien</h3>
+    <ul>{% for s in a.strengths %}<li>{{ s }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if a.posture %}
+    <h3>Posture</h3>
+    <p>{{ a.posture.summary }}</p>
+    {% if a.posture.observations %}
+    <ul>
+      {% for o in a.posture.observations %}
+      <li><span class="font-medium">{{ o.area }}</span> : {{ o.finding }}{% if o.degree and o.degree != 'aucun' %} <span class="text-xs chip-{{ 'yellow' if o.degree == 'leger' else 'red' }} px-2 py-0.5 rounded-full">{{ o.degree }}</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% endif %}
+
+    {% if a.muscle_balance %}
+    <h3>Développement musculaire</h3>
+    <div class="flex flex-wrap gap-2">
+      {% for m in a.muscle_balance if m.level != 'non visible' %}
+      <span class="text-xs px-3 py-1.5 rounded-full chip-{{ 'green' if m.level == 'developpe' else 'yellow' if m.level == 'moyen' else 'red' }}" title="{{ m.note }}">
+        {{ m.zone }} · {{ m.level }}
+      </span>
+      {% endfor %}
+    </div>
+    <ul class="mt-2">{% for m in a.muscle_balance if m.note and m.level != 'non visible' %}<li>{{ m.zone }} : {{ m.note }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if a.proportions %}<h3>Proportions</h3><p>{{ a.proportions }}</p>{% endif %}
+    {% if a.fat_distribution %}<h3>Répartition du gras</h3><p>{{ a.fat_distribution }}</p>{% endif %}
+
+    {% if a.body_fat_estimate and a.body_fat_estimate.high_pct %}
+    <h3>Taux de gras estimé</h3>
+    <p>
+      <span class="font-semibold" style="color: var(--text-primary);">{{ a.body_fat_estimate.low_pct|round|int }}–{{ a.body_fat_estimate.high_pct|round|int }} %</span>
+      (confiance {{ a.body_fat_estimate.confidence }}) — {{ a.body_fat_estimate.note }}
+    </p>
+    {% endif %}
+
+    {% if a.symmetry %}<h3>Symétrie</h3><p>{{ a.symmetry }}</p>{% endif %}
+
+    {% if a.training_advice %}
+    <h3>Entraînement</h3>
+    <ul>{% for t in a.training_advice %}<li><span class="font-medium">{{ t.session_type }}</span> : {{ t.advice }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if a.posture_exercises %}
+    <h3>Exercices correctifs</h3>
+    <ul>{% for e in a.posture_exercises %}<li><span class="font-medium">{{ e.name }}</span> — {{ e.how }} <span class="text-xs" style="color: var(--muted);">({{ e.when }})</span></li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if a.nutrition_advice %}
+    <h3>Nutrition</h3>
+    <ul>{% for n in a.nutrition_advice %}<li>{{ n }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if a.photo_tips %}
+    <h3>Pour la prochaine photo</h3>
+    <ul>{% for t in a.photo_tips %}<li>{{ t }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    <p class="text-xs mt-3" style="color: var(--muted);">
+      Estimation visuelle par IA, indicative : ni un diagnostic, ni une mesure.
+    </p>
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="card p-5 text-center">
+  <p class="text-sm" style="color: var(--muted);">Aucune photo pour l'instant.</p>
+</div>
+{% endfor %}
+
+{% if photos %}
+<form method="post" action="/body/delete-all" class="text-center"
+  onsubmit="return confirm('Supprimer TOUTES tes photos et analyses ? C\'est definitif.');">
+  <button class="text-xs px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--critical);">Tout supprimer</button>
+</form>
+{% endif %}
+
+<script>
+  // Shared office: anything revealed is blurred again as soon as the
+  // page is hidden (tab switch, phone locked, app switcher).
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      document.querySelectorAll(".privacy-blur.revealed").forEach(function (img) {
+        img.classList.remove("revealed");
+      });
+    }
+  });
+</script>
+{% endblock %}
