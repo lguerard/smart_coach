@@ -1,0 +1,10 @@
+# Keep the build context to the code. data/ holds the database, Garmin
+# and Calendar tokens, the encrypted body photos and their key: none of
+# it belongs in an image, and the photo folders are owner-only (0700),
+# so a context that includes them makes `docker compose build` fail with
+# "permission denied" as soon as the first photo is stored.
+data/
+.env
+.git/
+**/__pycache__/
+*.pyc
