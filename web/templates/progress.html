@@ -252,6 +252,29 @@
 {% endblock %}
 
 {% block scripts %}
+{% if level_history %}
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-2">Historique des niveaux</h2>
+  <ul class="text-xs space-y-2">
+    {% for row in level_history %}
+    <li class="flex gap-3">
+      <span class="shrink-0 w-20" style="color: var(--muted);">{{ row.local_date }}</span>
+      <span>
+        <span class="font-medium">{{ session_label_fr.get(row.session_type, row.session_type) }}</span>
+        {% if (row.tier or 'train') == 'train' %}
+        · niveau {{ row.level }}
+        {% if row.level_reason %}<br><span style="color: var(--text-secondary);">{{ row.level_reason }}</span>{% endif %}
+        {% else %}
+        · {{ 'repos' if row.tier == 'rest' else 'récupération' }}
+        {% if row.tier_reason %}<br><span style="color: var(--text-secondary);">{{ row.tier_reason }}</span>{% endif %}
+        {% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <script>
 const css = getComputedStyle(document.documentElement);
 const grid = css.getPropertyValue('--grid');

@@ -161,6 +161,27 @@ def get_photo(
     ).fetchone()
 
 
+def focus_muscles(analysis: Optional[dict]) -> list[str]:
+    """Muscle keys an analysis marks as "a developper".
+
+    The zone names are the model's free text ("epaules", "haut du
+    dos"...); muscles.muscles_from_zone maps them onto the project's
+    muscle keys, which the body map and the exercise library share.
+    """
+    import muscles
+
+    if not analysis or not analysis.get("usable"):
+        return []
+    found: list[str] = []
+    for row in analysis.get("muscle_balance") or []:
+        if row.get("level") != "a developper":
+            continue
+        for muscle in muscles.muscles_from_zone(row.get("zone", "")):
+            if muscle not in found:
+                found.append(muscle)
+    return found
+
+
 def list_photos(conn: sqlite3.Connection, user_id: int) -> list[dict]:
     """The owner's photos, newest first, analyses decoded."""
     rows = conn.execute(
@@ -358,7 +379,8 @@ est imprecise. Si la balance donne un taux (contexte), confronte-le.
 pourquoi et comment.
 - training_advice : relie aux seances qu'il fait deja (types fournis dans \
 le contexte : treadmill, lower_body, upper_body, calisthenics) -- quoi \
-accentuer ou ajouter, sans materiel supplementaire.
+accentuer ou ajouter, sans materiel supplementaire ; cite de preference \
+les mouvements de available_exercises (ceux de son plan actuel).
 - posture_exercises : 2 a 4 exercices correctifs simples, dont au moins \
 un faisable discretement au bureau ; name, how, when.
 - nutrition_advice : coherent avec les cibles du contexte (proteines, \
@@ -418,6 +440,18 @@ def build_context(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         session_type: training.get_level(conn, user_id, session_type)
         for session_type in training.SESSION_LABEL_FR
     }
+    # The moves the circuits actually use at those levels, so the
+    # advice can point at real exercises from the person's own plan.
+    import exercise_library
+
+    context["available_exercises"] = sorted({
+        info["name"]
+        for session_type, level in context["session_levels"].items()
+        if session_type != "treadmill"
+        for info in exercise_library.session_variants(
+            training.session_values(session_type, level), level,
+        ).values()
+    })
     context["goal"] = "recomposition corporelle"
     return context
 
@@ -677,6 +711,8 @@ if __name__ == "__main__":
     assert first["summary"] == "ok"
     assert seen["jpeg"].startswith(b"\xff\xd8")
     assert '"height_cm": "180"' in seen["prompt"], seen["prompt"]
+    assert "available_exercises" in seen["prompt"]
+    assert "pompes" in seen["prompt"], "library moves reach the prompt"
     assert "Analyse precedente de la meme pose :\naucune" in seen["prompt"]
     assert list_photos(conn, owner)[0]["analysis"]["summary"] == "ok"
     second_id = store_photo(conn, owner, buf.getvalue(), "front", "2026-10-11")
@@ -705,6 +741,13 @@ if __name__ == "__main__":
     # A failed re-run keeps the earlier good analysis.
     assert get_photo(conn, owner, side_id)["analysis"] is not None
     del os.environ["LLM_PROVIDER"]
+
+    assert focus_muscles({"usable": True, "muscle_balance": [
+        {"zone": "Épaules", "level": "a developper", "note": ""},
+        {"zone": "pectoraux", "level": "moyen", "note": ""},
+        {"zone": "haut du dos", "level": "a developper", "note": ""},
+    ]}) == ["shoulders", "back"]
+    assert focus_muscles({"usable": False}) == [] and focus_muscles(None) == []
 
     # Schema: every property is required and closed, as structured
     # outputs need.

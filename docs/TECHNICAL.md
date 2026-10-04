@@ -159,6 +159,15 @@ afterwards" below)
                            REST; a red day the level system cannot
                            lighten further becomes a flat RECOVERY
                            walk, never the same level-0 treadmill);
+                           circuits come from exercise_library.py
+                           ladders (double progression: reps climb a
+                           range, then a harder variant; the week's
+                           alternative rotates); muscles.py turns
+                           every logged activity into per-muscle
+                           fatigue (36 h half-life) and holds a level
+                           when tonight's main muscles are still
+                           tired; each level change is stored with its
+                           reason (coach_log.level_reason);
                            metrics.movement_summary judges yesterday's
                            steps/floors/intensity minutes/sitting time/
                            stress/battery against the goals, and

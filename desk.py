@@ -219,6 +219,76 @@ EXERCISES = [
                "fois.",
          "en": "Sit tall, draw the belly in as if zipping tight "
                "trousers, hold 10 s breathing, release. 6 times."}},
+    # Second batch, after the exercise library: posture work for the
+    # desk hunch (head forward, shoulders rounded, hips flexed all day).
+    {"key": "chin_tuck", "kind": "stretch", "posture": "seated",
+     "intensity": "gentle", "seconds": 40, "zone": "neck",
+     "name": {"fr": "Rentrer le menton", "en": "Chin tucks"},
+     "how": {
+         "fr": "Regard droit devant, recule la tete comme pour faire un "
+               "double menton, tiens 3 s. 10 fois : l'antidote a la tete "
+               "en avant devant l'ecran.",
+         "en": "Eyes level, slide your head back into a double chin, "
+               "hold 3 s. 10 times: the fix for screen head."}},
+    {"key": "scapula_squeeze", "kind": "strength", "posture": "seated",
+     "intensity": "light", "seconds": 45, "zone": "back",
+     "name": {"fr": "Serrer les omoplates", "en": "Shoulder blade squeeze"},
+     "how": {
+         "fr": "Assis droit, rapproche les omoplates et descends-les "
+               "vers les poches arriere, tiens 5 s. 10 fois.",
+         "en": "Sit tall, pull your shoulder blades together and down "
+               "towards your back pockets, hold 5 s. 10 times."}},
+    {"key": "wrist_circles", "kind": "circulation", "posture": "seated",
+     "intensity": "gentle", "seconds": 30, "zone": "wrists",
+     "name": {"fr": "Cercles de poignets", "en": "Wrist circles"},
+     "how": {
+         "fr": "Poings fermes, 10 cercles lents dans un sens, 10 dans "
+               "l'autre, sous le bureau.",
+         "en": "Fists closed, 10 slow circles each way, under the desk."}},
+    {"key": "upper_back_hug", "kind": "stretch", "posture": "seated",
+     "intensity": "gentle", "seconds": 30, "zone": "back",
+     "name": {"fr": "Etirement du haut du dos", "en": "Upper back stretch"},
+     "how": {
+         "fr": "Croise les bras comme pour te serrer dans tes bras, "
+               "arrondis le haut du dos et respire dedans 20-30 s.",
+         "en": "Hug yourself, round your upper back and breathe into it "
+               "for 20-30 s."}},
+    {"key": "overhead_triceps", "kind": "stretch", "posture": "seated",
+     "intensity": "gentle", "seconds": 40, "zone": "shoulders",
+     "name": {"fr": "Etirement du triceps", "en": "Overhead triceps stretch"},
+     "how": {
+         "fr": "Une main dans le dos par-dessus l'epaule, l'autre pousse "
+               "doucement le coude. 20 s par bras.",
+         "en": "One hand down your back over the shoulder, the other "
+               "gently pushes the elbow. 20 s per arm."}},
+    {"key": "seated_hamstring", "kind": "stretch", "posture": "seated",
+     "intensity": "gentle", "seconds": 60, "zone": "hips",
+     "name": {"fr": "Ischios assis", "en": "Seated hamstring stretch"},
+     "how": {
+         "fr": "Au bord de la chaise, une jambe tendue talon au sol, "
+               "penche-toi dos droit jusqu'a sentir l'arriere de la "
+               "cuisse. 30 s par jambe.",
+         "en": "At the chair's edge, one leg straight heel down, lean "
+               "forward with a straight back until the back of the thigh "
+               "pulls. 30 s per leg."}},
+    {"key": "seated_pelvic_tilt", "kind": "circulation",
+     "posture": "seated", "intensity": "gentle", "seconds": 45,
+     "zone": "back",
+     "name": {"fr": "Bascule du bassin assis", "en": "Seated pelvic tilt"},
+     "how": {
+         "fr": "Assis, arrondis doucement le bas du dos puis creuse-le, "
+               "lentement, 10 fois. Les lombaires respirent.",
+         "en": "Seated, slowly round then arch your lower back, 10 times. "
+               "Your lower back gets moving again."}},
+    {"key": "standing_side_bend", "kind": "stretch", "posture": "standing",
+     "intensity": "gentle", "seconds": 40, "zone": "back",
+     "name": {"fr": "Inclinaison laterale debout",
+              "en": "Standing side bend"},
+     "how": {
+         "fr": "Debout pres du bureau, un bras au-dessus de la tete, "
+               "penche-toi doucement de cote. 20 s par cote.",
+         "en": "Standing by the desk, one arm overhead, lean gently to "
+               "the side. 20 s each side."}},
 ]
 # fmt: on
 BY_KEY = {exercise["key"]: exercise for exercise in EXERCISES}
@@ -434,7 +504,12 @@ if __name__ == "__main__":
     # No signal still gives the typing-posture stretches, no notes.
     quiet = build_break(monday, [])
     assert len(quiet["items"]) == BREAK_ITEMS and quiet["notes"] == []
-    assert all(i["kind"] == "stretch" for i in quiet["items"]), quiet
+    # ...mobility and posture work, never a real strength set.
+    by_name = {e["name"]["fr"]: e for e in EXERCISES}
+    assert all(
+        by_name[i["name"]]["intensity"] in ("gentle", "light")
+        for i in quiet["items"]
+    ), quiet
 
     # English comes back in English; an unknown language falls back.
     assert build_break(monday, flags, language="en")["items"][0][

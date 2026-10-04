@@ -23,6 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
 COPY ingest/ ./ingest/
 COPY web/ ./web/
+# Generated data: exercise text metadata and body outlines (MIT, see
+# library/NOTICE.md).
+COPY library/ ./library/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

@@ -27,6 +27,8 @@ import sqlite3
 from typing import Optional
 
 import db
+import exercise_library
+import muscles
 # For the sleep window in calibration_report(). metrics imports db and
 # training_load, never training, so this stays acyclic.
 import metrics
@@ -889,6 +891,7 @@ _HRV_STATUS_LABEL_FR = {
 def _all_votes(
     wellness: dict, baseline_rhr: Optional[float],
     feedback: Optional[list[str]] = None,
+    extra_votes: Optional[list[tuple[str, str, str]]] = None,
 ) -> list[tuple[str, str, str]]:
     """Every signal that has data today, as (label, vote, detail).
 
@@ -943,6 +946,9 @@ def _all_votes(
              for r in (feedback or [])[:FEEDBACK_STREAK]
          )),
     )
+    # Votes computed outside wellness (muscle fatigue: muscles.py),
+    # already capped by whoever computed them.
+    candidates = candidates + tuple(extra_votes or ())
     return [
         (label, vote, detail)
         for label, vote, detail in candidates
@@ -953,6 +959,7 @@ def _all_votes(
 def explain_status(
     wellness: dict, baseline_rhr: Optional[float],
     feedback: Optional[list[str]] = None,
+    extra_votes: Optional[list[tuple[str, str, str]]] = None,
 ) -> list[dict]:
     """The signals behind today's status, for display.
 
@@ -972,7 +979,7 @@ def explain_status(
     return [
         {"label": label, "vote": vote, "detail": detail}
         for label, vote, detail in _all_votes(
-            wellness, baseline_rhr, feedback,
+            wellness, baseline_rhr, feedback, extra_votes,
         )
     ]
 
@@ -980,6 +987,7 @@ def explain_status(
 def compute_status(
     wellness: dict, baseline_rhr: Optional[float],
     feedback: Optional[list[str]] = None,
+    extra_votes: Optional[list[tuple[str, str, str]]] = None,
 ) -> str:
     """Combine wellness signals into a green/yellow/red daily status.
 
@@ -996,7 +1004,9 @@ def compute_status(
         to be green.
     """
     votes = [
-        vote for _, vote, _ in _all_votes(wellness, baseline_rhr, feedback)
+        vote for _, vote, _ in _all_votes(
+            wellness, baseline_rhr, feedback, extra_votes,
+        )
     ]
     if not votes:
         return "yellow"
@@ -1198,6 +1208,7 @@ def session_cap_min(conn: sqlite3.Connection, user_id: int) -> int:
 
 def treadmill_values(
     level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+    date: Optional[str] = None,
 ) -> dict:
     """Level -> treadmill workout values.
 
@@ -1216,12 +1227,33 @@ def _circuit_duration_min(rounds: int, cap_min: int) -> int:
     return min(12 + 6 * rounds, cap_min)
 
 
+def _laddered(values: dict, level: int, date: Optional[str]) -> dict:
+    """Apply the exercise ladders to a circuit's values.
+
+    Rep slots with a range take their count from the double
+    progression (exercise_library.reps_for); every slot gets its
+    variant for the level (and the week, when ``date`` is known) under
+    ``values["variants"]``. Time slots and range-less rep slots keep
+    the session's own linear count.
+    """
+    for slot in list(values):
+        if slot in exercise_library.LADDERS:
+            reps = exercise_library.reps_for(slot, level)
+            if reps is not None:
+                values[slot] = reps
+    values["variants"] = exercise_library.session_variants(
+        values, level, date,
+    )
+    return values
+
+
 def lower_body_values(
     level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+    date: Optional[str] = None,
 ) -> dict:
     """Level -> lower-body bodyweight circuit values."""
     rounds = 3 if level <= 3 else 4 if level <= 7 else 5
-    return {
+    return _laddered({
         "squats": 12 + level,
         "lunges_per_leg": 10 + level,
         "wall_sit_sec": 30 + level * 4,
@@ -1229,30 +1261,32 @@ def lower_body_values(
         "glute_bridge": 15 + level,
         "rounds": rounds,
         "duration_min": _circuit_duration_min(rounds, cap_min),
-    }
+    }, level, date)
 
 
 def upper_body_values(
     level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+    date: Optional[str] = None,
 ) -> dict:
     """Level -> upper-body + core circuit values."""
     rounds = 3 if level <= 3 else 4
-    return {
+    return _laddered({
         "pushups": 8 + level,
         "dips": 10 + level,
         "superman": 12 + level,
         "plank_sec": 20 + level * 4,
         "rounds": rounds,
         "duration_min": _circuit_duration_min(rounds, cap_min),
-    }
+    }, level, date)
 
 
 def calisthenics_values(
     level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+    date: Optional[str] = None,
 ) -> dict:
     """Level -> full-body calisthenics circuit values."""
     rounds = 3 if level <= 3 else 4 if level <= 7 else 5
-    return {
+    return _laddered({
         "squats": 15 + level,
         "pushups": 10 + level,
         "reverse_lunges_per_leg": 10 + level,
@@ -1261,7 +1295,7 @@ def calisthenics_values(
         "jumping_jacks": 20 + level * 2,
         "rounds": rounds,
         "duration_min": _circuit_duration_min(rounds, cap_min),
-    }
+    }, level, date)
 
 
 SESSION_VALUE_FUNCS = {
@@ -1274,10 +1308,14 @@ SESSION_VALUE_FUNCS = {
 
 def session_values(
     session_type: str, level: int,
-    cap_min: int = DEFAULT_SESSION_CAP_MIN,
+    cap_min: int = DEFAULT_SESSION_CAP_MIN, date: Optional[str] = None,
 ) -> dict:
-    """Dispatch to the value-mapping function for a session type."""
-    return SESSION_VALUE_FUNCS[session_type](level, cap_min)
+    """Dispatch to the value-mapping function for a session type.
+
+    ``date`` picks the week's variant among equals (exercise_library);
+    without it the first alternative is used.
+    """
+    return SESSION_VALUE_FUNCS[session_type](level, cap_min, date)
 
 
 def format_description_fr(
@@ -1293,31 +1331,24 @@ def format_description_fr(
             f"{values['incline_pct']}%, {values['duration_min']} min "
             "continu"
         )
-    elif session_type == "lower_body":
+    else:
+        # Circuits: each slot named by its variant of the day (the
+        # ladder rung for this level, the week's alternative).
+        variants = values.get("variants") or {}
+        parts = []
+        for slot, value in values.items():
+            if slot in ("rounds", "duration_min", "variants"):
+                continue
+            name = variants.get(slot, {}).get("name", slot)
+            unit = "s" if slot.endswith("_sec") else ""
+            per = (
+                "/jambe" if slot.endswith("_per_leg")
+                else "/cote" if slot == "side_plank_sec" else ""
+            )
+            parts.append(f"{name} {value}{unit}{per}")
         body = (
             f"{values['rounds']} tours (~{values['duration_min']} "
-            f"min) - squats {values['squats']}, "
-            f"fentes avant {values['lunges_per_leg']}/jambe, chaise "
-            f"contre mur {values['wall_sit_sec']}s, mollets debout "
-            f"{values['calf_raises']}, pont fessier "
-            f"{values['glute_bridge']}"
-        )
-    elif session_type == "upper_body":
-        body = (
-            f"{values['rounds']} tours (~{values['duration_min']} "
-            f"min) - pompes {values['pushups']}, "
-            f"dips {values['dips']}, superman {values['superman']}, "
-            f"planche {values['plank_sec']}s"
-        )
-    else:  # calisthenics
-        body = (
-            f"{values['rounds']} tours (~{values['duration_min']} "
-            f"min) - squats {values['squats']}, "
-            f"pompes {values['pushups']}, fentes arriere "
-            f"{values['reverse_lunges_per_leg']}/jambe, gainage "
-            f"lateral {values['side_plank_sec']}s/cote, mountain "
-            f"climbers {values['mountain_climbers']}, jumping jacks "
-            f"{values['jumping_jacks']}"
+            f"min) - " + ", ".join(parts)
         )
 
     return (
@@ -1335,7 +1366,7 @@ _DELOAD_REASON = {
 def _render_session(
     conn: sqlite3.Connection, user_id: int, session_type: Optional[str],
     level: Optional[int], status: Optional[str], tier: str,
-    reasons: list[str], title: str,
+    reasons: list[str], title: str, date: Optional[str] = None,
 ) -> tuple[dict, Optional[str]]:
     """Values and French description for whatever the day asks for.
 
@@ -1364,9 +1395,129 @@ def _render_session(
     if session_type is None:
         return {}, None
     values = session_values(
-        session_type, level, session_cap_min(conn, user_id),
+        session_type, level, session_cap_min(conn, user_id), date,
     )
     return values, format_description_fr(session_type, level, values, status)
+
+
+def muscle_votes(
+    conn: sqlite3.Connection, user_id: int, date: str,
+    session_type: Optional[str],
+) -> list[tuple[str, str, str]]:
+    """The muscle-fatigue vote for tonight's session, as a vote list.
+
+    Shared by the morning decision and the dashboard's explanation, so
+    the two always agree on whether tired legs held tonight back.
+    """
+    if session_type is None:
+        return []
+    weights = muscles.session_muscle_weights(
+        session_type, get_level(conn, user_id, session_type), date,
+    )
+    vote = muscles.session_vote(
+        muscles.muscle_fatigue(conn, user_id, date), weights,
+    )
+    return [vote] if vote else []
+
+
+LAST_SESSION_LOOKBACK_DAYS = 14
+
+
+def progression_gate(
+    conn: sqlite3.Connection, user_id: int, session_type: str, date: str,
+) -> Optional[str]:
+    """Why a green day should NOT raise the level, if there is a reason.
+
+    The rule progression systems that people trust share: you only move
+    up on work you actually did and handled. A green morning says the
+    body is fresh; it says nothing about whether last time's session of
+    this type was done, or how it went. One "too hard" or one skipped
+    session holds the level (two "too hard" already turn the day red
+    through the feedback vote).
+
+    Returns:
+        str | None: The reason, in French, or None when the level may
+        go up.
+    """
+    feedback = recent_feedback(conn, user_id, session_type, limit=1)
+    if feedback and feedback[0] == "hard":
+        return "la derniere seance de ce type etait trop dure"
+    since = (
+        dt.date.fromisoformat(date)
+        - dt.timedelta(days=LAST_SESSION_LOOKBACK_DAYS)
+    ).isoformat()
+    last = conn.execute(
+        "SELECT local_date FROM coach_log WHERE user_id = ? AND "
+        "session_type = ? AND COALESCE(tier, 'train') = 'train' AND "
+        "local_date < ? AND local_date >= ? AND id IN (SELECT MAX(id) "
+        "FROM coach_log WHERE user_id = ? GROUP BY local_date) "
+        "ORDER BY local_date DESC LIMIT 1",
+        (user_id, session_type, date, since, user_id),
+    ).fetchone()
+    # Only for someone who records their workouts at all: without any
+    # logged activity lately, "nothing logged" says nothing about the
+    # session, and the gate would hold the level forever.
+    tracks = conn.execute(
+        "SELECT 1 FROM exercise_sessions WHERE user_id = ? AND "
+        "local_date >= ? LIMIT 1", (user_id, since),
+    ).fetchone()
+    if last and tracks:
+        # Done = an activity logged that day, or a rating given for it.
+        done = conn.execute(
+            "SELECT 1 FROM exercise_sessions WHERE user_id = ? AND "
+            "local_date = ? UNION SELECT 1 FROM session_feedback WHERE "
+            "user_id = ? AND local_date = ? LIMIT 1",
+            (user_id, last["local_date"], user_id, last["local_date"]),
+        ).fetchone()
+        if not done:
+            return (
+                f"la derniere seance de ce type ({last['local_date']}) "
+                "n'a pas ete faite"
+            )
+    return None
+
+
+_STATUS_FR = {"green": "vert", "yellow": "jaune", "red": "rouge"}
+
+
+def level_reason(
+    before: int, after: int, status: str, gate: Optional[str],
+    deload: dict, signals: list[tuple[str, str, str]],
+) -> str:
+    """One sentence on why tonight's level is what it is.
+
+    Parameters:
+        before (int): Level before today's decision.
+        after (int): Level after it.
+        status (str): Today's status.
+        gate (str | None): ``progression_gate`` reason, if it held a
+            green day.
+        deload (dict): ``apply_deload_guardrail`` output.
+        signals (list): ``_all_votes`` output.
+
+    Returns:
+        str: French, plain language, the deciding signals named.
+    """
+    def _named(vote: str) -> str:
+        names = [label.lower() for label, v, _ in signals if v == vote]
+        return f" ({', '.join(names[:3])})" if names else ""
+
+    if deload.get("deload_triggered"):
+        why = _DELOAD_REASON[deload["trigger"]][0]
+        return f"semaine allegee declenchee ({why}) : niveau {before} -> {after}"
+    if deload.get("in_deload"):
+        return f"semaine allegee en cours : niveau maintenu a {after}"
+    if status == "red":
+        if after == before:
+            return f"jour rouge{_named('red')}, niveau deja au minimum"
+        return f"jour rouge{_named('red')} : niveau {before} -> {after}"
+    if status == "green":
+        if gate:
+            return f"jour vert mais {gate} : niveau maintenu a {after}"
+        if after == before:
+            return f"jour vert, niveau maximum ({after}) atteint"
+        return f"jour vert{_named('green')} : niveau {before} -> {after}"
+    return f"jour jaune{_named('yellow')} : niveau maintenu a {after}"
 
 
 def plan_day(
@@ -1411,17 +1562,32 @@ def plan_day(
     tier_info = tier_before_guardrail(conn, user_id, date, illness)
 
     status = level = None
+    reason = None
+    extra = []
     deload = {"in_deload": False, "deload_triggered": False}
     if session_type is not None:
-        status = compute_status(
-            wellness, rhr_baseline(conn, user_id, date),
-            recent_feedback(conn, user_id, session_type),
-        )
+        extra = muscle_votes(conn, user_id, date, session_type)
+        baseline = rhr_baseline(conn, user_id, date)
+        feedback = recent_feedback(conn, user_id, session_type)
+        status = compute_status(wellness, baseline, feedback, extra)
         if tier_info is None:
+            before = get_level(conn, user_id, session_type)
+            gate = (
+                progression_gate(conn, user_id, session_type, date)
+                if status == "green" else None
+            )
+            # A held green day moves the level like a yellow one; the
+            # day itself stays green (the body is fine, the level is
+            # waiting on the work).
             deload = apply_deload_guardrail(
-                conn, user_id, session_type, status, date, tsb=tsb,
+                conn, user_id, session_type,
+                "yellow" if gate else status, date, tsb=tsb,
             )
             level = deload["level"]
+            reason = level_reason(
+                before, level, status, gate, deload,
+                _all_votes(wellness, baseline, feedback, extra),
+            )
             tier_info = tier_after_guardrail(
                 status, level, consecutive_red_days(conn, user_id, date),
             )
@@ -1439,7 +1605,7 @@ def plan_day(
     reasons = list(tier_info["reasons"]) if tier_info else []
     values, description = _render_session(
         conn, user_id, session_type, level, status, tier, reasons,
-        template.get("title", ""),
+        template.get("title", ""), date,
     )
     if tier == TIER_TRAIN and deload.get("deload_triggered") and description:
         reason_fr, reason_en = _DELOAD_REASON[deload["trigger"]]
@@ -1455,6 +1621,8 @@ def plan_day(
         "in_deload": bool(deload.get("in_deload")),
         "deload_triggered": bool(deload.get("deload_triggered")),
         "illness_deload": illness_deload,
+        "level_reason": reason,
+        "tired_muscles": extra[0][2] if extra else None,
     }
 
 
@@ -1490,6 +1658,10 @@ def session_payload(plan: dict, template: dict, language: str = "fr") -> dict:
         "values": plan["values"], "description_fr": plan["description"],
         "in_deload": plan["in_deload"],
         "deload_triggered": plan["deload_triggered"],
+        **({"level_reason": plan["level_reason"]}
+           if plan.get("level_reason") else {}),
+        **({"tired_muscles": plan["tired_muscles"]}
+           if plan.get("tired_muscles") else {}),
     }
 
 
@@ -1519,7 +1691,7 @@ def plan_from_log(
     reasons = [entry["tier_reason"]] if entry["tier_reason"] else []
     values, description = _render_session(
         conn, user_id, session_type, entry["level"], entry["status"],
-        tier, reasons, template.get("title", ""),
+        tier, reasons, template.get("title", ""), date,
     )
     until = (
         get_deload_until(conn, user_id, session_type) if session_type else None
@@ -1530,6 +1702,10 @@ def plan_from_log(
         "values": values, "description": description,
         "in_deload": bool(until and until >= date),
         "deload_triggered": False, "illness_deload": {},
+        "level_reason": (
+            entry["level_reason"] if "level_reason" in entry.keys() else None
+        ),
+        "tired_muscles": None,
     }
 
 
@@ -1603,7 +1779,24 @@ if __name__ == "__main__":
     assert lower_body_values(3)["rounds"] == 3
     assert lower_body_values(4)["rounds"] == 4
     assert lower_body_values(8)["rounds"] == 5
-    assert calisthenics_values(10)["squats"] == 25
+    # Double progression from the ladders: the top level is the top of
+    # the hardest rung's range, and each slot names its variant.
+    assert calisthenics_values(10)["squats"] == 20
+    assert calisthenics_values(10)["variants"]["squats"]["name"] in (
+        "squat pause 2 s", "squat saute",
+    )
+    assert upper_body_values(0)["pushups"] == 6
+    assert upper_body_values(0)["variants"]["pushups"]["name"] == (
+        "pompes inclinees"
+    )
+    # Time slots keep their linear count.
+    assert upper_body_values(5)["plank_sec"] == 40
+    described = format_description_fr(
+        "upper_body", 0, upper_body_values(0), "green",
+    )
+    assert "pompes inclinees 6" in described, described
+    assert "planche sur les genoux 20s" in described, described
+    assert described.split(": ", 1)[1].split(" (statut")[0], described
 
     # Density-first duration: fixed until speed caps (level 7), then
     # +4 min per level, never past the cap.
@@ -1781,6 +1974,85 @@ if __name__ == "__main__":
     set_level(pc, pu, "treadmill", 3)
     plan = plan_day(pc, pu, D, _template(pc, pu, 0), GREEN, HEALTHY)
     assert plan["tier"] == TIER_TRAIN and plan["level"] == 4, plan
+    # Explainable progression: the reason names the deciding signal.
+    assert "jour vert" in plan["level_reason"], plan
+    assert "3 -> 4" in plan["level_reason"], plan
+    # Only on work done and handled: last session too hard -> held.
+    pc, pu = _fresh()
+    set_level(pc, pu, "treadmill", 3)
+    pc.execute(
+        "INSERT INTO session_feedback (user_id, local_date, session_type, "
+        "rating, created_at) VALUES (?, '2026-10-02', 'treadmill', 'hard', "
+        "'x')", (pu,))
+    pc.commit()
+    held = plan_day(pc, pu, D, _template(pc, pu, 0), GREEN, HEALTHY)
+    assert held["status"] == "green" and held["level"] == 3, held
+    assert "trop dure" in held["level_reason"], held
+    # ...and a skipped last session of the type holds it too.
+    pc, pu = _fresh()
+    set_level(pc, pu, "treadmill", 3)
+    pc.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, 'x', '2026-10-02', "
+        "'green', 'treadmill', 3, 'm', 'train')", (pu,))
+    pc.commit()
+    # Nobody who never records a workout is held by this rule...
+    untracked = plan_day(pc, pu, D, _template(pc, pu, 0), GREEN, HEALTHY)
+    assert untracked["level"] == 4, untracked
+    # ...but someone who does (a walk logged on another day) is.
+    set_level(pc, pu, "treadmill", 3)
+    pc.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date, exercise_type) VALUES ('w0', ?, "
+        "'2026-09-30T18:00:00+00:00', '2026-09-30T18:30:00+00:00', "
+        "'2026-09-30', 79)", (pu,))
+    pc.commit()
+    skipped = plan_day(pc, pu, D, _template(pc, pu, 0), GREEN, HEALTHY)
+    assert skipped["level"] == 3, skipped
+    assert "pas ete faite" in skipped["level_reason"], skipped
+    # A rating given for that day counts as done, logged or not.
+    pc.execute(
+        "INSERT INTO session_feedback (user_id, local_date, session_type, "
+        "rating, created_at) VALUES (?, '2026-10-02', 'treadmill', 'right', "
+        "'x')", (pu,))
+    pc.commit()
+    set_level(pc, pu, "treadmill", 3)
+    rated = plan_day(pc, pu, D, _template(pc, pu, 0), GREEN, HEALTHY)
+    assert rated["level"] == 4, rated
+    pc.execute("DELETE FROM session_feedback WHERE user_id = ?", (pu,))
+    pc.commit()
+    # Done (an exercise session that day) -> it progresses again.
+    pc.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date, exercise_type) VALUES ('t1', ?, "
+        "'2026-10-02T18:00:00+00:00', '2026-10-02T18:25:00+00:00', "
+        "'2026-10-02', 57)", (pu,))
+    pc.commit()
+    set_level(pc, pu, "treadmill", 3)
+    done = plan_day(pc, pu, D, _template(pc, pu, 0), GREEN, HEALTHY)
+    assert done["level"] == 4, done
+    # Tired legs from a long hike yesterday hold a leg day (yellow),
+    # with the muscles and the cause in the reason; no red.
+    pc, pu = _fresh()
+    set_level(pc, pu, "lower_body", 5)
+    pc.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date, exercise_type) VALUES ('h1', ?, "
+        "'2026-10-05T08:00:00+00:00', '2026-10-05T11:30:00+00:00', "
+        "'2026-10-05', 37)", (pu,))
+    pc.commit()
+    legs = plan_day(pc, pu, "2026-10-06", _template(pc, pu, 1), GREEN,
+                    HEALTHY)
+    assert legs["status"] == "yellow" and legs["level"] == 5, legs
+    assert "quadriceps" in legs["tired_muscles"], legs
+    assert "randonnee" in legs["tired_muscles"], legs
+    assert "fatigue musculaire" in legs["level_reason"], legs
+    assert session_payload(legs, _template(pc, pu, 1))["tired_muscles"]
+    # The same hike does not touch an upper-body day.
+    arms = plan_day(pc, pu, "2026-10-08", _template(pc, pu, 3), GREEN,
+                    HEALTHY)
+    assert arms["tired_muscles"] is None and arms["status"] == "green"
+
     # ...and the second red day in a row is a walk even with room left.
     pc, pu = _fresh()
     set_level(pc, pu, "treadmill", 3)

@@ -1,0 +1,20 @@
+{# Front/back body figure. `fig` comes from bodymap.figure(): each
+   outline carries its class (colour lives in base.html's .bm-* rules,
+   so it follows the theme) and a tooltip. Outlines: MuscleMap (MIT). #}
+{% macro body_figure(fig, height=220) %}
+{% if fig %}
+<div class="flex items-start justify-center gap-2">
+  {% for side in ['front', 'back'] if fig[side] %}
+  <figure class="text-center">
+    <svg viewBox="{{ fig[side].viewBox }}" style="height: {{ height }}px; width: auto;" role="img"
+      aria-label="{{ 'Vue de face' if side == 'front' else 'Vue de dos' }}">
+      {% for p in fig[side].parts %}
+      <path d="{{ p.d }}" class="{{ p.cls }}">{% if p.title %}<title>{{ p.title }}</title>{% endif %}</path>
+      {% endfor %}
+    </svg>
+    <figcaption class="text-xs" style="color: var(--muted);">{{ 'face' if side == 'front' else 'dos' }}</figcaption>
+  </figure>
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}

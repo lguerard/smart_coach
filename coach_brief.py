@@ -225,6 +225,8 @@ def body_summary(payload: dict) -> dict:
     }
     if session.get("status"):
         summary["status"] = session["status"]
+    if session.get("tired_muscles"):
+        summary["tired_muscles"] = session["tired_muscles"]
     illness = payload.get("illness_watch") or {}
     if illness.get("suspected"):
         summary["illness_signs"] = list(illness.get("signals") or [])[:2]
@@ -249,6 +251,28 @@ def session_brief(payload: dict) -> dict:
     for key in ("values", "level", "note"):
         if session.get(key) not in (None, {}, ""):
             brief[key] = session[key]
+    values = dict(brief.get("values") or {})
+    variants = values.pop("variants", None)
+    if variants:
+        # A circuit: the moves by name with their count, not the slot
+        # keys and the whole variant catalogue -- that is what the
+        # message has to say.
+        brief["values"] = {k: v for k, v in values.items()
+                           if k in ("rounds", "duration_min")}
+        brief["moves"] = [
+            f"{info['name']} {values[slot]}"
+            f"{'s' if slot.endswith('_sec') else ''}"
+            f"{'/jambe' if slot.endswith('_per_leg') else ''}"
+            for slot, info in variants.items() if slot in values
+        ]
+        nexts = [info["next"] for info in variants.values()
+                 if info.get("next")]
+        if nexts:
+            brief["next_rung"] = nexts[0]
+    if session.get("level_reason") and session.get("type") not in (
+        "rest", "recovery",
+    ):
+        brief["level_reason"] = session["level_reason"]
     if session.get("type") in ("rest", "recovery"):
         brief["replaces"] = session.get("scheduled_title")
         brief["why"] = session.get("tier_reasons") or []
@@ -648,5 +672,22 @@ if __name__ == "__main__":
     assert build_brief({**short, "language": "en"})["help"]["food"][
         "items"
     ][0]["name"] != helped["help"]["food"]["items"][0]["name"]
+
+    # A circuit reaches the brief as named moves, its level reason and
+    # the next rung -- not as slot keys and the variant catalogue.
+    import training
+
+    circuit_values = training.session_values("upper_body", 2, date="2026-10-08")
+    circuit = build_brief(_payload(today_session={
+        "type": "upper_body", "status": "green", "level": 2,
+        "values": circuit_values, "level_reason": "jour vert : 1 -> 2",
+        "tired_muscles": "pectoraux encore fatigues (natation)",
+    }))
+    session = circuit["session"]
+    assert "variants" not in session["values"], session
+    assert any(m.startswith("pompes") for m in session["moves"]), session
+    assert session["level_reason"] == "jour vert : 1 -> 2", session
+    assert "pompes" in session["next_rung"], session
+    assert circuit["body"]["tired_muscles"].startswith("pectoraux")
 
     print("coach_brief.py: all checks passed")

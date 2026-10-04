@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_bodymap.html" import body_figure %}
 {% block title %}Aujourd'hui - Smart Coach{% endblock %}
 {% block content %}
 
@@ -153,10 +154,10 @@
     <p class="text-xs mt-3" style="color: var(--muted);">
       Le statut du jour est vert seulement si tous ces signaux le sont ;
       un seul rouge suffit a le passer en rouge.
-      {% if status_signals | length < 5 %}
+      {% if status_signals | length < 4 %}
       <br>Calcule sur {{ status_signals | length }} signal{{ "s" if status_signals | length > 1 }}
-      sur 5 — les autres n'ont pas de donnee aujourd'hui, le verdict est
-      donc moins sur qu'a l'accoutumee.
+      seulement — les autres n'ont pas de donnee aujourd'hui, le verdict
+      est donc moins sur qu'a l'accoutumee.
       {% endif %}
     </p>
   </div>
@@ -236,6 +237,9 @@
         <button type="submit" class="text-xs px-2 py-1 rounded-lg text-white ml-1" style="background: var(--blue);">OK</button>
       </form>
       {% endif %}
+      {% if level_reason and tier == 'train' %}
+      <p class="text-xs mt-1" style="color: var(--muted);">Pourquoi : {{ level_reason }}</p>
+      {% endif %}
     </div>
   </div>
 
@@ -258,7 +262,44 @@
   {% if cal_note %}
   <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
   {% endif %}
+  {% if tier == 'train' and values and values.variants %}
+  <details class="mt-3 text-sm">
+    <summary class="cursor-pointer text-xs" style="color: var(--blue);">Les mouvements de ce soir</summary>
+    <ul class="mt-2 space-y-2">
+      {% for slot, v in values.variants.items() %}
+      <li>
+        <span class="font-medium">{{ v.name }}</span>
+        <span class="text-xs" style="color: var(--muted);">{{ values[slot] }}{{ 's' if slot.endswith('_sec') }}{% if v.range %} · plage {{ v.range[0] }}-{{ v.range[1] }}{% endif %}</span><br>
+        <span class="text-xs" style="color: var(--text-secondary);">{{ v.cue }}</span>
+        {% if v.next %}<br><span class="text-xs" style="color: var(--muted);">Ensuite : {{ v.next }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
 </div>
+
+{% if recovery_fig %}
+<div class="card p-5">
+  <h2 class="font-semibold mb-2 flex items-center gap-2">
+    <span style="color: var(--orange);">●</span> Récupération musculaire
+  </h2>
+  {{ body_figure(recovery_fig) }}
+  <div class="flex flex-wrap justify-center gap-3 text-xs mt-2" style="color: var(--muted);">
+    <span><svg width="10" height="10"><rect width="10" height="10" class="bm-hot"/></svg> fatigué</span>
+    <span><svg width="10" height="10"><rect width="10" height="10" class="bm-warm"/></svg> en récupération</span>
+    <span><svg width="10" height="10"><rect width="10" height="10" class="bm-ok"/></svg> prêt</span>
+    <span><svg width="10" height="10"><rect width="10" height="10" class="bm-idle"/></svg> pas travaillé cette semaine</span>
+  </div>
+  {% if tired %}
+  <ul class="text-xs mt-3 space-y-1" style="color: var(--text-secondary);">
+    {% for t in tired[:5] %}
+    <li>{{ t.label }} : {{ 'fatigué' if t.state == 'fatigued' else 'en récupération' }}{% if t.cause %} ({{ t.cause }}){% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endif %}
 
 {% if movement.flags or movement.steps or movement.stress_avg is defined %}
 <div class="card p-5">

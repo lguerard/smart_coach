@@ -783,7 +783,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     coach_cols = {
         row["name"] for row in conn.execute("PRAGMA table_info(coach_log)")
     }
-    for column in ("tier", "tier_reason"):
+    for column in ("tier", "tier_reason", "level_reason"):
         if column not in coach_cols:
             conn.execute(f"ALTER TABLE coach_log ADD COLUMN {column} TEXT")
     conn.commit()

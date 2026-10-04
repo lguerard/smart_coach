@@ -100,7 +100,7 @@ _EXERCISE_LABEL_FR = {
     "mountain_climbers": "mountain climbers",
     "jumping_jacks": "jumping jacks",
 }
-_NON_STEP_KEYS = {"rounds", "duration_min"}
+_NON_STEP_KEYS = {"rounds", "duration_min", "variants"}
 
 # training.session_values() key -> (Garmin exercise category, exercise
 # name), from garminconnect's own exercises.py catalog -- this is what
@@ -1294,7 +1294,14 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
                 "displayable": True,
             }
         )
-        category, exercise_name = _EXERCISE_CATALOG.get(key, (None, None))
+        # The ladder's variant names the real movement (and its Garmin
+        # exercise) when there is one; the slot's generic entry is the
+        # fallback for values built without variants.
+        variant = (values.get("variants") or {}).get(key) or {}
+        category, exercise_name = (
+            tuple(variant["garmin"]) if variant.get("garmin")
+            else _EXERCISE_CATALOG.get(key, (None, None))
+        )
         extra = (
             {"category": category, "exerciseName": exercise_name}
             if category else {}
@@ -1311,7 +1318,8 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
                 "workoutTargetTypeId": TargetType.NO_TARGET,
                 "workoutTargetTypeKey": "no.target", "displayOrder": 1,
             },
-            description=_EXERCISE_LABEL_FR.get(key, key),
+            description=variant.get("name")
+            or _EXERCISE_LABEL_FR.get(key, key),
             **extra,
         ))
     return steps
@@ -1348,8 +1356,9 @@ def _circuit_workout(
         workoutSteps=[group],
     )
     label = training.SESSION_LABEL_FR[session_type]
+    variants = values.get("variants") or {}
     description = ", ".join(
-        f"{_EXERCISE_LABEL_FR.get(key, key)} {value}"
+        f"{variants.get(key, {}).get('name') or _EXERCISE_LABEL_FR.get(key, key)} {value}"
         f"{'s' if key.endswith('_sec') else ''}"
         for key, value in values.items() if key not in _NON_STEP_KEYS
     )
@@ -1967,6 +1976,17 @@ if __name__ == "__main__":
     # One step per exercise key (squats, lunges, wall_sit, calf_raises,
     # glute_bridge) -- rounds/duration_min never become steps.
     assert len(repeat_group["workoutSteps"]) == 5, repeat_group
+    # Each step is the ladder's variant: its own Garmin exercise and
+    # its French name (the variants dict itself never becomes a step).
+    steps = repeat_group["workoutSteps"]
+    first = lb_values["variants"]["squats"]
+    assert steps[0]["exerciseName"] == first["garmin"][1], steps[0]
+    assert steps[0]["description"] == first["name"], steps[0]
+    calf = next(s for s in steps if s["category"] == "CALF_RAISE")
+    assert calf["exerciseName"] == (
+        lb_values["variants"]["calf_raises"]["garmin"][1]
+    ), calf
+    assert first["name"] in circuit_workout["description"]
 
     class _FakeWorkoutGarmin:
         """Records upload/schedule/delete calls -- no live push made."""

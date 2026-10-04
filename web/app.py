@@ -42,12 +42,15 @@ from webauthn.helpers.structs import (
 
 import achievements
 import body
+import bodymap
 import coach_payload
 import db
 import desk
+import exercise_library
 import gcal
 import llm
 import metrics
+import muscles
 import progress
 import training
 import training_load
@@ -505,8 +508,10 @@ def home(request: Request) -> HTMLResponse:
         training.recent_feedback(conn, user_id, entry["session_type"])
         if entry and entry["session_type"] else []
     )
+    session_type_today = entry["session_type"] if entry else None
     status_signals = training.explain_status(
         wellness, training.rhr_baseline(conn, user_id, date), feedback,
+        training.muscle_votes(conn, user_id, date, session_type_today),
     )
     # Asked the evening of a session day, once. Yesterday's session
     # counts too: the question usually gets answered the next morning.
@@ -570,6 +575,23 @@ def home(request: Request) -> HTMLResponse:
     )
     in_deload = bool(deload_until and deload_until >= date)
     off_title = day_template["title"]
+    # Per-muscle recovery, read now (not at 07:00: the dashboard is
+    # looked at during the day, after the evening's session too).
+    fatigue = muscles.muscle_fatigue(
+        conn, user_id, date, at=dt.datetime.now(dt.timezone.utc),
+    )
+    recovery_fig = bodymap.recovery_figure(
+        fatigue, bodymap.gender_for(db.get_setting(conn, user_id, "sex")),
+    )
+    tired = [
+        {"label": muscles.MUSCLES[m], "state": info["state"],
+         "cause": muscles.ACTIVITY_LABEL_FR.get(
+             info.get("cause", ""), (info.get("cause") or "").replace("_", " "),
+         )}
+        for m, info in sorted(
+            fatigue["muscles"].items(), key=lambda kv: -kv[1]["fatigue"],
+        ) if info["state"] != "ready"
+    ]
     # Yesterday's movement against the goals, and the silent desk break
     # picked from it -- the same two the morning message is given.
     movement = metrics.movement_summary(conn, user_id, date)
@@ -582,6 +604,11 @@ def home(request: Request) -> HTMLResponse:
             "date": date, "entry": entry, "values": session_values,
             "off_title": off_title, "tier": tier,
             "movement": movement, "desk_break": desk_break,
+            "recovery_fig": recovery_fig, "tired": tired,
+            "level_reason": (
+                entry["level_reason"] if entry and "level_reason" in entry.keys()
+                else None
+            ),
             "tier_reasons": tier_reasons,
             "sick_until": training.sick_until(conn, user_id),
             "sick_today": training.is_self_reported_sick(
@@ -736,13 +763,14 @@ async def edit_today_level(request: Request):
     session_type = entry["session_type"]
     training.set_level(conn, user_id, session_type, level)
     conn.execute(
-        "UPDATE coach_log SET level = ? WHERE id = ? AND user_id = ?",
-        (level, entry["id"], user_id),
+        "UPDATE coach_log SET level = ?, level_reason = ? WHERE id = ? "
+        "AND user_id = ?",
+        (level, f"niveau regle a la main a {level}", entry["id"], user_id),
     )
     conn.commit()
 
     values = training.session_values(
-        session_type, level, training.session_cap_min(conn, user_id),
+        session_type, level, training.session_cap_min(conn, user_id), date,
     )
     description = training.format_description_fr(
         session_type, level, values, entry["status"],
@@ -789,9 +817,21 @@ def progress_page(request: Request) -> HTMLResponse:
         (user_id, (dt.date.fromisoformat(date) - dt.timedelta(days=30)).isoformat()),
     ).fetchall()
 
+    # Every level decision with its reason: a level that moves without
+    # a visible "why" is a level people stop trusting.
+    level_history = conn.execute(
+        "SELECT local_date, session_type, level, tier, level_reason, "
+        "tier_reason FROM coach_log WHERE id IN (SELECT MAX(id) FROM "
+        "coach_log WHERE user_id = ? GROUP BY local_date) AND "
+        "session_type IS NOT NULL ORDER BY local_date DESC LIMIT 21",
+        (user_id,),
+    ).fetchall()
+
     return templates.TemplateResponse(
         request, "progress.html", {
             "bundle": bundle,
+            "level_history": level_history,
+            "session_label_fr": training.SESSION_LABEL_FR,
             "weight_labels": [r["local_date"] for r in weight_series],
             "weight_values": [round(r["kg"], 1) for r in weight_series],
             "calorie_labels": [r["date"] for r in calorie_series],
@@ -1356,9 +1396,26 @@ def body_page(request: Request) -> HTMLResponse:
     """The private body tab: photos (blurred until tapped) and analyses."""
     conn = get_conn()
     user_id = current_user_id(request)
+    photos = body.list_photos(conn, user_id)
+    # The latest usable analysis drives the "to develop" map and the
+    # concrete moves from the exercise library at today's levels.
+    latest = next(
+        (p["analysis"] for p in photos
+         if p["analysis"] and p["analysis"].get("usable")), None,
+    )
+    focus = body.focus_muscles(latest)
+    levels = {
+        st: training.get_level(conn, user_id, st)
+        for st in training.SESSION_LABEL_FR
+    }
     response = templates.TemplateResponse(
         request, "body.html", {
-            "photos": body.list_photos(conn, user_id),
+            "photos": photos,
+            "focus_fig": bodymap.focus_figure(
+                focus, bodymap.gender_for(db.get_setting(conn, user_id, "sex")),
+            ) if focus else {},
+            "focus_labels": [muscles.MUSCLES[m] for m in focus],
+            "focus_moves": exercise_library.for_muscles(focus, levels),
             "poses": body.POSES,
             "note": request.query_params.get("note"),
             "username": request.session.get("username"),

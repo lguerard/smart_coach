@@ -43,14 +43,23 @@ FR_SYSTEM_PROMPT = (
     "cardiaque, recuperation, statut). Pioche 1 ou 2 elements, jamais "
     "tous. illness_signs = signes a surveiller : jamais un diagnostic "
     "('tu es malade' est interdit ; 'ton corps a l'air de lutter' est "
-    "ok), et s'il y a de vrais symptomes, dis de consulter.\n"
+    "ok), et s'il y a de vrais symptomes, dis de consulter. "
+    "tired_muscles = muscles encore fatigues par une activite recente "
+    "(cause entre parentheses) : dis que c'est pour ca que la seance ne "
+    "monte pas aujourd'hui, et que c'est normal.\n"
     "- session : ce qu'il fait aujourd'hui. Reprends values (vitesse, "
     "pente, duree) TELS QUELS. type=rest : aucune seance ; dis ce qui "
     "est remplace (replaces) et pourquoi (why), presente le repos "
     "comme la bonne decision et pas comme un echec, et ne propose que "
     "sommeil, eau et une petite marche facultative. type=recovery : "
     "une marche tranquille, volontairement plus legere que prevu. "
-    "deload=true : semaine volontairement plus legere, c'est voulu.\n"
+    "deload=true : semaine volontairement plus legere, c'est voulu. "
+    "Pour un circuit, moves donne les mouvements du soir deja nommes et "
+    "chiffres : cites-en 2 ou 3 tels quels. level_reason dit pourquoi la "
+    "seance monte, reste pareille ou baisse : redis-le en clair en une "
+    "demi-phrase, sans son vocabulaire interne. next_rung est la "
+    "prochaine marche (un mouvement plus dur) : mentionne-la seulement "
+    "comme un objectif motivant, en une demi-phrase.\n"
     "- yesterday : UN seul point sur hier. protein_short, calories_over "
     "ou water_short : dis-le simplement et donne 1 geste concret "
     "(ex. 2 oeufs et un yaourt grec). older_day : cite la date de CE "
@@ -133,13 +142,21 @@ EN_SYSTEM_PROMPT = (
     "recovery, status). Pick 1 or 2 items, never all. illness_signs = "
     "signs to watch: never a diagnosis ('you are sick' is forbidden; "
     "'your body seems to be fighting something' is fine), and if real "
-    "symptoms show up, say to see a doctor.\n"
+    "symptoms show up, say to see a doctor. tired_muscles = muscles "
+    "still tired from a recent activity (cause in brackets): say that "
+    "is why the session does not step up today, and that it is normal.\n"
     "- session: what they do today. Quote values (speed, incline, "
     "duration) AS-IS. type=rest: no session; say what is replaced "
     "(replaces) and why (why), present rest as the right call and not "
     "a failure, and only suggest sleep, water and an optional easy "
     "walk. type=recovery: an easy walk, deliberately lighter than "
-    "planned. deload=true: a deliberately lighter week, by design.\n"
+    "planned. deload=true: a deliberately lighter week, by design. "
+    "For a circuit, moves lists tonight's moves already named and "
+    "counted: quote 2 or 3 of them as-is. level_reason says why the "
+    "session goes up, stays or goes down: say it plainly in half a "
+    "sentence, without its internal vocabulary. next_rung is the next "
+    "step (a harder move): mention it only as a motivating goal, in "
+    "half a sentence.\n"
     "- yesterday: ONE point about yesterday. protein_short, "
     "calories_over or water_short: say it plainly and give 1 concrete "
     "fix (e.g. 2 eggs and a Greek yoghurt). older_day: name THAT day's "
@@ -333,10 +350,12 @@ if __name__ == "__main__":
     # the model what to do with each of them -- the fixes that took
     # several mornings to find.
     for token in ("older_day", "not_synced", "log_partial",
-                  "recent_move", "diagnostic", "replaces"):
+                  "recent_move", "diagnostic", "replaces", "moves",
+                  "level_reason", "next_rung", "tired_muscles"):
         assert token in FR_SYSTEM_PROMPT, token
     for token in ("older_day", "not_synced", "log_partial",
-                  "recent_move", "diagnosis", "replaces"):
+                  "recent_move", "diagnosis", "replaces", "moves",
+                  "level_reason", "next_rung", "tired_muscles"):
         assert token in EN_SYSTEM_PROMPT, token
 
     # The old report format is gone: no section labels, no hard

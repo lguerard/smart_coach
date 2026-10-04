@@ -153,6 +153,14 @@
       linear-gradient(135deg, var(--hero-tint, transparent), transparent 60%),
       var(--surface-1);
   }
+  /* Body map (bodymap.py / _bodymap.html) */
+  .bm-body { fill: color-mix(in srgb, var(--muted) 18%, transparent); }
+  .bm-base, .bm-idle { fill: color-mix(in srgb, var(--muted) 30%, transparent); }
+  .bm-ok { fill: color-mix(in srgb, var(--good) 55%, transparent); }
+  .bm-warm { fill: color-mix(in srgb, var(--warning) 75%, transparent); }
+  .bm-hot { fill: color-mix(in srgb, var(--critical) 80%, transparent); }
+  .bm-focus { fill: color-mix(in srgb, var(--violet) 80%, transparent); }
+  svg path[class^="bm-"] { stroke: var(--surface-1-solid, #fff); stroke-width: 1.5; }
   .chip-green { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
   .chip-yellow { background: color-mix(in srgb, var(--warning) 22%, transparent); color: #f0a80a; }
   .chip-red { background: color-mix(in srgb, var(--critical) 20%, transparent); color: var(--critical); }

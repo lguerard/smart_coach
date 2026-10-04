@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_bodymap.html" import body_figure %}
 {% block title %}Corps - Smart Coach{% endblock %}
 {% block content %}
 <style>
@@ -26,6 +27,22 @@
 
 {% if note %}
 <div class="card p-4"><p class="text-sm" style="color: var(--yellow);">{{ note }}</p></div>
+{% endif %}
+
+{% if focus_fig %}
+<div class="card p-5">
+  <h2 class="font-semibold text-sm mb-2">À développer, d'après ta dernière analyse</h2>
+  {{ body_figure(focus_fig, 200) }}
+  <p class="text-xs mt-2 text-center" style="color: var(--muted);">{{ focus_labels | join(', ') }}</p>
+  {% if focus_moves %}
+  <h3 class="font-semibold text-sm mt-3">Dans tes séances, à ton niveau actuel</h3>
+  <ul class="text-sm mt-1 space-y-1" style="color: var(--text-secondary);">
+    {% for m in focus_moves %}
+    <li><span class="font-medium" style="color: var(--text-primary);">{{ m.name }}</span> — {{ m.cue }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
 {% endif %}
 
 <form method="post" action="/body/upload" enctype="multipart/form-data" class="card p-5 space-y-3"
