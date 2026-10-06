@@ -514,9 +514,9 @@ that fixes each one.
   means cron/rclone trouble, not a swallowed exception.
 - A "(Calendrier non mis a jour: ...)" note appended to an otherwise
   normal message means only the Calendar step failed — rerun
-  `setup_calendar.py` for that account (delete the existing
-  `data/gcal-config/calendar_token_<account>.json` first, the script
-  refuses to overwrite one).
+  `setup_calendar.py` for that account. It tests the existing token
+  first: one Google refuses is kept as `.bak` and replaced; a working
+  one is left alone unless you pass `--replace`.
 - `setup_calendar.py` prints a URL and then seems to hang: that is it
   waiting for the approval. If the browser says the page cannot be
   reached after you approve, the redirect never got back — open the SSH
