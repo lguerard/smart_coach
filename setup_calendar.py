@@ -39,6 +39,59 @@ CONFIG_DIR = Path.home() / ".config/smart_coach"
 CLIENT_SECRET = CONFIG_DIR / "calendar_client_secret.json"
 
 
+def existing_token_decision(
+    username: str, token_file: Path, replace: bool,
+    health=None,
+) -> tuple[bool, str]:
+    """Whether to run the consent flow when a token file already exists.
+
+    This used to stop at "already exists" whenever the file was there --
+    including when Google had revoked it, which is exactly when the
+    morning notification tells you to run this command. So the stored
+    token is now actually tried: a dead or unreadable one is set aside
+    (kept as ``.bak``) and replaced; a working one is left alone unless
+    ``--replace`` says otherwise.
+
+    Parameters:
+        username (str): Account name.
+        token_file (Path): Where the token lives.
+        replace (bool): Re-authorize even if the token works.
+        health: ``gcal.token_health``-like callable, injectable for
+            tests.
+
+    Returns:
+        tuple[bool, str]: ``(run the consent flow, message to print)``.
+    """
+    if not token_file.exists():
+        return True, ""
+    if replace:
+        status, detail = "replace", ""
+    else:
+        if health is None:
+            import gcal
+
+            health = gcal.token_health
+        status, detail = health(username)
+    if status == "ok":
+        return False, (
+            f"{token_file} works: Google accepts it, nothing to do.\n"
+            "Rerun with --replace to re-authorize anyway."
+        )
+    if status == "unreachable":
+        return False, (
+            f"Could not reach Google to test {token_file} ({detail}).\n"
+            "Check the network, or rerun with --replace to re-authorize."
+        )
+    backup = token_file.with_suffix(token_file.suffix + ".bak")
+    token_file.replace(backup)
+    why = "as asked (--replace)" if status == "replace" else (
+        "Google no longer accepts it"
+    )
+    return True, (
+        f"Replacing {token_file}: {why}. The old one is kept as {backup}."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Grant Calendar access for one Smart Coach account."
@@ -66,6 +119,11 @@ def main() -> int:
         "--force",
         action="store_true",
         help="use this name even though no account is called that",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="re-authorize even if the current token still works",
     )
     args = parser.parse_args()
 
@@ -100,8 +158,12 @@ def main() -> int:
         return 1
 
     token_file = CONFIG_DIR / f"calendar_token_{args.username}.json"
-    if token_file.exists():
-        print(f"{token_file} already exists — delete it to start over.")
+    proceed, message = existing_token_decision(
+        args.username, token_file, args.replace,
+    )
+    if message:
+        print(message)
+    if not proceed:
         return 0
 
     if args.manual:
@@ -156,4 +218,34 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--selfcheck"]:
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp())
+        token = tmp / "calendar_token_bob.json"
+
+        # No file: go ahead, nothing to say.
+        assert existing_token_decision("bob", token, False) == (True, "")
+        # A working token is left alone.
+        token.write_text("{}")
+        go, msg = existing_token_decision(
+            "bob", token, False, health=lambda u: ("ok", ""))
+        assert not go and "works" in msg and token.exists()
+        # Google unreachable proves nothing: keep it, say so.
+        go, msg = existing_token_decision(
+            "bob", token, False, health=lambda u: ("unreachable", "dns"))
+        assert not go and "dns" in msg and token.exists()
+        # A refused token (the morning's invalid_grant) is set aside and
+        # the consent flow runs -- the case that used to dead-end.
+        go, msg = existing_token_decision(
+            "bob", token, False, health=lambda u: ("refused", "x"))
+        assert go and not token.exists(), msg
+        assert (tmp / "calendar_token_bob.json.bak").exists()
+        # --replace re-authorizes even a working token, without testing.
+        token.write_text("{}")
+        go, msg = existing_token_decision(
+            "bob", token, True, health=lambda u: 1 / 0)
+        assert go and "--replace" in msg and not token.exists()
+        print("setup_calendar.py: all checks passed")
+        raise SystemExit(0)
     raise SystemExit(main())

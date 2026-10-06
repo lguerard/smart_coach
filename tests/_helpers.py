@@ -31,7 +31,7 @@ def run_module_selfcheck(module_path: str) -> str:
         AssertionError: The self-check exited nonzero.
     """
     result = subprocess.run(
-        [sys.executable, module_path], cwd=ROOT,
+        [sys.executable, *module_path.split()], cwd=ROOT,
         capture_output=True, text=True, timeout=60,
     )
     output = result.stdout + result.stderr
