@@ -655,6 +655,9 @@ DEFAULT_SETTINGS = {
     # "1": the person sits at a desk on weekdays, so the coach adds a
     # silent, invisible desk break (desk.py) and an afternoon nudge.
     "desk_job": "1",
+    # Kettlebell weight in kg ("" = bodyweight only). With one set, the
+    # circuits swap to loaded ladders (exercise_library.py).
+    "kettlebell_kg": "",
     "intensity_weekly_goal_min": "150",
     "protein_target_g_per_kg": "1.8",
     "fat_target_g_per_kg": "0.9",

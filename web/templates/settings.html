@@ -33,6 +33,14 @@
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
     <label class="block text-sm">
+      Kettlebell (poids en kg -- vide = seulement le poids du corps ;
+      renseigne, les circuits passent au goblet squat, swing, rowing et
+      developpe)
+      <input name="kettlebell_kg" type="number" step="0.5" min="0" value="{{ settings.kettlebell_kg }}"
+        placeholder="12"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
       Langue du coach (fr / en)
       <input name="language" value="{{ settings.language }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">

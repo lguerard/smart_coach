@@ -160,6 +160,9 @@ afterwards" below)
                            lighten further becomes a flat RECOVERY
                            walk, never the same level-0 treadmill);
                            circuits come from exercise_library.py
+                           (kettlebell_kg in Settings swaps squat,
+                           lunge, bridge, dips and superman for loaded
+                           goblet squat/swing/press/row ladders)
                            ladders (double progression: reps climb a
                            range, then a harder variant; the week's
                            alternative rotates); muscles.py turns
@@ -184,7 +187,12 @@ afterwards" below)
                            (all data-quality caveats applied there);
                            llm.py (claude -p) writes that brief up as
                            a short, warm message -- no sections --
-                           (try it: preview_message.py --live); achievements.py checks/
+                           (try it: preview_message.py --live);
+                           COACH_MODEL picks the model, LLM_FALLBACKS
+                           the providers tried when it fails (API,
+                           OpenAI-compatible/Ollama), and a plain
+                           message built from the brief alone
+                           (plain_message.py) always goes out last; achievements.py checks/
                            announces unlocks; notify.py pushes it;
                            logged to coach_log
   16:00  run_checkin.py   afternoon: refreshes today's Garmin

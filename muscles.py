@@ -156,6 +156,7 @@ def muscles_from_zone(text: str) -> list[str]:
 
 def session_muscle_weights(
     session_type: Optional[str], level: int, date: Optional[str] = None,
+    equipment: Optional[dict] = None,
 ) -> dict:
     """Muscle weights of one coach session type at a level."""
     import training  # local: training imports this module
@@ -165,7 +166,9 @@ def session_muscle_weights(
     if session_type == "treadmill":
         return dict(TREADMILL_MUSCLES)
     return exercise_library.session_muscles(
-        training.session_values(session_type, level, date=date),
+        training.session_values(
+            session_type, level, date=date, equipment=equipment,
+        ),
     )
 
 
@@ -198,6 +201,7 @@ def _stimulus(conn, user_id, row, coach) -> tuple[float, dict, str]:
         if circuit or treadmill:
             return 1.0, session_muscle_weights(
                 session_type, level, row["local_date"],
+                exercise_library.equipment_for(conn, user_id),
             ), session_type
     if key in ACTIVITY_MUSCLES:
         intensity, weights = ACTIVITY_MUSCLES[key]

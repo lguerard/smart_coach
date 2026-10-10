@@ -449,7 +449,11 @@ def build_context(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         for session_type, level in context["session_levels"].items()
         if session_type != "treadmill"
         for info in exercise_library.session_variants(
-            training.session_values(session_type, level), level,
+            training.session_values(
+                session_type, level,
+                equipment=exercise_library.equipment_for(conn, user_id),
+            ), level,
+            equipment=exercise_library.equipment_for(conn, user_id),
         ).values()
     })
     context["goal"] = "recomposition corporelle"

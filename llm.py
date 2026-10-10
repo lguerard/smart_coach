@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import coach_brief
@@ -242,6 +243,26 @@ def _build_prompt(payload: dict) -> str:
     return f"{system_prompt}\n\n{label}:\n{json.dumps(payload)}"
 
 
+# Model for the morning message. Unset: the claude CLI uses the
+# subscription's default and the API path uses API_DEFAULT_MODEL. The
+# brief is small and fully decided, so this is a writing task:
+# claude-sonnet-5-5 does it well, claude-haiku-4-5 is fine and cheapest.
+COACH_MODEL = os.environ.get("COACH_MODEL", "").strip()
+API_DEFAULT_MODEL = "claude-sonnet-5-5"
+# Server-side refusal fallbacks are only offered for these models.
+_FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5",
+                    "claude-fable-5-1")
+# The CLI prints these (exit code 0 on some versions) when the
+# subscription's quota is spent: treat them as a failure, never as the
+# message itself.
+_LIMIT_MARKERS = ("usage limit", "limit reached", "rate limit",
+                  "credit balance is too low", "out of extra usage")
+
+
+class ProviderUnavailable(RuntimeError):
+    """A provider could not produce a message (quota, network...)."""
+
+
 def _coach_claude_cli(payload: dict) -> str:
     """Ask Claude via the local CLI (subscription OAuth, no API key).
 
@@ -250,17 +271,33 @@ def _coach_claude_cli(payload: dict) -> str:
 
     Returns:
         str: Plain-text coaching message.
+
+    Raises:
+        ProviderUnavailable: CLI failure or spent quota.
     """
     claude = (
         shutil.which("claude") or str(Path.home() / ".local/bin/claude")
     )
-    result = subprocess.run(
-        [claude, "-p", _build_prompt(payload)],
-        capture_output=True, text=True, timeout=300,
-    )
+    command = [claude, "-p", _build_prompt(payload)]
+    if COACH_MODEL:
+        command += ["--model", COACH_MODEL]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ProviderUnavailable(f"claude CLI: {error}") from error
+    text = result.stdout.strip()
     if result.returncode != 0:
-        raise RuntimeError(f"claude CLI failed: {result.stderr[:500]}")
-    return result.stdout.strip()
+        raise ProviderUnavailable(
+            f"claude CLI failed: {(result.stderr or text)[:500]}"
+        )
+    if not text or (
+        len(text) < 300
+        and any(marker in text.lower() for marker in _LIMIT_MARKERS)
+    ):
+        raise ProviderUnavailable(f"claude CLI: {text[:200] or 'empty'}")
+    return text
 
 
 def _coach_anthropic_api(payload: dict) -> str:
@@ -271,26 +308,139 @@ def _coach_anthropic_api(payload: dict) -> str:
 
     Returns:
         str: Plain-text coaching message.
+
+    Raises:
+        ProviderUnavailable: API error, refusal, or truncated output.
     """
     import anthropic  # local import: optional dependency
 
-    client = anthropic.Anthropic()
-    message = client.messages.create(
-        model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
-        max_tokens=500,
-        messages=[{"role": "user", "content": _build_prompt(payload)}],
+    model = (
+        COACH_MODEL or os.environ.get("ANTHROPIC_MODEL") or API_DEFAULT_MODEL
     )
-    return message.content[0].text.strip()
+    request = {
+        "model": model, "max_tokens": 2000,
+        "messages": [{"role": "user", "content": _build_prompt(payload)}],
+    }
+    try:
+        client = anthropic.Anthropic()
+        if model in _FALLBACK_MODELS:
+            # A safety decline is retried on another model server-side.
+            message = client.beta.messages.create(
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default", **request,
+            )
+        else:
+            message = client.messages.create(**request)
+    except anthropic.APIError as error:
+        raise ProviderUnavailable(f"Anthropic API: {error}") from error
+    if message.stop_reason in ("refusal", "max_tokens"):
+        raise ProviderUnavailable(f"Anthropic API: {message.stop_reason}")
+    text = "".join(
+        block.text for block in message.content if block.type == "text"
+    ).strip()
+    if not text:
+        raise ProviderUnavailable("Anthropic API: empty reply")
+    return text
+
+
+def _coach_openai_compatible(payload: dict) -> str:
+    """Any OpenAI-compatible chat endpoint: Ollama, LM Studio, OpenRouter...
+
+    The way out when there is no Claude quota left: a local model on the
+    server (Ollama: ``OPENAI_COMPAT_BASE_URL=http://host:11434/v1``) or
+    any hosted endpoint with a key.
+
+    Environment:
+        OPENAI_COMPAT_BASE_URL: Base URL ending in ``/v1``.
+        OPENAI_COMPAT_MODEL: Model name the endpoint serves.
+        OPENAI_COMPAT_API_KEY: Bearer key, optional (Ollama needs none).
+    """
+    import requests
+
+    base = os.environ.get("OPENAI_COMPAT_BASE_URL", "").rstrip("/")
+    model = os.environ.get("OPENAI_COMPAT_MODEL", "")
+    if not base or not model:
+        raise ProviderUnavailable(
+            "openai_compatible: set OPENAI_COMPAT_BASE_URL and "
+            "OPENAI_COMPAT_MODEL"
+        )
+    headers = {}
+    if os.environ.get("OPENAI_COMPAT_API_KEY"):
+        headers["Authorization"] = (
+            f"Bearer {os.environ['OPENAI_COMPAT_API_KEY']}"
+        )
+    try:
+        response = requests.post(
+            f"{base}/chat/completions", headers=headers, timeout=300,
+            json={"model": model, "max_tokens": 800, "messages": [
+                {"role": "user", "content": _build_prompt(payload)},
+            ]},
+        )
+        response.raise_for_status()
+        text = response.json()["choices"][0]["message"]["content"].strip()
+    except (requests.RequestException, KeyError, IndexError, ValueError,
+            TypeError) as error:
+        raise ProviderUnavailable(f"openai_compatible: {error}") from error
+    if not text:
+        raise ProviderUnavailable("openai_compatible: empty reply")
+    return text
+
+
+def _coach_template(payload: dict) -> str:
+    """No model at all: the message assembled from the brief itself."""
+    import plain_message
+
+    text = plain_message.render_or_none(payload)
+    if not text:
+        raise ProviderUnavailable("template: could not render")
+    return text
 
 
 PROVIDERS = {
     "claude_cli": _coach_claude_cli,
     "anthropic_api": _coach_anthropic_api,
+    "openai_compatible": _coach_openai_compatible,
+    "template": _coach_template,
+}
+FALLBACK_NOTE = {
+    "fr": "(Message simplifie : le modele habituel n'etait pas disponible "
+          "ce matin.)",
+    "en": "(Simplified message: the usual model was not available this "
+          "morning.)",
 }
 
 
+def provider_chain() -> list[str]:
+    """``LLM_PROVIDER`` then ``LLM_FALLBACKS``, ending with the template.
+
+    Raises:
+        ValueError: An unknown provider name, so a typo in .env fails
+            loudly instead of silently landing on the template.
+    """
+    names = [os.environ.get("LLM_PROVIDER", "claude_cli")] + [
+        name.strip() for name in os.environ.get(
+            "LLM_FALLBACKS", "",
+        ).split(",") if name.strip()
+    ] + ["template"]
+    unknown = [name for name in names if name not in PROVIDERS]
+    if unknown:
+        raise ValueError(
+            f"Unknown LLM provider(s) {unknown}, expected one of "
+            f"{sorted(PROVIDERS)}"
+        )
+    chain: list[str] = []
+    for name in names:
+        if name not in chain:
+            chain.append(name)
+    return chain
+
+
 def coach(payload: dict) -> str:
-    """Generate today's coaching message.
+    """Generate today's coaching message, falling back down the chain.
+
+    Each provider is tried in turn (``provider_chain``); the template
+    one cannot run out of quota, so a message always comes out. When it
+    is the template that answers after a failure, the message says so.
 
     Parameters:
         payload (dict): The full ``coach_payload.build_payload`` output,
@@ -301,15 +451,24 @@ def coach(payload: dict) -> str:
         str: Plain-text coaching message.
 
     Raises:
-        ValueError: Unknown ``LLM_PROVIDER``.
+        ValueError: Unknown provider name in the configuration.
+        ProviderUnavailable: Every provider failed, the template too.
     """
-    provider = os.environ.get("LLM_PROVIDER", "claude_cli")
-    if provider not in PROVIDERS:
-        raise ValueError(
-            f"Unknown LLM_PROVIDER {provider!r}, expected one of "
-            f"{sorted(PROVIDERS)}"
-        )
-    return PROVIDERS[provider](coach_brief.build_brief(payload))
+    chain = provider_chain()
+    brief = coach_brief.build_brief(payload)
+    errors = []
+    for name in chain:
+        try:
+            text = PROVIDERS[name](brief)
+        except Exception as error:  # noqa: BLE001 -- try the next one
+            errors.append(f"{name}: {error}")
+            print(f"llm: {name} unavailable -- {error}", file=sys.stderr)
+            continue
+        if name == "template" and errors:
+            note = FALLBACK_NOTE.get(brief.get("language"), FALLBACK_NOTE["fr"])
+            text = f"{text}\n\n{note}"
+        return text
+    raise ProviderUnavailable("; ".join(errors))
 
 
 if __name__ == "__main__":
@@ -419,5 +578,73 @@ if __name__ == "__main__":
         pass
     finally:
         del os.environ["LLM_PROVIDER"]
+
+    # The fallback chain: a spent Claude quota still produces a message.
+    def _spent(brief):
+        raise ProviderUnavailable("usage limit reached")
+
+    PROVIDERS["spent"] = _spent
+    PROVIDERS["backup"] = lambda brief: "message de secours"
+    rest_payload = {"date": "2026-10-05", "language": "fr",
+                    "today_session": {"type": "rest",
+                                      "scheduled_title": "Tapis"}}
+    os.environ["LLM_PROVIDER"] = "spent"
+    try:
+        # No fallback configured: the template answers, and says so.
+        text = coach(rest_payload)
+        assert "repos" in text and FALLBACK_NOTE["fr"] in text, text
+        # A configured fallback answers before the template.
+        os.environ["LLM_FALLBACKS"] = "backup"
+        assert coach(rest_payload) == "message de secours"
+        assert provider_chain() == ["spent", "backup", "template"]
+        # A typo in the fallbacks fails loudly, not silently.
+        os.environ["LLM_FALLBACKS"] = "bakcup"
+        try:
+            coach(rest_payload)
+            raise AssertionError("expected ValueError for a bad fallback")
+        except ValueError:
+            pass
+    finally:
+        for key in ("LLM_PROVIDER", "LLM_FALLBACKS"):
+            os.environ.pop(key, None)
+        del PROVIDERS["spent"], PROVIDERS["backup"]
+    # Template as the chosen provider: no "fallback" note.
+    os.environ["LLM_PROVIDER"] = "template"
+    try:
+        assert FALLBACK_NOTE["fr"] not in coach(rest_payload)
+    finally:
+        del os.environ["LLM_PROVIDER"]
+
+    # The CLI's quota message is a failure, never the morning message.
+    import types as _types
+
+    real_run = subprocess.run
+    subprocess.run = lambda *a, **k: _types.SimpleNamespace(
+        returncode=0, stdout="Claude AI usage limit reached|1791110400",
+        stderr="")
+    try:
+        _coach_claude_cli({"language": "fr"})
+        raise AssertionError("expected ProviderUnavailable")
+    except ProviderUnavailable:
+        pass
+    finally:
+        subprocess.run = real_run
+    # COACH_MODEL reaches the CLI as --model.
+    calls = []
+    COACH_MODEL = "claude-haiku-4-5"
+    subprocess.run = lambda cmd, **k: calls.append(cmd) or (
+        _types.SimpleNamespace(returncode=0, stdout="x" * 400, stderr=""))
+    try:
+        _coach_claude_cli({"language": "fr"})
+    finally:
+        subprocess.run = real_run
+        COACH_MODEL = ""
+    assert calls[0][-2:] == ["--model", "claude-haiku-4-5"], calls
+    # The OpenAI-compatible provider needs its endpoint configured.
+    try:
+        _coach_openai_compatible({"language": "fr"})
+        raise AssertionError("expected ProviderUnavailable")
+    except ProviderUnavailable as error:
+        assert "OPENAI_COMPAT_BASE_URL" in str(error)
 
     print("llm.py: all checks passed (no live LLM call made)")

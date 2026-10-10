@@ -1209,6 +1209,7 @@ def session_cap_min(conn: sqlite3.Connection, user_id: int) -> int:
 def treadmill_values(
     level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
     date: Optional[str] = None,
+    equipment: Optional[dict] = None,
 ) -> dict:
     """Level -> treadmill workout values.
 
@@ -1227,7 +1228,10 @@ def _circuit_duration_min(rounds: int, cap_min: int) -> int:
     return min(12 + 6 * rounds, cap_min)
 
 
-def _laddered(values: dict, level: int, date: Optional[str]) -> dict:
+def _laddered(
+    values: dict, level: int, date: Optional[str],
+    equipment: Optional[dict] = None,
+) -> dict:
     """Apply the exercise ladders to a circuit's values.
 
     Rep slots with a range take their count from the double
@@ -1238,11 +1242,11 @@ def _laddered(values: dict, level: int, date: Optional[str]) -> dict:
     """
     for slot in list(values):
         if slot in exercise_library.LADDERS:
-            reps = exercise_library.reps_for(slot, level)
+            reps = exercise_library.reps_for(slot, level, equipment)
             if reps is not None:
                 values[slot] = reps
     values["variants"] = exercise_library.session_variants(
-        values, level, date,
+        values, level, date, equipment,
     )
     return values
 
@@ -1250,6 +1254,7 @@ def _laddered(values: dict, level: int, date: Optional[str]) -> dict:
 def lower_body_values(
     level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
     date: Optional[str] = None,
+    equipment: Optional[dict] = None,
 ) -> dict:
     """Level -> lower-body bodyweight circuit values."""
     rounds = 3 if level <= 3 else 4 if level <= 7 else 5
@@ -1261,12 +1266,13 @@ def lower_body_values(
         "glute_bridge": 15 + level,
         "rounds": rounds,
         "duration_min": _circuit_duration_min(rounds, cap_min),
-    }, level, date)
+    }, level, date, equipment)
 
 
 def upper_body_values(
     level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
     date: Optional[str] = None,
+    equipment: Optional[dict] = None,
 ) -> dict:
     """Level -> upper-body + core circuit values."""
     rounds = 3 if level <= 3 else 4
@@ -1277,12 +1283,13 @@ def upper_body_values(
         "plank_sec": 20 + level * 4,
         "rounds": rounds,
         "duration_min": _circuit_duration_min(rounds, cap_min),
-    }, level, date)
+    }, level, date, equipment)
 
 
 def calisthenics_values(
     level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
     date: Optional[str] = None,
+    equipment: Optional[dict] = None,
 ) -> dict:
     """Level -> full-body calisthenics circuit values."""
     rounds = 3 if level <= 3 else 4 if level <= 7 else 5
@@ -1295,7 +1302,7 @@ def calisthenics_values(
         "jumping_jacks": 20 + level * 2,
         "rounds": rounds,
         "duration_min": _circuit_duration_min(rounds, cap_min),
-    }, level, date)
+    }, level, date, equipment)
 
 
 SESSION_VALUE_FUNCS = {
@@ -1309,13 +1316,14 @@ SESSION_VALUE_FUNCS = {
 def session_values(
     session_type: str, level: int,
     cap_min: int = DEFAULT_SESSION_CAP_MIN, date: Optional[str] = None,
+    equipment: Optional[dict] = None,
 ) -> dict:
     """Dispatch to the value-mapping function for a session type.
 
     ``date`` picks the week's variant among equals (exercise_library);
     without it the first alternative is used.
     """
-    return SESSION_VALUE_FUNCS[session_type](level, cap_min, date)
+    return SESSION_VALUE_FUNCS[session_type](level, cap_min, date, equipment)
 
 
 def format_description_fr(
@@ -1343,7 +1351,8 @@ def format_description_fr(
             unit = "s" if slot.endswith("_sec") else ""
             per = (
                 "/jambe" if slot.endswith("_per_leg")
-                else "/cote" if slot == "side_plank_sec" else ""
+                else "/cote" if slot == "side_plank_sec"
+                else variants.get(slot, {}).get("per", "")
             )
             parts.append(f"{name} {value}{unit}{per}")
         body = (
@@ -1396,6 +1405,7 @@ def _render_session(
         return {}, None
     values = session_values(
         session_type, level, session_cap_min(conn, user_id), date,
+        exercise_library.equipment_for(conn, user_id),
     )
     return values, format_description_fr(session_type, level, values, status)
 
@@ -1413,6 +1423,7 @@ def muscle_votes(
         return []
     weights = muscles.session_muscle_weights(
         session_type, get_level(conn, user_id, session_type), date,
+        exercise_library.equipment_for(conn, user_id),
     )
     vote = muscles.session_vote(
         muscles.muscle_fatigue(conn, user_id, date), weights,
@@ -1797,6 +1808,12 @@ if __name__ == "__main__":
     assert "pompes inclinees 6" in described, described
     assert "planche sur les genoux 20s" in described, described
     assert described.split(": ", 1)[1].split(" (statut")[0], described
+    kb_text = format_description_fr(
+        "upper_body", 0,
+        upper_body_values(0, equipment={"kettlebell_kg": 16}), "green",
+    )
+    assert "rowing kettlebell a deux mains (16 kg) 8" in kb_text, kb_text
+    assert "developpe au sol, 1 bras (16 kg) 6/bras" in kb_text, kb_text
 
     # Density-first duration: fixed until speed caps (level 7), then
     # +4 min per level, never past the cap.

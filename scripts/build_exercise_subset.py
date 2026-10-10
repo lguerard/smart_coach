@@ -21,9 +21,11 @@ import exercise_library  # noqa: E402
 
 def wanted_ids() -> set[str]:
     """Every dataset id a ladder variant references."""
+    ladders = [*exercise_library.LADDERS.values(),
+               *exercise_library.KETTLEBELL_LADDERS.values()]
     return {
         variant["dataset"]
-        for ladder in exercise_library.LADDERS.values()
+        for ladder in ladders
         for rung in ladder["rungs"] for variant in rung
         if variant["dataset"]
     }

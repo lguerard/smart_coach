@@ -771,6 +771,7 @@ async def edit_today_level(request: Request):
 
     values = training.session_values(
         session_type, level, training.session_cap_min(conn, user_id), date,
+        exercise_library.equipment_for(conn, user_id),
     )
     description = training.format_description_fr(
         session_type, level, values, entry["status"],
@@ -1415,7 +1416,10 @@ def body_page(request: Request) -> HTMLResponse:
                 focus, bodymap.gender_for(db.get_setting(conn, user_id, "sex")),
             ) if focus else {},
             "focus_labels": [muscles.MUSCLES[m] for m in focus],
-            "focus_moves": exercise_library.for_muscles(focus, levels),
+            "focus_moves": exercise_library.for_muscles(
+                focus, levels,
+                equipment=exercise_library.equipment_for(conn, user_id),
+            ),
             "poses": body.POSES,
             "note": request.query_params.get("note"),
             "username": request.session.get("username"),

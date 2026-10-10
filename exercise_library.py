@@ -288,6 +288,128 @@ LADDERS = {
 }
 # fmt: on
 
+# With one kettlebell, these slots swap to loaded ladders. The hinge
+# (swing, deadlift) replaces the glute bridge, and a row and a press
+# replace the superman and the chair dips -- the bodyweight circuits had
+# no real pulling movement at all, which is what one kettlebell fixes
+# best. Same double progression: with a single weight, reps climb a
+# range and the next rung is a harder way to move the same bell.
+# fmt: off
+KETTLEBELL_LADDERS = {
+    "squats": {
+        "unit": "reps", "range": (8, 15),
+        "muscles": {"quads": 1.0, "glutes": 0.9, "abs": 0.3},
+        "rungs": [
+            [_v("goblet_squat", "goblet squat",
+                "Kettlebell tenue contre la poitrine, coudes entre les "
+                "genoux en bas.", ("SQUAT", "GOBLET_SQUAT"),
+                dataset="0534")],
+            [_v("pause_goblet_squat", "goblet squat pause 2 s",
+                "Tiens 2 s en bas, buste droit, puis remonte.",
+                ("SQUAT", "GOBLET_SQUAT"))],
+            [_v("front_squat_kb", "squat kettlebell en rack",
+                "Kettlebell posee sur l'avant-bras, contre l'epaule ; "
+                "change de cote a chaque serie.",
+                ("SQUAT", "KETTLEBELL_SQUAT"), dataset="0533")],
+        ],
+    },
+    "lunges_per_leg": {
+        "unit": "reps", "range": (6, 12),
+        "muscles": {"quads": 1.0, "glutes": 1.0, "hamstrings": 0.4},
+        "rungs": [
+            [_v("goblet_reverse_lunge", "fente arriere goblet",
+                "Kettlebell contre la poitrine, recule une jambe.",
+                ("LUNGE", ""))],
+            [_v("goblet_forward_lunge", "fente avant goblet",
+                "Kettlebell contre la poitrine, grand pas en avant.",
+                ("LUNGE", "LUNGE"))],
+            [_v("lunge_pass_through", "fente avec passage sous la jambe",
+                "En bas de chaque fente, passe la kettlebell sous la "
+                "cuisse avant.", ("LUNGE", ""), dataset="0536")],
+        ],
+    },
+    "glute_bridge": {
+        "unit": "reps", "range": (10, 20),
+        "muscles": {"glutes": 1.0, "hamstrings": 1.0, "lower_back": 0.7},
+        "rungs": [
+            [_v("kb_deadlift", "souleve de terre kettlebell",
+                "Kettlebell entre les pieds, fesses en arriere, dos plat, "
+                "pousse le sol.", ("DEADLIFT", "KETTLEBELL_SUMO_DEADLIFT"))],
+            [_v("kb_swing", "swing kettlebell",
+                "Le mouvement part des hanches, pas des bras : la cloche "
+                "monte a hauteur de poitrine.",
+                ("HIP_RAISE", "KETTLEBELL_SWING"), dataset="0549")],
+            [_v("single_arm_swing", "swing a une main",
+                "Comme le swing, une main a la fois ; change a chaque "
+                "serie.", ("HIP_SWING", "SINGLE_ARM_KETTLEBELL_SWING"))],
+        ],
+    },
+    "dips": {
+        "unit": "reps", "range": (6, 12), "per": "/bras",
+        "muscles": {"shoulders": 1.0, "triceps": 0.7, "chest": 0.4},
+        "rungs": [
+            [_v("kb_floor_press", "developpe au sol, 1 bras",
+                "Allonge, coude au sol, pousse la kettlebell vers le "
+                "plafond.", ("BENCH_PRESS", "KETTLEBELL_CHEST_PRESS"),
+                dataset="1298",
+                muscles={"chest": 1.0, "triceps": 0.7, "shoulders": 0.5})],
+            [_v("kneeling_press", "developpe a genou, 1 bras",
+                "Un genou au sol, fessiers serres, pousse au-dessus de la "
+                "tete.", ("SHOULDER_PRESS", ""))],
+            [_v("standing_press", "developpe debout, 1 bras",
+                "Debout, gaine, sans cambrer.", ("SHOULDER_PRESS", ""),
+                dataset="0539")],
+        ],
+    },
+    "superman": {
+        "unit": "reps", "range": (8, 15),
+        "muscles": {"back": 1.0, "biceps": 0.6, "shoulders": 0.3,
+                    "lower_back": 0.3},
+        "rungs": [
+            [_v("two_arm_row", "rowing kettlebell a deux mains",
+                "Buste penche dos plat, tire la kettlebell vers le "
+                "nombril.", ("ROW", "KETTLEBELL_ROW"), dataset="1345")],
+            [_v("one_arm_row", "rowing kettlebell, 1 bras",
+                "Une main sur une chaise, tire le coude vers la hanche ; "
+                "reps par bras.", ("ROW", "KETTLEBELL_ROW"),
+                dataset="0541")],
+            [_v("renegade_row", "rowing en planche",
+                "En planche, une main sur la poignee, tire sans tourner "
+                "le bassin ; reps par bras.", ("ROW", "KETTLEBELL_ROW"),
+                dataset="0521",
+                muscles={"back": 1.0, "abs": 0.8, "biceps": 0.5,
+                         "shoulders": 0.4})],
+        ],
+    },
+}
+# fmt: on
+
+
+def equipment_for(conn, user_id: int) -> dict:
+    """The person's equipment from Settings (``{}`` = bodyweight only).
+
+    Returns:
+        dict: ``{"kettlebell_kg": float}`` when a kettlebell weight is
+        set, else ``{}``.
+    """
+    import db
+
+    raw = (db.get_setting(conn, user_id, "kettlebell_kg") or "").strip()
+    try:
+        weight = float(raw.replace(",", "."))
+    except ValueError:
+        return {}
+    return {"kettlebell_kg": weight} if weight > 0 else {}
+
+
+def ladder(slot: str, equipment: Optional[dict] = None) -> dict:
+    """The ladder a slot follows with this equipment."""
+    if equipment and equipment.get("kettlebell_kg") and (
+        slot in KETTLEBELL_LADDERS
+    ):
+        return KETTLEBELL_LADDERS[slot]
+    return LADDERS[slot]
+
 
 def _subset() -> dict:
     """The MIT dataset excerpt, by dataset id ({} when not built)."""
@@ -313,9 +435,11 @@ def _clamp(level: int) -> int:
     return max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
 
 
-def rung_for(slot: str, level: int) -> tuple[int, range]:
+def rung_for(
+    slot: str, level: int, equipment: Optional[dict] = None,
+) -> tuple[int, range]:
     """Which rung a level falls on, and that rung's level band."""
-    bands = _bands(len(LADDERS[slot]["rungs"]))
+    bands = _bands(len(ladder(slot, equipment)["rungs"]))
     level = _clamp(level)
     for index, band in enumerate(bands):
         if level in band:
@@ -323,7 +447,9 @@ def rung_for(slot: str, level: int) -> tuple[int, range]:
     return len(bands) - 1, bands[-1]
 
 
-def reps_for(slot: str, level: int) -> Optional[int]:
+def reps_for(
+    slot: str, level: int, equipment: Optional[dict] = None,
+) -> Optional[int]:
     """Double progression: reps climb the range inside a rung.
 
     Returns:
@@ -331,18 +457,21 @@ def reps_for(slot: str, level: int) -> Optional[int]:
         slots and rep slots without a range (their count stays the
         session's own linear formula).
     """
-    ladder = LADDERS[slot]
-    if ladder["unit"] != "reps" or "range" not in ladder:
+    lad = ladder(slot, equipment)
+    if lad["unit"] != "reps" or "range" not in lad:
         return None
-    low, high = ladder["range"]
-    _, band = rung_for(slot, level)
+    low, high = lad["range"]
+    _, band = rung_for(slot, level, equipment)
     if len(band) == 1:
         return high
     position = (_clamp(level) - band.start) / (len(band) - 1)
     return round(low + (high - low) * position)
 
 
-def variant_for(slot: str, level: int, date: Optional[str] = None) -> dict:
+def variant_for(
+    slot: str, level: int, date: Optional[str] = None,
+    equipment: Optional[dict] = None,
+) -> dict:
     """The variant for this level, rotated by ISO week among equals.
 
     Parameters:
@@ -356,13 +485,19 @@ def variant_for(slot: str, level: int, date: Optional[str] = None) -> dict:
         dict: The variant, with ``muscles`` resolved and ``rung``,
         ``rungs`` and the French ``instructions`` when known.
     """
-    ladder = LADDERS[slot]
-    index, _ = rung_for(slot, level)
-    rung = ladder["rungs"][index]
+    lad = ladder(slot, equipment)
+    index, _ = rung_for(slot, level, equipment)
+    rung = lad["rungs"][index]
     week = dt.date.fromisoformat(date).isocalendar()[1] if date else 0
     variant = dict(rung[week % len(rung)])
-    variant["muscles"] = variant["muscles"] or ladder["muscles"]
-    variant["rung"], variant["rungs"] = index, len(ladder["rungs"])
+    variant["muscles"] = variant["muscles"] or lad["muscles"]
+    variant["rung"], variant["rungs"] = index, len(lad["rungs"])
+    variant["per"] = lad.get("per", "")
+    if lad is not LADDERS.get(slot) and equipment:
+        # A loaded variant names its weight: "goblet squat (12 kg)".
+        variant["name"] = (
+            f"{variant['name']} ({equipment['kettlebell_kg']:g} kg)"
+        )
     if variant["dataset"]:
         record = _subset().get(variant["dataset"])
         if record and record.get("instructions_fr"):
@@ -370,49 +505,59 @@ def variant_for(slot: str, level: int, date: Optional[str] = None) -> dict:
     return variant
 
 
-def next_step(slot: str, level: int) -> Optional[str]:
+def next_step(
+    slot: str, level: int, equipment: Optional[dict] = None,
+) -> Optional[str]:
     """What the next rung is, for the 'why this number' line."""
-    ladder = LADDERS[slot]
-    index, band = rung_for(slot, level)
-    if index + 1 >= len(ladder["rungs"]):
+    lad = ladder(slot, equipment)
+    index, band = rung_for(slot, level, equipment)
+    if index + 1 >= len(lad["rungs"]):
         return None
-    following = ladder["rungs"][index + 1][0]["name"]
-    if ladder["unit"] == "reps" and "range" in ladder:
+    following = lad["rungs"][index + 1][0]["name"]
+    if lad["unit"] == "reps" and "range" in lad:
         return (
-            f"a {ladder['range'][1]} reps, passage a : {following} "
+            f"a {lad['range'][1]} reps, passage a : {following} "
             f"(niveau {band.stop})"
         )
     return f"des le niveau {band.stop} : {following}"
 
 
-def describe_slot(slot: str, level: int, value, date: Optional[str] = None):
+def describe_slot(
+    slot: str, level: int, value, date: Optional[str] = None,
+    equipment: Optional[dict] = None,
+):
     """``(variant, plain-language line)`` for one slot at one level."""
-    variant = variant_for(slot, level, date)
-    ladder = LADDERS[slot]
-    unit = "s" if ladder["unit"] == "sec" else ""
+    variant = variant_for(slot, level, date, equipment)
+    lad = ladder(slot, equipment)
+    unit = "s" if lad["unit"] == "sec" else ""
     per_leg = "/jambe" if slot.endswith("_per_leg") else ""
     per_side = "/cote" if slot == "side_plank_sec" else ""
-    line = f"{variant['name']} {value}{unit}{per_leg}{per_side}"
+    line = (
+        f"{variant['name']} {value}{unit}{per_leg}{per_side}"
+        f"{variant['per']}"
+    )
     return variant, line
 
 
 def session_variants(
     values: dict, level: int, date: Optional[str] = None,
+    equipment: Optional[dict] = None,
 ) -> dict:
     """Variant summary per slot present in ``values``."""
     out = {}
     for slot in values:
         if slot not in LADDERS:
             continue
-        variant = variant_for(slot, level, date)
+        variant = variant_for(slot, level, date, equipment)
+        lad = ladder(slot, equipment)
+        following = next_step(slot, level, equipment)
         out[slot] = {
             "key": variant["key"], "name": variant["name"],
             "cue": variant["cue"], "garmin": list(variant["garmin"]),
             "muscles": variant["muscles"],
-            **({"next": next_step(slot, level)}
-               if next_step(slot, level) else {}),
-            **({"range": list(LADDERS[slot]["range"])}
-               if "range" in LADDERS[slot] else {}),
+            **({"per": variant["per"]} if variant["per"] else {}),
+            **({"next": following} if following else {}),
+            **({"range": list(lad["range"])} if "range" in lad else {}),
         }
     return out
 
@@ -432,6 +577,7 @@ def session_muscles(values: dict) -> dict:
 
 def for_muscles(
     muscles: list[str], levels: dict, minimum: float = 0.8,
+    equipment: Optional[dict] = None,
 ) -> list[dict]:
     """Library moves that work ``muscles``, at the person's level.
 
@@ -453,12 +599,14 @@ def for_muscles(
     for session_type, level in levels.items():
         if session_type == "treadmill":
             continue
-        for slot in training.session_values(session_type, level):
+        for slot in training.session_values(
+            session_type, level, equipment=equipment,
+        ):
             if slot in LADDERS:
                 slot_level[slot] = max(slot_level.get(slot, 0), level)
     found = []
     for slot, level in sorted(slot_level.items()):
-        variant = variant_for(slot, level)
+        variant = variant_for(slot, level, equipment=equipment)
         hit = [m for m in muscles if variant["muscles"].get(m, 0) >= minimum]
         if hit:
             found.append({"slot": slot, "name": variant["name"],
@@ -478,26 +626,39 @@ if __name__ == "__main__":
     assert variant_for("pushups", 4)["key"] == "pushup"
     assert variant_for("pushups", 10)["rung"] == 2
     # Reps never go down inside a rung, and always reset at a new one.
-    for slot, ladder in LADDERS.items():
-        if ladder["unit"] == "reps" and "range" in ladder:
+    for slot, lad in LADDERS.items():
+        if lad["unit"] == "reps" and "range" in lad:
             for lvl in range(0, 10):
                 r0, r1 = rung_for(slot, lvl)[0], rung_for(slot, lvl + 1)[0]
                 if r0 == r1:
                     assert reps_for(slot, lvl + 1) >= reps_for(slot, lvl)
                 else:
-                    assert reps_for(slot, lvl + 1) == ladder["range"][0]
+                    assert reps_for(slot, lvl + 1) == lad["range"][0]
         else:
             assert reps_for(slot, 5) is None
     # Every variant is complete: name, cue, a Garmin category, muscles.
-    for slot, ladder in LADDERS.items():
-        assert ladder["muscles"], slot
-        for rung in ladder["rungs"]:
+    for slot, lad in [*LADDERS.items(), *KETTLEBELL_LADDERS.items()]:
+        assert lad["muscles"], slot
+        for rung in lad["rungs"]:
             assert rung
             for variant in rung:
                 assert variant["name"] and variant["cue"], variant
                 assert variant["garmin"][0], variant
-                for muscle in (variant["muscles"] or ladder["muscles"]):
+                for muscle in (variant["muscles"] or lad["muscles"]):
                     assert muscle in MUSCLE_LABEL_FR, muscle
+    assert set(KETTLEBELL_LADDERS) <= set(LADDERS)
+    # With a kettlebell: loaded ladders, the weight in the name, a row
+    # instead of the superman -- and nothing changes without one.
+    kb = {"kettlebell_kg": 12.0}
+    assert variant_for("squats", 0, equipment=kb)["name"] == (
+        "goblet squat (12 kg)")
+    assert reps_for("squats", 0, kb) == 8
+    assert variant_for("superman", 5, equipment=kb)["key"] == "one_arm_row"
+    assert variant_for("superman", 5)["key"] == "superman"
+    assert variant_for("dips", 0, equipment=kb)["per"] == "/bras"
+    assert variant_for("pushups", 4, equipment=kb)["key"] == "pushup"
+    assert next_step("glute_bridge", 0, kb).endswith("(niveau 4)")
+    assert "swing" in next_step("glute_bridge", 0, kb)
     # Weekly rotation: same week -> same variant; another week can differ.
     monday, next_monday = "2026-10-05", "2026-10-12"
     assert variant_for("squats", 5, monday) == variant_for(
@@ -517,6 +678,10 @@ if __name__ == "__main__":
     assert "chest" not in weights
     upper = session_muscles(training.session_values("upper_body", 4))
     assert upper["chest"] == 1.0 and upper["triceps"] == 1.0, upper
+    assert "back" not in upper or upper["back"] < 0.8  # no real pull
+    kb_upper = session_muscles(
+        training.session_values("upper_body", 4, equipment=kb))
+    assert kb_upper["back"] == 1.0, kb_upper  # the row fills the gap
     # Corps tab: shoulders/chest to develop -> concrete moves at level.
     moves = for_muscles(["chest"], {"upper_body": 2, "lower_body": 0})
     assert any(m["name"] == "pompes inclinees" for m in moves), moves

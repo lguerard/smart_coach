@@ -45,6 +45,72 @@
   ],
   "target": "glutes"
  },
+ "0521": {
+  "instructions_fr": "Commence en position de planche haute, les mains agrippant les kettlebells et les pieds écartés à la largeur des hanches. Gaine ta sangle abdominale et garde ton corps en ligne droite de la tête aux talons. Tire un kettlebell vers ta poitrine, en gardant ton coude près de ton corps. Abaisse le kettlebell jusqu'à la position de départ et répète avec l'autre bras. Continue à alterner les bras pour le nombre de répétitions souhaité.",
+  "name_en": "kettlebell alternating renegade row",
+  "secondary_muscles": [
+   "core",
+   "shoulders"
+  ],
+  "target": "upper back"
+ },
+ "0533": {
+  "instructions_fr": "Tiens-toi debout, les pieds écartés à la largeur des épaules, les orteils légèrement tournés vers l'extérieur. Tiens le kettlebell des deux mains devant ta poitrine, près de ton corps. Gaine ta sangle abdominale et garde ta poitrine relevée pendant que tu abaisses tes hanches vers le bas et l'arrière, comme si tu t'asseyais sur une chaise. Descends jusqu'à ce que tes cuisses soient parallèles au sol, ou aussi bas que tu peux confortablement aller. Pousse sur tes talons pour te relever, en contractant tes fessiers en haut. Répète le nombre de répétitions souhaité.",
+  "name_en": "kettlebell front squat",
+  "secondary_muscles": [
+   "quadriceps",
+   "hamstrings",
+   "calves"
+  ],
+  "target": "glutes"
+ },
+ "0534": {
+  "instructions_fr": "Tiens-toi debout, les pieds écartés à la largeur des épaules, en tenant un kettlebell près de ta poitrine à deux mains. En gardant la poitrine relevée et la sangle abdominale gainée, abaisse ton corps en position de squat en fléchissant les genoux et les hanches. Continue à descendre jusqu'à ce que tes cuisses soient parallèles au sol, ou aussi bas que tu peux confortablement aller. Marque une pause en bas, puis pousse sur tes talons pour revenir à la position de départ. Répète le nombre de répétitions souhaité.",
+  "name_en": "kettlebell goblet squat",
+  "secondary_muscles": [
+   "quadriceps",
+   "hamstrings",
+   "calves"
+  ],
+  "target": "glutes"
+ },
+ "0536": {
+  "instructions_fr": "Tiens-toi debout, les pieds écartés à la largeur des épaules, en tenant un kettlebell devant ta poitrine à deux mains. Fais un pas en avant avec le pied droit, en abaissant ton corps en position de fente. En te fendant vers l'avant, fais passer le kettlebell sous ta cuisse droite et transfère-le dans ta main gauche. Pousse sur ton pied droit pour revenir à la position de départ, tout en repassant simultanément le kettlebell dans ta main droite. Répète la fente du côté opposé, en passant le kettlebell sous ta cuisse gauche. Continue à alterner les fentes et à passer la kettlebell d'une main à l'autre pour le nombre de répétitions souhaité.",
+  "name_en": "kettlebell lunge pass through",
+  "secondary_muscles": [
+   "quadriceps",
+   "hamstrings",
+   "calves"
+  ],
+  "target": "glutes"
+ },
+ "0539": {
+  "instructions_fr": "Tiens-toi debout, les pieds écartés à la largeur des épaules, en tenant un kettlebell d'une main à hauteur d'épaule. Gaine ta sangle abdominale et garde ton dos droit. Développe le kettlebell au-dessus de ta tête, en tendant complètement ton bras. Marque une pause en haut, puis abaisse lentement le kettlebell pour revenir à la position de départ. Répète le nombre de répétitions souhaité, puis change de côté.",
+  "name_en": "kettlebell one arm military press to the side",
+  "secondary_muscles": [
+   "triceps",
+   "core"
+  ],
+  "target": "delts"
+ },
+ "0541": {
+  "instructions_fr": "Tiens-toi debout, les pieds écartés à la largeur des épaules, en tenant un kettlebell d'une main en prise pronation. Fléchis légèrement les genoux et bascule vers l'avant au niveau des hanches en gardant le dos droit et ta sangle abdominale gainée. Tire le kettlebell vers le haut en direction de ta poitrine en gardant ton coude près de ton corps et en contractant tes omoplates l'une vers l'autre. Marque une pause en haut, puis abaisse lentement le kettlebell pour revenir à la position de départ. Répète le nombre de répétitions souhaité, puis change de côté et recommence avec l'autre bras.",
+  "name_en": "kettlebell one arm row",
+  "secondary_muscles": [
+   "biceps",
+   "forearms"
+  ],
+  "target": "upper back"
+ },
+ "0549": {
+  "instructions_fr": "Tiens-toi debout, les pieds écartés à la largeur des épaules, les orteils légèrement tournés vers l'extérieur. Tiens le kettlebell des deux mains devant ton corps, les bras étendus. Fléchis légèrement les genoux et bascule au niveau des hanches en poussant tes fesses vers l'arrière. Balance le kettlebell vers l'arrière entre tes jambes, en gardant les bras tendus et le dos plat. Pousse tes hanches vers l'avant et balance le kettlebell jusqu'à hauteur d'épaule, en utilisant l'élan généré par tes hanches. Laisse le kettlebell revenir en balancier entre tes jambes et répète le mouvement pour le nombre de répétitions souhaité.",
+  "name_en": "kettlebell swing",
+  "secondary_muscles": [
+   "hamstrings",
+   "core"
+  ],
+  "target": "glutes"
+ },
  "0630": {
   "instructions_fr": "Commence en position de planche haute, les mains directement sous les épaules et le corps bien aligné. Gaine ta sangle abdominale et amène ton genou droit vers ta poitrine, puis change rapidement et amène ton genou gauche vers ta poitrine. Continue à alterner les jambes dans un mouvement de course en gardant tes hanches basses et ta sangle abdominale gainée. Maintiens un rythme régulier et respire de façon régulière pendant tout l'exercice. Répète le nombre de répétitions souhaité.",
   "name_en": "mountain climber",
@@ -74,6 +140,15 @@
   ],
   "target": "triceps"
  },
+ "1298": {
+  "instructions_fr": "Allonge-toi sur le dos au sol, les genoux fléchis et les pieds à plat au sol. Tiens le kettlebell dans une main, la paume tournée vers tes pieds et le bras étendu droit vers le plafond. Abaisse lentement le kettlebell vers ta poitrine en fléchissant le coude, en gardant le haut de ton bras près de ton corps. Marque une pause lorsque le kettlebell est juste au-dessus de ta poitrine, puis repousse-le vers le haut pour revenir à la position de départ en étendant ton coude. Répète le nombre de répétitions souhaité, puis passe à l'autre bras.",
+  "name_en": "kettlebell one arm floor press",
+  "secondary_muscles": [
+   "triceps",
+   "shoulders"
+  ],
+  "target": "pectorals"
+ },
  "1311": {
   "instructions_fr": "Commence en position de planche haute, les mains plus écartées que la largeur des épaules. Garde ton corps bien aligné de la tête aux pieds. Abaisse ta poitrine vers le sol en fléchissant les coudes, en les gardant près de tes flancs. Pousse à travers tes paumes pour étendre tes bras et revenir à la position de départ. Répète le nombre de répétitions souhaité.",
   "name_en": "wide hand push up",
@@ -82,6 +157,15 @@
    "shoulders"
   ],
   "target": "pectorals"
+ },
+ "1345": {
+  "instructions_fr": "Tiens-toi debout, les pieds écartés à la largeur des épaules, les genoux légèrement fléchis, et tiens un kettlebell dans chaque main, paumes tournées vers ton corps. Penche-toi vers l'avant au niveau des hanches en gardant ton dos droit et ta sangle abdominale gainée. Tire les kettlebells vers le haut en direction de ta poitrine en contractant tes omoplates l'une vers l'autre. Marque une pause en haut, puis abaisse lentement les kettlebells pour revenir à la position de départ. Répète le nombre de répétitions souhaité.",
+  "name_en": "kettlebell two arm row",
+  "secondary_muscles": [
+   "biceps",
+   "forearms"
+  ],
+  "target": "upper back"
  },
  "1373": {
   "instructions_fr": "Tiens-toi debout, les pieds écartés à la largeur des épaules, les orteils pointés vers l'avant. Place tes mains sur un mur ou une surface stable pour l'équilibre. Lève lentement les talons du sol, en reportant le poids de ton corps sur la pointe des pieds. Marque une pause en haut, puis abaisse lentement tes talons pour revenir à la position de départ. Répète le nombre de répétitions souhaité.",
