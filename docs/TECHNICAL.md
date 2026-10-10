@@ -162,7 +162,10 @@ afterwards" below)
                            circuits come from exercise_library.py
                            (kettlebell_kg in Settings swaps squat,
                            lunge, bridge, dips and superman for loaded
-                           goblet squat/swing/press/row ladders)
+                           goblet squat/swing/press/row ladders; the
+                           "kettlebell" session type is a 20 s on /
+                           10 s off interval workout of six standing
+                           moves, timed on the watch)
                            ladders (double progression: reps climb a
                            range, then a harder variant; the week's
                            alternative rotates); muscles.py turns

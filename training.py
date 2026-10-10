@@ -40,6 +40,7 @@ SESSION_LABEL_FR = {
     "lower_body": "Muscu bas du corps",
     "upper_body": "Muscu haut du corps + gainage",
     "calisthenics": "Calisthenie",
+    "kettlebell": "Kettlebell a la maison",
 }
 
 STATUS_LABEL_FR = {
@@ -1164,6 +1165,15 @@ def schedule_for_user(
     }
 
 
+def scheduled_types(conn: sqlite3.Connection, user_id: int) -> set[str]:
+    """Session types the person's weekly plan actually uses."""
+    return {
+        entry["session_type"]
+        for entry in schedule_for_user(conn, user_id).values()
+        if entry.get("session_type")
+    }
+
+
 def session_type_for_weekday(
     conn: sqlite3.Connection, user_id: int, weekday: int,
 ) -> Optional[str]:
@@ -1305,11 +1315,53 @@ def calisthenics_values(
     }, level, date, equipment)
 
 
+KETTLEBELL_MOVES = (
+    "kb_woodchop_sec", "kb_around_world_sec", "kb_around_world_rev_sec",
+    "kb_goblet_squat_sec", "kb_upright_row_sec", "kb_curl_sec",
+)
+KETTLEBELL_REST_SEC = 10
+KETTLEBELL_WARMUP_MIN = 3
+# Level bands -> tours of the six moves. Inside a band the work time
+# climbs 20 -> 30 s; the next band adds a tour and goes back to 20 s
+# (the same double progression as the circuits, with time).
+KETTLEBELL_TOURS = ((range(0, 3), 2), (range(3, 6), 3), (range(6, 9), 4),
+                    (range(9, 11), 5))
+
+
+def kettlebell_values(
+    level: int, cap_min: int = DEFAULT_SESSION_CAP_MIN,
+    date: Optional[str] = None, equipment: Optional[dict] = None,
+) -> dict:
+    """Level -> the 20/10 kettlebell interval session.
+
+    Six standing moves with one kettlebell (woodchop, around the waist
+    both ways, goblet squat, upright row, curl), each ``work_sec`` on and
+    10 s off, repeated ``tours`` times. Tours drop if they would not fit
+    in ``cap_min``.
+    """
+    level = max(LEVEL_MIN, min(LEVEL_MAX, level))
+    band, tours = next(
+        (band, tours) for band, tours in KETTLEBELL_TOURS if level in band
+    )
+    position = (level - band.start) / max(1, len(band) - 1)
+    work = 20 + round(10 * position)
+    per_tour_min = len(KETTLEBELL_MOVES) * (work + KETTLEBELL_REST_SEC) / 60
+    while tours > 1 and KETTLEBELL_WARMUP_MIN + tours * per_tour_min > cap_min:
+        tours -= 1
+    values = {move: work for move in KETTLEBELL_MOVES}
+    values.update({
+        "rest_sec": KETTLEBELL_REST_SEC, "tours": tours, "rounds": tours,
+        "duration_min": round(KETTLEBELL_WARMUP_MIN + tours * per_tour_min),
+    })
+    return _laddered(values, level, date, equipment)
+
+
 SESSION_VALUE_FUNCS = {
     "treadmill": treadmill_values,
     "lower_body": lower_body_values,
     "upper_body": upper_body_values,
     "calisthenics": calisthenics_values,
+    "kettlebell": kettlebell_values,
 }
 
 
@@ -1345,7 +1397,8 @@ def format_description_fr(
         variants = values.get("variants") or {}
         parts = []
         for slot, value in values.items():
-            if slot in ("rounds", "duration_min", "variants"):
+            if slot in ("rounds", "duration_min", "variants", "rest_sec",
+                        "tours"):
                 continue
             name = variants.get(slot, {}).get("name", slot)
             unit = "s" if slot.endswith("_sec") else ""
@@ -1355,8 +1408,13 @@ def format_description_fr(
                 else variants.get(slot, {}).get("per", "")
             )
             parts.append(f"{name} {value}{unit}{per}")
+        effort = (
+            f", {next(iter(v for k, v in values.items() if k.endswith('_sec')))}"
+            f" s d'effort / {values['rest_sec']} s de repos par mouvement"
+            if values.get("rest_sec") else ""
+        )
         body = (
-            f"{values['rounds']} tours (~{values['duration_min']} "
+            f"{values['rounds']} tours{effort} (~{values['duration_min']} "
             f"min) - " + ", ".join(parts)
         )
 
@@ -1792,6 +1850,18 @@ if __name__ == "__main__":
     assert lower_body_values(8)["rounds"] == 5
     # Double progression from the ladders: the top level is the top of
     # the hardest rung's range, and each slot names its variant.
+    # The kettlebell intervals: 2 tours of 20 s at level 0, the work
+    # time rises inside a band, then a tour is added and it resets.
+    kb0 = kettlebell_values(0)
+    assert kb0["tours"] == 2 and kb0["kb_curl_sec"] == 20, kb0
+    assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 6, kb0
+    assert kettlebell_values(2)["kb_curl_sec"] == 30
+    assert kettlebell_values(3)["tours"] == 3
+    assert kettlebell_values(3)["kb_curl_sec"] == 20
+    assert kettlebell_values(10, cap_min=15)["tours"] < 5  # cap holds
+    kb_text = format_description_fr("kettlebell", 0, kb0, "green")
+    assert "2 tours, 20 s d'effort / 10 s de repos" in kb_text, kb_text
+    assert "goblet squat 20s" in kb_text and "rest_sec" not in kb_text
     assert calisthenics_values(10)["squats"] == 20
     assert calisthenics_values(10)["variants"]["squats"]["name"] in (
         "squat pause 2 s", "squat saute",

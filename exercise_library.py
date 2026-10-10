@@ -44,10 +44,14 @@ MUSCLE_LABEL_FR = {
 }
 
 
-def _v(key, name, cue, garmin, muscles=None, dataset=None, noisy=False):
-    """One variant. ``muscles`` overrides the slot's when given."""
+def _v(key, name, cue, garmin, muscles=None, dataset=None, noisy=False,
+       loaded=False):
+    """One variant. ``muscles`` overrides the slot's when given;
+    ``loaded`` marks a kettlebell move, whose name then carries the
+    weight from Settings."""
     return {"key": key, "name": name, "cue": cue, "garmin": garmin,
-            "muscles": muscles, "dataset": dataset, "noisy": noisy}
+            "muscles": muscles, "dataset": dataset, "noisy": noisy,
+            "loaded": loaded}
 
 
 # slot -> unit, rep range (reps slots only), default muscles, and rungs
@@ -286,7 +290,63 @@ LADDERS = {
         ],
     },
 }
+# The "kettlebell" session (training.kettlebell_values): six moves in
+# 20 s on / 10 s off intervals, one kettlebell, standing -- the home
+# workout the person chose. Each move is a time slot.
+# fmt: off
+KETTLEBELL_SESSION = {
+    "kb_woodchop_sec": {
+        "unit": "sec", "muscles": {"abs": 1.0, "shoulders": 0.7,
+                                   "glutes": 0.4},
+        "rungs": [[_v("kb_woodchop", "rotation diagonale (woodchop)",
+                      "Deux mains sur la poignee, de la hanche vers le haut "
+                      "de l'epaule opposee, bras tendus ; pivote le pied "
+                      "arriere. Change de cote a mi-temps.",
+                      ("CHOP", "CHOP"), loaded=True)]],
+    },
+    "kb_around_world_sec": {
+        "unit": "sec", "muscles": {"abs": 0.8, "shoulders": 0.6,
+                                   "biceps": 0.3},
+        "rungs": [[_v("kb_around_world", "tour de taille (sens horaire)",
+                      "Passe la kettlebell d'une main a l'autre autour de "
+                      "la taille, bassin immobile, ventre gaine.",
+                      ("CORE", ""), loaded=True)]],
+    },
+    "kb_around_world_rev_sec": {
+        "unit": "sec", "muscles": {"abs": 0.8, "shoulders": 0.6,
+                                   "biceps": 0.3},
+        "rungs": [[_v("kb_around_world_rev", "tour de taille (sens inverse)",
+                      "Meme passage autour de la taille, dans l'autre sens.",
+                      ("CORE", ""), loaded=True)]],
+    },
+    "kb_goblet_squat_sec": {
+        "unit": "sec", "muscles": {"quads": 1.0, "glutes": 0.9, "abs": 0.3},
+        "rungs": [[_v("kb_goblet_squat_int", "goblet squat",
+                      "Kettlebell contre la poitrine, descends cuisses "
+                      "paralleles, coudes entre les genoux, talons au sol.",
+                      ("SQUAT", "GOBLET_SQUAT"), dataset="0534",
+                      loaded=True)]],
+    },
+    "kb_upright_row_sec": {
+        "unit": "sec", "muscles": {"shoulders": 1.0, "back": 0.6,
+                                   "biceps": 0.4},
+        "rungs": [[_v("kb_upright_row", "tirage menton",
+                      "Deux mains sur la poignee, monte la kettlebell le "
+                      "long du corps jusqu'a la poitrine, coudes plus hauts "
+                      "que les poignets.", ("ROW", "KETTLEBELL_ROW"),
+                      loaded=True)]],
+    },
+    "kb_curl_sec": {
+        "unit": "sec", "muscles": {"biceps": 1.0, "shoulders": 0.2},
+        "rungs": [[_v("kb_curl", "curl kettlebell",
+                      "Mains sur les cotes de la poignee, coudes colles au "
+                      "corps, monte vers la poitrine et redescends "
+                      "lentement.", ("CURL", "KETTLEBELL_BICEPS_CURL"),
+                      loaded=True)]],
+    },
+}
 # fmt: on
+LADDERS.update(KETTLEBELL_SESSION)
 
 # With one kettlebell, these slots swap to loaded ladders. The hinge
 # (swing, deadlift) replaces the glute bridge, and a row and a press
@@ -493,7 +553,9 @@ def variant_for(
     variant["muscles"] = variant["muscles"] or lad["muscles"]
     variant["rung"], variant["rungs"] = index, len(lad["rungs"])
     variant["per"] = lad.get("per", "")
-    if lad is not LADDERS.get(slot) and equipment:
+    if equipment and equipment.get("kettlebell_kg") and (
+        lad is not LADDERS.get(slot) or variant.get("loaded")
+    ):
         # A loaded variant names its weight: "goblet squat (12 kg)".
         variant["name"] = (
             f"{variant['name']} ({equipment['kettlebell_kg']:g} kg)"
@@ -686,4 +748,8 @@ if __name__ == "__main__":
     moves = for_muscles(["chest"], {"upper_body": 2, "lower_body": 0})
     assert any(m["name"] == "pompes inclinees" for m in moves), moves
     assert for_muscles(["chest"], {}) == []
+    # The kettlebell session's moves name the weight when it is known.
+    assert variant_for("kb_curl_sec", 3)["name"] == "curl kettlebell"
+    assert variant_for("kb_curl_sec", 3, equipment=kb)["name"] == (
+        "curl kettlebell (12 kg)")
     print("exercise_library.py: all checks passed")

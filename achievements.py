@@ -440,10 +440,13 @@ def _check_level_10_any(
 def _check_level_10_all(
     conn: sqlite3.Connection, user_id: int, date: str,
 ) -> bool:
-    return all(
-        training.get_level(conn, user_id, st) >= 10
-        for st in training.SESSION_LABEL_FR
+    # Every type the week plan uses -- not every type that exists: a
+    # session type nobody schedules (e.g. kettlebell without one) must
+    # not make this unreachable.
+    types = training.scheduled_types(conn, user_id) or set(
+        training.SESSION_LABEL_FR
     )
+    return all(training.get_level(conn, user_id, st) >= 10 for st in types)
 
 
 def _count_last_n_days_meet(
@@ -1047,7 +1050,9 @@ def achievement_progress(
         return (current, target, "niveau max")
     if key == "level_10_all":
         current = min(
-            (training.get_level(conn, user_id, st) for st in training.SESSION_LABEL_FR),
+            (training.get_level(conn, user_id, st)
+             for st in (training.scheduled_types(conn, user_id)
+                        or training.SESSION_LABEL_FR)),
             default=0,
         )
         return (current, 10, "niveau (le plus bas)")

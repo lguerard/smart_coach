@@ -100,7 +100,7 @@ _EXERCISE_LABEL_FR = {
     "mountain_climbers": "mountain climbers",
     "jumping_jacks": "jumping jacks",
 }
-_NON_STEP_KEYS = {"rounds", "duration_min", "variants"}
+_NON_STEP_KEYS = {"rounds", "duration_min", "variants", "rest_sec", "tours"}
 
 # training.session_values() key -> (Garmin exercise category, exercise
 # name), from garminconnect's own exercises.py catalog -- this is what
@@ -1276,9 +1276,11 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
         list[ExecutableStep]: Ordered steps, one per exercise.
     """
     steps = []
-    for order, (key, value) in enumerate(
+    rest = values.get("rest_sec")
+    for key, value in (
         (k, v) for k, v in values.items() if k not in _NON_STEP_KEYS
     ):
+        order = len(steps)
         is_time = key.endswith("_sec")
         # Garmin's end-condition type IDs (2 = time, 10 = reps) -- hardcoded
         # rather than read off garminconnect.workout.ConditionType, since
@@ -1322,6 +1324,25 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
             or _EXERCISE_LABEL_FR.get(key, key),
             **extra,
         ))
+        if rest:
+            # Interval sessions (20 s on / 10 s off): a timed rest step
+            # after each move, so the watch runs the whole timer.
+            steps.append(ExecutableStep(
+                stepOrder=len(steps) + 1,
+                stepType={
+                    "stepTypeId": StepType.REST,
+                    "stepTypeKey": "rest", "displayOrder": 5,
+                },
+                endCondition={
+                    "conditionTypeId": 2, "conditionTypeKey": "time",
+                    "displayOrder": 2, "displayable": True,
+                },
+                endConditionValue=float(rest),
+                targetType={
+                    "workoutTargetTypeId": TargetType.NO_TARGET,
+                    "workoutTargetTypeKey": "no.target", "displayOrder": 1,
+                },
+            ))
     return steps
 
 
@@ -1987,6 +2008,18 @@ if __name__ == "__main__":
         lb_values["variants"]["calf_raises"]["garmin"][1]
     ), calf
     assert first["name"] in circuit_workout["description"]
+    # The kettlebell intervals: each move is timed, followed by a timed
+    # rest step; the repeat group runs the tours.
+    kb_values = training.session_values("kettlebell", 3)
+    kb_group = build_workout("kettlebell", 3, kb_values).to_dict()[
+        "workoutSegments"][0]["workoutSteps"][0]
+    assert kb_group["numberOfIterations"] == kb_values["tours"], kb_group
+    kb_steps = kb_group["workoutSteps"]
+    assert len(kb_steps) == 12, len(kb_steps)  # 6 moves + 6 rests
+    assert kb_steps[0]["endConditionValue"] == kb_values["kb_woodchop_sec"]
+    assert kb_steps[1]["stepType"]["stepTypeKey"] == "rest"
+    assert kb_steps[1]["endConditionValue"] == 10
+    assert [s["stepOrder"] for s in kb_steps] == list(range(1, 13))
 
     class _FakeWorkoutGarmin:
         """Records upload/schedule/delete calls -- no live push made."""

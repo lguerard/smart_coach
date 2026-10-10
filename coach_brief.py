@@ -258,7 +258,7 @@ def session_brief(payload: dict) -> dict:
         # keys and the whole variant catalogue -- that is what the
         # message has to say.
         brief["values"] = {k: v for k, v in values.items()
-                           if k in ("rounds", "duration_min")}
+                           if k in ("rounds", "duration_min", "rest_sec")}
         brief["moves"] = [
             f"{info['name']} {values[slot]}"
             f"{'s' if slot.endswith('_sec') else ''}"
