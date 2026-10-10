@@ -1547,11 +1547,21 @@ def plan_week_ahead(
         "local_date < ?", (user_id, keep_from),
     )
     legacy = conn.execute(
-        "SELECT workout_id FROM garmin_workout_pushes WHERE user_id = ?",
-        (user_id,),
+        "SELECT workout_id, local_date FROM garmin_workout_pushes WHERE "
+        "user_id = ?", (user_id,),
     ).fetchone()
     if legacy:
-        _delete_quietly(client, legacy["workout_id"])
+        if legacy["local_date"] >= keep_from:
+            # Today's (or yesterday's) workout from an earlier version:
+            # keep it on the watch and track it like any other day.
+            conn.execute(
+                "INSERT OR IGNORE INTO garmin_planned_workouts (user_id, "
+                "local_date, workout_id, signature) VALUES (?, ?, ?, "
+                "'legacy')",
+                (user_id, legacy["local_date"], legacy["workout_id"]),
+            )
+        else:
+            _delete_quietly(client, legacy["workout_id"])
         conn.execute(
             "DELETE FROM garmin_workout_pushes WHERE user_id = ?", (user_id,),
         )
@@ -2148,9 +2158,28 @@ if __name__ == "__main__":
     # The week ahead: every planned day of the next six is pushed once,
     # at today's level; a second run creates nothing; the legacy
     # single-workout row is cleared.
+    # Today's workout from the old single-push version is adopted, not
+    # deleted: running the week planner mid-day must not empty today.
     conn.execute(
         "INSERT INTO garmin_workout_pushes (user_id, workout_id, "
-        "local_date) VALUES (?, 'legacy-1', '2026-07-12')", (uid,),
+        "local_date) VALUES (?, 'legacy-today', '2026-07-13') "
+        "ON CONFLICT(user_id) DO UPDATE SET workout_id = "
+        "excluded.workout_id, local_date = excluded.local_date", (uid,),
+    )
+    conn.commit()
+    plan_week_ahead(conn, uid, fake_watch, "2026-07-13")
+    assert "legacy-today" not in fake_watch.deleted
+    assert conn.execute(
+        "SELECT workout_id FROM garmin_planned_workouts WHERE user_id = ? "
+        "AND local_date = '2026-07-13'", (uid,),
+    ).fetchone()["workout_id"] == "legacy-today"
+    conn.execute(
+        "DELETE FROM garmin_planned_workouts WHERE user_id = ?", (uid,))
+    conn.execute(
+        "INSERT INTO garmin_workout_pushes (user_id, workout_id, "
+        "local_date) VALUES (?, 'legacy-1', '2026-07-10') "
+        "ON CONFLICT(user_id) DO UPDATE SET workout_id = "
+        "excluded.workout_id, local_date = excluded.local_date", (uid,),
     )
     conn.commit()
     week = plan_week_ahead(conn, uid, fake_watch, "2026-07-13")  # Monday
