@@ -76,13 +76,17 @@ Two capabilities were explicitly checked and are **not available**:
 Garmin Explore's route-suggestion/popularity-routing feature has no
 endpoint in the `garminconnect` client (or any known reverse-engineered
 one) — it's bound to Garmin Connect's own map UI and Explore-badged
-devices. Conversely, **pushing tonight's session to the watch as a
-Garmin workout is implemented**
-(`ingest/garmin_api.py:push_workout_for_session`, called from
-`run_coach.py`): it builds a typed workout from
-`training.session_values()` (a single timed step for treadmill, a
-repeat-group of rep/time steps for the bodyweight circuits) and
-uploads + schedules it, deleting yesterday's pushed template first.
+devices. Conversely, **the week's sessions are on the watch as
+Garmin workouts** (`ingest/garmin_api.py`, called from
+`run_coach.py`): `plan_week_ahead` pushes each planned day of the next
+six once, at its level that morning, and `sync_planned_workout`
+replaces today's only when the morning decision differs from what is
+already there (rest removes it, a recovery walk or a new level
+replaces it; an identical plan makes no Garmin call). Workouts are
+built from `training.session_values()` (a single timed step for
+treadmill, a repeat-group of rep/time steps for the circuits, with
+timed rest steps for the kettlebell intervals); days older than
+yesterday are deleted.
 Each rep step carries a `category`/`exerciseName` pair from Garmin's
 own exercise catalog (`garminconnect.exercises`), which is what drives
 the exercise name and muscle diagram on the watch — the free-text

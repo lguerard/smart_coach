@@ -128,19 +128,25 @@ def run_for_user(conn, user: dict) -> None:
             except Exception as error:
                 calendar_note = f"(Calendrier non mis a jour: {error})"
 
-        try:
-            watch_client = garmin_api.get_client(username)
-            if tier == training.TIER_REST:
-                garmin_api.retire_pushed_workout(conn, user_id, watch_client)
-            else:
-                garmin_api.push_workout_for_session(
-                    conn, user_id, watch_client,
-                    "recovery" if tier == training.TIER_RECOVERY
-                    else session_type,
-                    level, values, today,
-                )
-        except Exception as error:
-            workout_note = f"(Entrainement non envoye a la montre: {error})"
+
+    # The watch carries the whole week. Today's workout is only replaced
+    # when this morning's decision differs from what is already on it
+    # (rest, a recovery walk, a level change); the coming days are each
+    # pushed once, at their planned level, and wait for their own
+    # morning.
+    try:
+        watch_client = garmin_api.get_client(username)
+        kind = (
+            None if session_type is None or tier == training.TIER_REST
+            else "recovery" if tier == training.TIER_RECOVERY
+            else session_type
+        )
+        garmin_api.sync_planned_workout(
+            conn, user_id, watch_client, today, kind, level or 0, values,
+        )
+        garmin_api.plan_week_ahead(conn, user_id, watch_client, today)
+    except Exception as error:
+        workout_note = f"(Entrainement non envoye a la montre: {error})"
 
     weather_today = None
     city = db.get_setting(conn, user_id, "city")

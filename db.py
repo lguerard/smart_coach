@@ -308,14 +308,25 @@ CREATE TABLE IF NOT EXISTS garmin_vo2max (
     PRIMARY KEY (user_id, local_date)
 );
 
--- Tracks the most recently pushed watch workout per user, so the
--- next day's push can delete the old template before creating a new
--- one (see ingest/garmin_api.py:push_workout_for_session) instead of
--- accumulating one workout per day forever in the Garmin library.
+-- Legacy: the single watch workout earlier versions pushed per user.
+-- garmin_api.plan_week_ahead deletes its workout and empties it once;
+-- garmin_planned_workouts below replaced it.
 CREATE TABLE IF NOT EXISTS garmin_workout_pushes (
     user_id INTEGER PRIMARY KEY REFERENCES users(id),
     workout_id TEXT NOT NULL,
     local_date TEXT NOT NULL
+);
+
+-- One Garmin workout per planned day, the whole week ahead (see
+-- garmin_api.sync_planned_workout). ``signature`` is a hash of what
+-- was pushed, so the morning run only replaces a day's workout when its
+-- decision actually differs from it.
+CREATE TABLE IF NOT EXISTS garmin_planned_workouts (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    workout_id TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
 );
 
 -- Earned Garmin Connect badges, surfaced as achievements (see

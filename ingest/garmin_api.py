@@ -41,6 +41,8 @@ prompt); tokens persist ~1 year under GARMIN_TOKEN_DIR/<username>.
 """
 
 import datetime as dt
+import json
+import hashlib
 import getpass
 import os
 import sqlite3
@@ -1421,79 +1423,68 @@ def build_workout(session_type: str, level: int, values: dict):
     return _circuit_workout(session_type, level, values)
 
 
-def retire_pushed_workout(
-    conn: sqlite3.Connection, user_id: int, client: Garmin,
-) -> bool:
-    """Take the last pushed workout off the watch, push nothing new.
+WEEK_AHEAD_DAYS = 7  # today + the next six days are on the watch
+KEEP_PAST_DAYS = 1  # yesterday's workout stays, for a late session
 
-    For a rest day: the workout pushed on the last training day is
-    still sitting in the library, and leaving a treadmill session
-    sitting there on a day the coach said not to train is how a watch
-    contradicts the message sent to the phone. Best effort, like the
-    replacement inside ``push_workout_for_session``.
 
-    Parameters:
-        conn (sqlite3.Connection): smart_coach db connection.
-        user_id (int): Owning user.
-        client (Garmin): Authenticated client.
+def workout_signature(kind: str, values: dict) -> str:
+    """A stable hash of what a day's workout is.
 
-    Returns:
-        bool: True when a pushed workout was on record.
+    Two pushes with the same signature are the same workout, so the
+    morning run can tell "the plan for today is what is already on the
+    watch" from "the coach changed it" without asking Garmin anything.
     """
-    old = conn.execute(
-        "SELECT workout_id FROM garmin_workout_pushes WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()
-    if not old:
-        return False
+    payload = json.dumps({"kind": kind, "values": values}, sort_keys=True,
+                         default=str)
+    return hashlib.sha1(payload.encode()).hexdigest()
+
+
+def _delete_quietly(client: Garmin, workout_id: str) -> None:
     try:
-        client.delete_workout(old["workout_id"])
+        client.delete_workout(workout_id)
     except Exception:  # noqa: BLE001 -- already gone on Garmin's side
         pass
-    conn.execute(
-        "DELETE FROM garmin_workout_pushes WHERE user_id = ?", (user_id,),
-    )
-    conn.commit()
-    return True
 
 
-def push_workout_for_session(
-    conn: sqlite3.Connection, user_id: int, client: Garmin,
-    session_type: str, level: int, values: dict, date: str,
+def sync_planned_workout(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, date: str,
+    kind: Optional[str], level: int = 0, values: Optional[dict] = None,
 ) -> str:
-    """Push tonight's session to the watch, replacing yesterday's.
-
-    Deletes the previously pushed workout template first (best-effort
-    -- a manually-deleted template on Garmin's side isn't an error
-    here), so the workout library doesn't accumulate one entry per
-    day forever.
+    """Make one day's watch workout match ``kind``/``values``.
 
     Parameters:
         conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
         client (Garmin): Authenticated client.
-        session_type (str): One of ``training.SESSION_LABEL_FR``'s keys.
-        level (int): Tonight's level.
-        values (dict): ``training.session_values()`` output.
-        date (str): ISO local date to schedule the workout on.
+        date (str): ISO local date of the workout.
+        kind (str | None): A session type, ``recovery``, or None for no
+            workout that day (rest, off-system).
+        level (int): Level, for the workout name.
+        values (dict | None): ``training.session_values`` output.
 
     Returns:
-        str: The new Garmin workout id.
-
-    Raises:
-        RuntimeError: The upload response carried no workout id.
+        str: ``unchanged`` (already on the watch, no Garmin call),
+        ``created``, ``updated`` (old one replaced), ``removed`` or
+        ``none``.
     """
-    old = conn.execute(
-        "SELECT workout_id FROM garmin_workout_pushes WHERE user_id = ?",
-        (user_id,),
+    existing = conn.execute(
+        "SELECT workout_id, signature FROM garmin_planned_workouts WHERE "
+        "user_id = ? AND local_date = ?", (user_id, date),
     ).fetchone()
-    if old:
-        try:
-            client.delete_workout(old["workout_id"])
-        except Exception:
-            pass
-
-    workout = build_workout(session_type, level, values)
+    if kind is None:
+        if not existing:
+            return "none"
+        _delete_quietly(client, existing["workout_id"])
+        conn.execute(
+            "DELETE FROM garmin_planned_workouts WHERE user_id = ? AND "
+            "local_date = ?", (user_id, date),
+        )
+        conn.commit()
+        return "removed"
+    signature = workout_signature(kind, values or {})
+    if existing and existing["signature"] == signature:
+        return "unchanged"
+    workout = build_workout(kind, level, values or {})
     result = client.upload_workout(workout.to_dict())
     workout_id = result.get("workoutId") if isinstance(result, dict) else None
     if not workout_id:
@@ -1501,15 +1492,95 @@ def push_workout_for_session(
             f"Garmin upload_workout returned no workoutId: {result!r}"
         )
     client.schedule_workout(workout_id, date)
+    if existing:
+        # Uploaded first, deleted second: a failed upload never leaves
+        # the day with nothing on the watch.
+        _delete_quietly(client, existing["workout_id"])
     conn.execute(
-        "INSERT INTO garmin_workout_pushes (user_id, workout_id, "
-        "local_date) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE "
-        "SET workout_id = excluded.workout_id, "
-        "local_date = excluded.local_date",
-        (user_id, str(workout_id), date),
+        "INSERT INTO garmin_planned_workouts (user_id, local_date, "
+        "workout_id, signature) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, "
+        "local_date) DO UPDATE SET workout_id = excluded.workout_id, "
+        "signature = excluded.signature",
+        (user_id, date, str(workout_id), signature),
     )
     conn.commit()
-    return str(workout_id)
+    return "updated" if existing else "created"
+
+
+def plan_week_ahead(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, today: str,
+    days: int = WEEK_AHEAD_DAYS,
+) -> dict:
+    """Put every planned session of the coming days on the watch.
+
+    Each day gets its session at the level it has today, built once:
+    days already on the watch are left alone -- only the morning run of
+    that day changes them, and only if its decision differs. Workouts
+    older than yesterday are removed so the library does not fill up,
+    and the single-workout table of earlier versions is cleared once.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        client (Garmin): Authenticated client.
+        today (str): ISO local date of the morning run.
+        days (int): How many days, today included, to keep planned.
+
+    Returns:
+        dict: ``created`` (dates newly pushed) and ``removed`` (past
+        dates cleaned up).
+    """
+    import exercise_library
+    import training
+
+    start = dt.date.fromisoformat(today)
+    keep_from = (start - dt.timedelta(days=KEEP_PAST_DAYS)).isoformat()
+    removed = []
+    for row in conn.execute(
+        "SELECT local_date, workout_id FROM garmin_planned_workouts WHERE "
+        "user_id = ? AND local_date < ?", (user_id, keep_from),
+    ).fetchall():
+        _delete_quietly(client, row["workout_id"])
+        removed.append(row["local_date"])
+    conn.execute(
+        "DELETE FROM garmin_planned_workouts WHERE user_id = ? AND "
+        "local_date < ?", (user_id, keep_from),
+    )
+    legacy = conn.execute(
+        "SELECT workout_id FROM garmin_workout_pushes WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if legacy:
+        _delete_quietly(client, legacy["workout_id"])
+        conn.execute(
+            "DELETE FROM garmin_workout_pushes WHERE user_id = ?", (user_id,),
+        )
+    conn.commit()
+
+    schedule = training.schedule_for_user(conn, user_id)
+    cap = training.session_cap_min(conn, user_id)
+    equipment = exercise_library.equipment_for(conn, user_id)
+    created = []
+    for offset in range(1, days):
+        day = start + dt.timedelta(days=offset)
+        session_type = schedule[day.weekday()].get("session_type")
+        if not session_type:
+            continue
+        date = day.isoformat()
+        if conn.execute(
+            "SELECT 1 FROM garmin_planned_workouts WHERE user_id = ? AND "
+            "local_date = ?", (user_id, date),
+        ).fetchone():
+            continue
+        level = training.get_level(conn, user_id, session_type)
+        values = training.session_values(
+            session_type, level, cap, date, equipment,
+        )
+        if sync_planned_workout(
+            conn, user_id, client, date, session_type, level, values,
+        ) == "created":
+            created.append(date)
+    return {"created": created, "removed": removed}
 
 
 if __name__ == "__main__":
@@ -2041,38 +2112,17 @@ if __name__ == "__main__":
             self.deleted.append(workout_id)
 
     fake_watch = _FakeWorkoutGarmin()
-    wid1 = push_workout_for_session(
-        conn, uid, fake_watch, "lower_body", 4, lb_values, "2026-07-16",
-    )
-    assert wid1 == "1001", wid1
-    assert fake_watch.deleted == []  # nothing to clean up on first push
+    # One day: created, then the same decision is a no-op (no Garmin
+    # call at all), and a different one replaces it.
+    assert sync_planned_workout(
+        conn, uid, fake_watch, "2026-07-16", "lower_body", 4, lb_values,
+    ) == "created"
     assert fake_watch.scheduled == [(1001, "2026-07-16")]
-    push_row = conn.execute(
-        "SELECT * FROM garmin_workout_pushes WHERE user_id = ?", (uid,),
-    ).fetchone()
-    assert push_row["workout_id"] == "1001"
-
-    # Next day: yesterday's template gets deleted before the new one
-    # is uploaded+scheduled -- one row per user, not one per day.
-    wid2 = push_workout_for_session(
-        conn, uid, fake_watch, "treadmill", 6, training.treadmill_values(6),
-        "2026-07-17",
-    )
-    assert wid2 == "1002", wid2
-    assert fake_watch.deleted == ["1001"]
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM garmin_workout_pushes WHERE "
-        "user_id = ?", (uid,),
-    ).fetchone()["n"] == 1
-    push_row2 = conn.execute(
-        "SELECT workout_id FROM garmin_workout_pushes WHERE user_id = ?",
-        (uid,),
-    ).fetchone()
-    assert push_row2["workout_id"] == "1002"
-
-    # A recovery day pushes an easy FLAT walk under its own name -- the
-    # same single-step shape as the treadmill session, but never the
-    # 12%-incline one.
+    assert sync_planned_workout(
+        conn, uid, fake_watch, "2026-07-16", "lower_body", 4, lb_values,
+    ) == "unchanged"
+    assert len(fake_watch.uploaded) == 1 and fake_watch.deleted == []
+    # A recovery walk instead (the coach decided): new one in, old out.
     walk = build_workout(
         "recovery", 0, training.RECOVERY_VALUES,
     ).to_dict()
@@ -2080,21 +2130,53 @@ if __name__ == "__main__":
     assert "inclinaison 0%" in walk["description"], walk
     assert "4.5 km/h" in walk["description"], walk
     assert walk["estimatedDurationInSecs"] == 20 * 60, walk
-    wid3 = push_workout_for_session(
-        conn, uid, fake_watch, "recovery", 0, training.RECOVERY_VALUES,
-        "2026-07-18",
-    )
-    assert wid3 == "1003" and fake_watch.deleted == ["1001", "1002"]
+    assert sync_planned_workout(
+        conn, uid, fake_watch, "2026-07-16", "recovery", 0,
+        training.RECOVERY_VALUES,
+    ) == "updated"
+    assert fake_watch.deleted == ["1001"], fake_watch.deleted
+    # A rest day: the day's workout comes off the watch, nothing new.
+    assert sync_planned_workout(
+        conn, uid, fake_watch, "2026-07-16", None,
+    ) == "removed"
+    assert fake_watch.deleted == ["1001", "1002"]
+    assert sync_planned_workout(
+        conn, uid, fake_watch, "2026-07-16", None,
+    ) == "none"
+    assert len(fake_watch.uploaded) == 2  # nothing pushed for the rest
 
-    # A rest day takes the last pushed workout off the watch and puts
-    # nothing in its place; with nothing on record it is a no-op.
-    assert retire_pushed_workout(conn, uid, fake_watch) is True
-    assert fake_watch.deleted == ["1001", "1002", "1003"], fake_watch.deleted
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM garmin_workout_pushes WHERE "
-        "user_id = ?", (uid,),
-    ).fetchone()["n"] == 0
-    assert retire_pushed_workout(conn, uid, fake_watch) is False
-    assert len(fake_watch.uploaded) == 3  # nothing was pushed for the rest
+    # The week ahead: every planned day of the next six is pushed once,
+    # at today's level; a second run creates nothing; the legacy
+    # single-workout row is cleared.
+    conn.execute(
+        "INSERT INTO garmin_workout_pushes (user_id, workout_id, "
+        "local_date) VALUES (?, 'legacy-1', '2026-07-12')", (uid,),
+    )
+    conn.commit()
+    week = plan_week_ahead(conn, uid, fake_watch, "2026-07-13")  # Monday
+    schedule = training.schedule_for_user(conn, uid)
+    expected = [
+        (dt.date(2026, 7, 13) + dt.timedelta(days=n)).isoformat()
+        for n in range(1, 7)
+        if schedule[(dt.date(2026, 7, 13) + dt.timedelta(days=n)).weekday()]
+        .get("session_type")
+    ]
+    assert week["created"] == expected, (week, expected)
+    assert "legacy-1" in fake_watch.deleted
+    assert plan_week_ahead(conn, uid, fake_watch, "2026-07-13")[
+        "created"] == []
+    # Days already on the watch are not re-pushed when a level moves:
+    # only that day's own morning run changes them.
+    uploads = len(fake_watch.uploaded)
+    training.set_level(conn, uid, "upper_body", 9)
+    plan_week_ahead(conn, uid, fake_watch, "2026-07-13")
+    assert len(fake_watch.uploaded) == uploads
+    # A week later, the past days are cleaned up and new ones planned.
+    later = plan_week_ahead(conn, uid, fake_watch, "2026-07-20")
+    assert all(d < "2026-07-19" for d in later["removed"]), later
+    assert "2026-07-16" not in [r["local_date"] for r in conn.execute(
+        "SELECT local_date FROM garmin_planned_workouts WHERE user_id = ?",
+        (uid,))]
+    assert later["created"], later
 
     print("garmin_api.py: all checks passed (no live Garmin call made)")

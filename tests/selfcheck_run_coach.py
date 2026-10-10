@@ -31,7 +31,8 @@ calls: dict = {}
 
 def _reset() -> None:
     calls.clear()
-    calls.update(pushed=[], retired=[], calendar=[], payloads=[], sent=[])
+    calls.update(pushed=[], retired=[], calendar=[], payloads=[], sent=[],
+                 week=[])
 
 
 def _install(wellness: dict) -> None:
@@ -49,13 +50,17 @@ def _install(wellness: dict) -> None:
         calls["calendar"].append(desc)
     )
     garmin_api.get_client = lambda username: object()
-    garmin_api.push_workout_for_session = (
-        lambda conn, uid, client, stype, level, values, day: (
-            calls["pushed"].append((stype, level, dict(values))) or "w1"
-        )
-    )
-    garmin_api.retire_pushed_workout = lambda conn, uid, client: (
-        calls["retired"].append(True) or True
+
+    def _sync(conn, uid, client, day, kind, level=0, values=None):
+        if kind is None:
+            calls["retired"].append(True)
+            return "removed"
+        calls["pushed"].append((kind, level, dict(values or {})))
+        return "created"
+
+    garmin_api.sync_planned_workout = _sync
+    garmin_api.plan_week_ahead = lambda conn, uid, client, day: (
+        calls["week"].append(day) or {"created": [], "removed": []}
     )
     # Every weekday the same treadmill slot: the check must not depend
     # on which day of the week it is run.
@@ -93,6 +98,7 @@ if __name__ == "__main__":
     stype, level, values = calls["pushed"][0]
     assert stype == "recovery" and values["incline_pct"] == 0, calls
     assert calls["retired"] == [], calls
+    assert calls["week"], "the week ahead is planned every morning"
     assert calls["calendar"][0].startswith("RECUPERATION"), calls
     session = calls["payloads"][0]["today_session"]
     assert session["type"] == "recovery", session
