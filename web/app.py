@@ -55,11 +55,35 @@ import progress
 import training
 import training_load
 from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
+from web.icons import icon, session_badge
 
 APP_DIR = Path(__file__).parent
 app = FastAPI(title="smart_coach")
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=APP_DIR / "templates")
+ACCENTS = ("teal", "blue")
+
+
+def _ui_context(request: Request) -> dict:
+    """Per-viewer look, given to every template: the accent colour picked
+    in Settings (``<html data-accent>``, see static/theme.css). Pages
+    rendered before login get the default; the login page itself reuses
+    the last accent the browser saw (base.html caches it locally).
+    """
+    accent = ACCENTS[0]
+    user_id = request.session.get("user_id") if "session" in request.scope else None
+    if user_id:
+        conn = db.connect()
+        try:
+            accent = db.get_setting(conn, user_id, "accent") or accent
+        finally:
+            conn.close()
+    return {"accent": accent if accent in ACCENTS else ACCENTS[0]}
+
+
+templates = Jinja2Templates(
+    directory=APP_DIR / "templates", context_processors=[_ui_context],
+)
+templates.env.globals.update(icon=icon, session_badge=session_badge)
 
 _PUBLIC_PREFIXES = ("/login", "/static", "/signup", "/passkey/login")
 
@@ -119,6 +143,19 @@ def current_user_id(request: Request) -> int:
 def today_str(conn: sqlite3.Connection, user_id: int) -> str:
     """Today's date in the user's configured local timezone."""
     return dt.datetime.now(metrics.local_tz(conn, user_id)).date().isoformat()
+
+
+_DAYS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+            "dimanche")
+_MONTHS_FR = ("janvier", "février", "mars", "avril", "mai", "juin",
+              "juillet", "août", "septembre", "octobre", "novembre",
+              "décembre")
+
+
+def date_label_fr(date: str) -> str:
+    """``2026-10-13`` -> ``mardi 13 octobre``."""
+    day = dt.date.fromisoformat(date)
+    return f"{_DAYS_FR[day.weekday()]} {day.day} {_MONTHS_FR[day.month - 1]}"
 
 
 def latest_coach_entry(
@@ -598,12 +635,20 @@ def home(request: Request) -> HTMLResponse:
     desk_break = desk.break_for_day(
         conn, user_id, date, tier, entry["status"] if entry else None,
     )
+    # The left column's week/month switch: both windows rendered, the
+    # segmented control only toggles which one is visible.
+    period = {
+        "week": metrics.period_stats(conn, user_id, date, 7),
+        "month": metrics.period_stats(conn, user_id, date, 30),
+    }
 
     return templates.TemplateResponse(
         request, "home.html", {
-            "date": date, "entry": entry, "values": session_values,
+            "date": date, "date_label": date_label_fr(date),
+            "entry": entry, "values": session_values,
             "off_title": off_title, "tier": tier,
             "movement": movement, "desk_break": desk_break,
+            "period": period,
             "recovery_fig": recovery_fig, "tired": tired,
             "level_reason": (
                 entry["level_reason"] if entry and "level_reason" in entry.keys()
@@ -1313,6 +1358,8 @@ async def save_settings(request: Request):
     for key in db.DEFAULT_SETTINGS:
         if key in form:
             db.set_setting(conn, user_id, key, str(form[key]).strip())
+    if form.get("accent") not in (None, *ACCENTS):
+        db.set_setting(conn, user_id, "accent", ACCENTS[0])
     # Checkbox settings are absent from form data entirely when
     # unchecked -- the generic loop above can only ever turn them on,
     # never off, so they need explicit handling.

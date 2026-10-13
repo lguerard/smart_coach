@@ -137,7 +137,14 @@ breakdown bar, and a small route-shape preview per session),
 Achievements (homegrown unlocks plus earned Garmin Connect badges,
 surfaced as achievements rather than a separate section; a full
 history view lists every one with its unlock date), and Settings
-(goals, weekly plan editor, ingestion health check).
+(goals, weekly plan editor, ingestion health check). The look is
+flat cards on a zinc (dark) or warm paper (light) background, Inter,
+icon navigation (a bottom tab bar on phones) and one accent colour,
+teal or blue, picked under Settings > Apparence (`accent` setting,
+`<html data-accent>`, tokens in `web/static/theme.css`). Today is laid
+out in three columns on a wide screen: level, quick actions and 7/30-day
+activity (`metrics.period_stats`) on the left, the session and the
+coach's message in the middle, goals and signals on the right.
 
 ## Architecture
 

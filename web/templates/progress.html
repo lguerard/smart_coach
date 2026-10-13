@@ -9,8 +9,8 @@
 {% endif %}
 
 {% if bundle.recalibration.flagged %}
-<div class="card p-4" style="border-color: var(--blue);">
-  <p class="text-sm font-medium" style="color: var(--blue);">
+<div class="card p-4" style="border-color: var(--accent-text);">
+  <p class="text-sm font-medium" style="color: var(--accent-text);">
     Rythme reel {{ bundle.recalibration.actual_weekly_kg }} kg/sem vs objectif
     {{ bundle.recalibration.target_weekly_kg }} kg/sem -- ajustement suggere :
     {{ '%+d'|format(bundle.recalibration.suggested_daily_calorie_adjustment_kcal) }} kcal/jour.

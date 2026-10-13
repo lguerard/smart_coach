@@ -67,14 +67,14 @@
       {% endif %}
       <details class="shrink-0">
         <summary class="text-xs px-2 py-1 rounded-full border cursor-pointer list-none"
-          style="border-color: var(--border); color: var(--blue);">
+          style="border-color: var(--border); color: var(--accent-text);">
           corriger
         </summary>
         <form method="post" action="/sessions/{{ s.uuid }}/label"
           class="absolute mt-2 mr-4 right-4 flex gap-2 card p-2" style="z-index: 5;">
           <input name="label" placeholder="{{ s.auto_label }}" value="{{ s.label if s.is_corrected else '' }}"
             class="rounded-lg border px-2 py-1 text-xs bg-transparent w-32" style="border-color: var(--border);">
-          <button type="submit" class="text-xs px-2 py-1 rounded-lg text-white" style="background: var(--blue);">OK</button>
+          <button type="submit" class="text-xs px-2 py-1 rounded-lg " style="background: var(--accent); color: var(--on-accent);">OK</button>
         </form>
       </details>
     </div>

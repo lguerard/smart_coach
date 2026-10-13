@@ -69,7 +69,7 @@
     <input name="analyze" type="checkbox" value="1" checked class="mt-1">
     <span>Analyser maintenant (la photo est envoyée au modèle d'IA pour l'analyse).</span>
   </label>
-  <button type="submit" class="text-sm px-4 py-2 rounded-lg text-white" style="background: var(--blue);">Enregistrer</button>
+  <button type="submit" class="text-sm px-4 py-2 rounded-lg " style="background: var(--accent); color: var(--on-accent);">Enregistrer</button>
 </form>
 
 {% for photo in photos %}
@@ -80,7 +80,7 @@
     <div class="flex gap-2">
       <form method="post" action="/body/{{ photo.id }}/analyze"
         onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Analyse...';">
-        <button class="text-xs px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--blue);">
+        <button class="text-xs px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--accent-text);">
           {{ 'Réanalyser' if a else 'Analyser' }}
         </button>
       </form>

@@ -658,6 +658,8 @@ DEFAULT_SETTINGS = {
     # persisted since the user has a single home timezone).
     "timezone": "Europe/Paris",
     "language": "fr",  # "fr" or "en" -- coaching message language
+    # Dashboard accent colour: "teal" or "blue" (web/static/theme.css).
+    "accent": "teal",
     "step_goal": "10000",
     # Daily floors and weekly intensity minutes: the other two goals the
     # movement summary judges yesterday against (150 is the WHO/Garmin

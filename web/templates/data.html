@@ -11,7 +11,7 @@
     {% for n in (30, 90, 180) %}
     <a href="/data?days={{ n }}"
       class="px-2.5 py-1 rounded-full border"
-      style="border-color: var(--border); {{ 'color: var(--blue); font-weight: 600;' if days == n else 'color: var(--muted);' }}">
+      style="border-color: var(--border); {{ 'color: var(--accent-text); font-weight: 600;' if days == n else 'color: var(--muted);' }}">
       {{ n }}j
     </a>
     {% endfor %}
