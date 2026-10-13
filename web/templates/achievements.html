@@ -6,7 +6,7 @@
   <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">Niveau</p>
   <p class="text-4xl font-bold mt-1">{{ player_level.level }}</p>
   <div class="mt-3 rounded-full overflow-hidden mx-auto" style="height: 8px; max-width: 260px; background: var(--grid);">
-    <div class="h-full rounded-full" style="width: {{ (100 * player_level.xp_into_level / player_level.xp_for_next_level) | round }}%; background: var(--blue);"></div>
+    <div class="h-full rounded-full" style="width: {{ (100 * player_level.xp_into_level / player_level.xp_for_next_level) | round }}%; background: var(--accent);"></div>
   </div>
   <p class="text-xs mt-2" style="color: var(--muted);">
     {{ player_level.xp_into_level }} / {{ player_level.xp_for_next_level }} XP
@@ -19,7 +19,7 @@
   <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">Coach Score (points de succes)</p>
   <p class="text-2xl font-bold mt-1">{{ score.unlocked_points }} <span style="color: var(--muted); font-size: 1rem;">/ {{ score.total_points }}</span></p>
   <p class="text-xs mt-1" style="color: var(--muted);">{{ score.unlocked_count }} / {{ score.total_count }} succes debloques</p>
-  <a href="/achievements/history" class="text-xs mt-2 inline-block" style="color: var(--blue);">Historique complet avec dates -&gt;</a>
+  <a href="/achievements/history" class="text-xs mt-2 inline-block" style="color: var(--accent-text);">Historique complet avec dates -&gt;</a>
 </div>
 
 <div class="grid grid-cols-2 gap-3">

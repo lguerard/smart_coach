@@ -11,6 +11,24 @@
 <form method="post" action="/settings" class="space-y-4">
 
   <div class="card p-4 space-y-3">
+    <h2 class="font-semibold text-sm">Apparence</h2>
+    <p class="text-xs" style="color: var(--muted);">
+      Couleur d'accent du tableau de bord (boutons, onglet actif,
+      niveau). Clair ou sombre : bouton en haut à droite.
+    </p>
+    <div class="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Couleur d'accent">
+      {% for value, label, fill in [("teal", "Vert sarcelle", "--teal-fill"), ("blue", "Bleu", "--brand-blue-fill")] %}
+      <label class="option btn justify-start cursor-pointer">
+        <input type="radio" name="accent" value="{{ value }}" class="sr-only"
+          {{ "checked" if (settings.accent or "teal") == value }}>
+        <span class="inline-block w-4 h-4 rounded-full shrink-0" style="background: var({{ fill }});"></span>
+        {{ label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card p-4 space-y-3">
     <h2 class="font-semibold text-sm">Objectifs</h2>
     <label class="block text-sm">
       Fuseau horaire
@@ -217,8 +235,7 @@
     {% endfor %}
   </div>
 
-  <button type="submit"
-    class="w-full rounded-xl py-3 text-sm font-medium text-white" style="background: var(--blue);">
+  <button type="submit" class="btn btn-primary w-full" style="padding: 0.75rem;">
     Enregistrer
   </button>
 </form>
@@ -265,7 +282,7 @@
     {% endfor %}
   </div>
   <button type="button" id="addPasskeyBtn"
-    class="mt-3 text-xs px-3 py-1.5 rounded-full text-white" style="background: var(--blue);">
+    class="mt-3 text-xs px-3 py-1.5 rounded-full " style="background: var(--accent); color: var(--on-accent);">
     Ajouter une passkey
   </button>
   <p id="passkeyMsg" class="text-xs mt-2 hidden"></p>
@@ -327,6 +344,14 @@
       msg.style.color = "var(--critical)";
       msg.classList.remove("hidden");
     }
+  });
+</script>
+<script>
+  // Preview the accent as soon as it is picked; saved with the form.
+  document.querySelectorAll('input[name="accent"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      document.documentElement.setAttribute('data-accent', radio.value);
+    });
   });
 </script>
 {% endblock %}

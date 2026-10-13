@@ -744,6 +744,52 @@ def garmin_daily_summary(
     return dict(row) if row else {}
 
 
+def period_stats(
+    conn: sqlite3.Connection, user_id: int, date: str, days: int,
+) -> dict:
+    """Totals over the last ``days`` days, today included -- the
+    dashboard's week/month switch.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): Today's ISO local date (last day of the window).
+        days (int): Window length, e.g. 7 or 30.
+
+    Returns:
+        dict: ``days``, ``sessions`` (recorded exercise sessions),
+        ``active_min`` (sum of their durations), ``intensity_min``
+        (vigorous counts double, as Garmin counts it), ``steps_avg``
+        (per day with data) and ``distance_km``. A total with no data
+        behind it is ``None``, never a made-up zero.
+    """
+    start = (dt.date.fromisoformat(date) - dt.timedelta(days=days - 1)).isoformat()
+    sessions = conn.execute(
+        "SELECT COUNT(*) AS n, SUM((julianday(end_utc) - "
+        "julianday(start_utc)) * 1440) AS minutes FROM exercise_sessions "
+        "WHERE user_id = ? AND local_date BETWEEN ? AND ?",
+        (user_id, start, date),
+    ).fetchone()
+    daily = conn.execute(
+        "SELECT AVG(total_steps) AS steps, SUM(total_distance_m) AS dist, "
+        "SUM(COALESCE(moderate_intensity_min, 0) + "
+        "2 * COALESCE(vigorous_intensity_min, 0)) AS intensity, "
+        "COUNT(moderate_intensity_min) + COUNT(vigorous_intensity_min) "
+        "AS intensity_days FROM garmin_daily_summary "
+        "WHERE user_id = ? AND local_date BETWEEN ? AND ?",
+        (user_id, start, date),
+    ).fetchone()
+    return {
+        "days": days,
+        "sessions": sessions["n"],
+        "active_min": round(sessions["minutes"]) if sessions["minutes"] else 0,
+        "intensity_min": daily["intensity"] if daily["intensity_days"] else None,
+        "steps_avg": round(daily["steps"]) if daily["steps"] is not None else None,
+        "distance_km": (round(daily["dist"] / 1000, 1)
+                        if daily["dist"] is not None else None),
+    }
+
+
 def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Full daily wellness dict for a date, in garmin-coach's shape.
 
@@ -1553,5 +1599,28 @@ if __name__ == "__main__":
     assert daily_wellness(mv_conn, mv, "2026-10-02")[
         "stress_avg_yesterday"
     ] == 58
+
+    # Week/month totals: the 7-day window holds 2026-09-26..10-02.
+    mv_conn.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date) VALUES ('ps1', ?, '2026-10-01T18:00:00Z', "
+        "'2026-10-01T18:40:00Z', '2026-10-01')", (mv,),
+    )
+    mv_conn.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date) VALUES ('ps2', ?, '2026-09-10T18:00:00Z', "
+        "'2026-09-10T18:30:00Z', '2026-09-10')", (mv,),
+    )
+    mv_conn.commit()
+    week_stats = period_stats(mv_conn, mv, "2026-10-02", 7)
+    assert week_stats["sessions"] == 1 and week_stats["active_min"] == 40, week_stats
+    # 10-01 (6) plus 09-26..09-30 (five days of 15); 09-25 is outside.
+    assert week_stats["intensity_min"] == 6 + 5 * 15, week_stats
+    month_stats = period_stats(mv_conn, mv, "2026-10-02", 30)
+    assert month_stats["sessions"] == 2 and month_stats["active_min"] == 70
+    assert month_stats["distance_km"] is None, month_stats  # never synced
+    empty = period_stats(mv_conn, mv, "2020-01-01", 7)
+    assert empty["steps_avg"] is None and empty["intensity_min"] is None
+    assert empty["sessions"] == 0 and empty["active_min"] == 0, empty
 
     print("metrics.py: all checks passed")

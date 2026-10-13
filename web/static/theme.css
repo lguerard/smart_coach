@@ -1,0 +1,263 @@
+/* smart_coach look: flat zinc cards in dark mode, warm paper in light
+   mode, one accent colour picked in Settings (teal or blue), and fixed
+   semantic colours for what a number means (effort orange, heart red,
+   info blue, goal green). Shared by base.html, login.html and
+   signup.html, so the three never drift apart.
+
+   Theme: dark is the bare default; light applies when the OS prefers
+   light and the viewer hasn't explicitly picked dark, or when the
+   toggle picked light -- the toggle must win over the OS both ways.
+   Accent: <html data-accent="teal|blue">, teal when absent. */
+
+:root {
+  --bg-0: #18181b; --bg-1: #1f1f23;
+  --surface-1: #27272a; --surface-1-solid: #27272a; --surface-2: #303035;
+  --text-primary: #fafafa; --text-secondary: #a1a1aa; --muted: #7c7c85;
+  --grid: rgba(255,255,255,0.07); --border: rgba(255,255,255,0.08);
+  --blue: #5aa2ea; --aqua: #5dcaa5; --yellow: #efb43f; --green: #97c459;
+  --violet: #a59bf0; --red: #ef6b6a; --magenta: #ed8ab0; --orange: #f2a33a;
+  --good: #97c459; --warning: #efb43f; --critical: #ef6b6a;
+  --chart-1: #5aa2ea; --chart-2: #5dcaa5; --chart-3: #a59bf0; --chart-4: #f2a33a;
+  --teal-fill: #5dcaa5; --teal-text: #5dcaa5; --teal-on: #052e22;
+  --brand-blue-fill: #4a90e8; --brand-blue-text: #6aa6ee; --brand-blue-on: #ffffff;
+  --shadow: none;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg-0: #f1efe8; --bg-1: #e9e6dc;
+    --surface-1: #ffffff; --surface-1-solid: #ffffff; --surface-2: #f6f5f0;
+    --text-primary: #1c1b18; --text-secondary: #5f5e5a; --muted: #888780;
+    --grid: rgba(0,0,0,0.07); --border: rgba(0,0,0,0.09);
+    --blue: #378add; --aqua: #1d9e75; --yellow: #b8730f; --green: #4f8a1c;
+    --violet: #6c5fc7; --red: #e24b4a; --magenta: #c94f82; --orange: #d97a12;
+    --good: #4f8a1c; --warning: #b8730f; --critical: #d63c3b;
+    --chart-1: #378add; --chart-2: #1d9e75; --chart-3: #6c5fc7; --chart-4: #d97a12;
+    --teal-fill: #1d9e75; --teal-text: #0f7a5a; --teal-on: #ffffff;
+    --brand-blue-fill: #2a78d6; --brand-blue-text: #2a6fc4; --brand-blue-on: #ffffff;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg-0: #f1efe8; --bg-1: #e9e6dc;
+  --surface-1: #ffffff; --surface-1-solid: #ffffff; --surface-2: #f6f5f0;
+  --text-primary: #1c1b18; --text-secondary: #5f5e5a; --muted: #888780;
+  --grid: rgba(0,0,0,0.07); --border: rgba(0,0,0,0.09);
+  --blue: #378add; --aqua: #1d9e75; --yellow: #b8730f; --green: #4f8a1c;
+  --violet: #6c5fc7; --red: #e24b4a; --magenta: #c94f82; --orange: #d97a12;
+  --good: #4f8a1c; --warning: #b8730f; --critical: #d63c3b;
+  --chart-1: #378add; --chart-2: #1d9e75; --chart-3: #6c5fc7; --chart-4: #d97a12;
+  --teal-fill: #1d9e75; --teal-text: #0f7a5a; --teal-on: #ffffff;
+  --brand-blue-fill: #2a78d6; --brand-blue-text: #2a6fc4; --brand-blue-on: #ffffff;
+  color-scheme: light;
+}
+/* Explicit dark pick: same values as the bare :root, stated so the
+   toggle still wins if that default ever changes. */
+:root[data-theme="dark"] {
+  --bg-0: #18181b; --bg-1: #1f1f23;
+  --surface-1: #27272a; --surface-1-solid: #27272a; --surface-2: #303035;
+  --text-primary: #fafafa; --text-secondary: #a1a1aa; --muted: #7c7c85;
+  --grid: rgba(255,255,255,0.07); --border: rgba(255,255,255,0.08);
+  --blue: #5aa2ea; --aqua: #5dcaa5; --yellow: #efb43f; --green: #97c459;
+  --violet: #a59bf0; --red: #ef6b6a; --magenta: #ed8ab0; --orange: #f2a33a;
+  --good: #97c459; --warning: #efb43f; --critical: #ef6b6a;
+  --chart-1: #5aa2ea; --chart-2: #5dcaa5; --chart-3: #a59bf0; --chart-4: #f2a33a;
+  --teal-fill: #5dcaa5; --teal-text: #5dcaa5; --teal-on: #052e22;
+  --brand-blue-fill: #4a90e8; --brand-blue-text: #6aa6ee; --brand-blue-on: #ffffff;
+  color-scheme: dark;
+}
+
+/* Accent: resolved from the theme's pair above, so switching theme
+   or accent never needs a fourth copy of the palette. */
+:root, :root[data-accent="teal"] {
+  --accent: var(--teal-fill); --accent-text: var(--teal-text);
+  --on-accent: var(--teal-on);
+}
+:root[data-accent="blue"] {
+  --accent: var(--brand-blue-fill); --accent-text: var(--brand-blue-text);
+  --on-accent: var(--brand-blue-on);
+}
+:root { --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+body {
+  color: var(--text-primary);
+  background-color: var(--bg-0);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+/* Icons sit in the text line (Tailwind's preflight makes svg a block). */
+.ic { display: inline-block; vertical-align: -0.16em; flex-shrink: 0; }
+::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+h1, h2, h3 { letter-spacing: -0.015em; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* Cards: flat, one hairline border, no blur, no drop shadow. */
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.hero-card {
+  border-radius: 14px; border: 1px solid var(--border);
+  background:
+    linear-gradient(135deg, var(--hero-tint, transparent), transparent 55%),
+    var(--surface-1);
+}
+.card-title {
+  font-size: 0.875rem; font-weight: 600; display: flex;
+  align-items: center; gap: 0.5rem;
+}
+.card-title .ic { color: var(--muted); }
+
+/* Small uppercase caption above a number or a section. */
+.caption {
+  font-size: 0.66rem; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600;
+}
+
+/* Metric tile: caption + icon on top, big coloured number, small unit. */
+.metric {
+  background: var(--surface-2); border-radius: 10px;
+  padding: 0.7rem 0.8rem; min-width: 0; --ring-hole: var(--surface-2);
+}
+.metric .caption { display: flex; align-items: center; gap: 0.35rem; }
+.metric .caption .ic { color: var(--metric-color, var(--muted)); }
+.metric-value {
+  font-size: 1.45rem; font-weight: 650; line-height: 1.1;
+  margin-top: 0.3rem; color: var(--metric-color, var(--text-primary));
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.metric-unit {
+  font-size: 0.72rem; font-weight: 500; color: var(--muted);
+  margin-left: 0.15rem;
+}
+
+/* Centered tile (trends page). */
+.stat-tile {
+  background: var(--surface-2); border-radius: 10px;
+  padding: 0.7rem 0.4rem; text-align: center; --ring-hole: var(--surface-2);
+}
+.stat-icon { font-size: 1.1rem; line-height: 1; }
+.stat-value {
+  font-size: clamp(1rem, 4vw, 1.3rem); font-weight: 650;
+  color: var(--text-primary); line-height: 1.15; margin-top: 0.15rem;
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; margin-top: 0.15rem;
+}
+
+/* Circular progress ring, pure CSS conic-gradient. --pct (0-100) and
+   --ring-color set inline per use. */
+.ring {
+  --size: 84px;
+  width: var(--size); height: var(--size); border-radius: 50%; flex-shrink: 0;
+  background: conic-gradient(var(--ring-color, var(--accent)) calc(var(--pct, 0) * 1%), var(--grid) 0);
+  display: flex; align-items: center; justify-content: center;
+}
+.ring-inner {
+  width: calc(var(--size) - 12px); height: calc(var(--size) - 12px);
+  border-radius: 50%; background: var(--ring-hole, var(--surface-1));
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.ring-value { font-size: 1.35rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.ring-label {
+  font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); font-weight: 600; margin-top: 0.15rem;
+}
+.ring-sm { --size: 42px; }
+.ring-sm .ring-value { font-size: 0.8rem; }
+.meter-track { height: 6px; border-radius: 999px; overflow: hidden; background: var(--grid); }
+.meter-fill { height: 100%; border-radius: 999px; }
+
+/* Session-type badge: pastel pill, icon + label, colour from --badge. */
+.badge {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.22rem 0.6rem; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 600; line-height: 1.2;
+  background: color-mix(in srgb, var(--badge, var(--accent)) 16%, transparent);
+  color: var(--badge, var(--accent));
+}
+
+/* Buttons and links. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 0.4rem; font-size: 0.8rem; font-weight: 550;
+  padding: 0.45rem 0.85rem; border-radius: 8px;
+  border: 1px solid var(--border); color: var(--text-secondary);
+  background: transparent; transition: background 0.15s, color 0.15s;
+}
+.btn:hover { background: var(--surface-2); color: var(--text-primary); }
+.btn-primary {
+  background: var(--accent); color: var(--on-accent); border-color: transparent;
+}
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text-primary)); color: var(--on-accent); }
+.btn-sm { font-size: 0.72rem; padding: 0.3rem 0.65rem; }
+.link { color: var(--accent-text); }
+.link:hover { text-decoration: underline; }
+
+/* Choice rendered as a button (radio inside, visually hidden). */
+.option:has(input:checked) {
+  border-color: var(--accent); background: var(--accent-soft);
+  color: var(--text-primary);
+}
+.option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Segmented control (week / month). */
+.seg {
+  display: inline-flex; padding: 2px; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.seg button {
+  font-size: 0.72rem; font-weight: 550; padding: 0.22rem 0.7rem;
+  border-radius: 6px; color: var(--muted);
+}
+.seg button[aria-pressed="true"] {
+  background: var(--surface-1); color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+}
+
+/* Navigation. */
+.navlink {
+  color: var(--text-secondary); transition: color 0.15s, background 0.15s;
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.38rem 0.6rem; border-radius: 8px; font-size: 0.82rem;
+  font-weight: 500;
+}
+.navlink:hover { color: var(--text-primary); background: var(--surface-2); }
+.navlink.active { color: var(--accent-text); background: var(--accent-soft); font-weight: 600; }
+.tablink {
+  color: var(--muted); display: flex; flex-direction: column;
+  align-items: center; gap: 0.2rem; font-size: 10px; font-weight: 550;
+  padding: 0.3rem 0.25rem; min-width: 3.6rem; border-radius: 10px;
+}
+.tablink.active { color: var(--accent-text); }
+.tablink.active .ic { stroke-width: 2.3; }
+
+/* Status chips. */
+.chip-green { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+.chip-yellow { background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning); }
+.chip-red { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+
+/* Form fields pick up the surfaces instead of the browser's white. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea {
+  background-color: var(--surface-2);
+}
+select option { background-color: var(--surface-1); color: var(--text-primary); }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* Body map (bodymap.py / _bodymap.html). */
+.bm-body { fill: color-mix(in srgb, var(--muted) 18%, transparent); }
+.bm-base, .bm-idle { fill: color-mix(in srgb, var(--muted) 30%, transparent); }
+.bm-ok { fill: color-mix(in srgb, var(--good) 55%, transparent); }
+.bm-warm { fill: color-mix(in srgb, var(--warning) 75%, transparent); }
+.bm-hot { fill: color-mix(in srgb, var(--critical) 80%, transparent); }
+.bm-focus { fill: color-mix(in srgb, var(--violet) 80%, transparent); }
+svg path[class^="bm-"] { stroke: var(--surface-1-solid, #fff); stroke-width: 1.5; }
+
+.htmx-indicator { opacity: 0; }
+.htmx-request.htmx-indicator, .htmx-request .htmx-indicator { opacity: 1; }
+summary.tablink::-webkit-details-marker { display: none; }

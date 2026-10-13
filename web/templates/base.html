@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-accent="{{ accent }}">
 <head>
 <meta charset="utf-8">
 <script>
@@ -11,244 +11,109 @@
       if (saved === 'light' || saved === 'dark') {
         document.documentElement.setAttribute('data-theme', saved);
       }
+      // Remembered for the login page, which has no user to ask.
+      localStorage.setItem('accent', '{{ accent }}');
     } catch (e) {}
   })();
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{% block title %}Smart Coach{% endblock %}</title>
 <link rel="manifest" href="/static/manifest.json">
-<meta name="theme-color" content="#0b0e14">
+<meta name="theme-color" content="#18181b">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Smart Coach">
 <link rel="icon" href="/static/icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/static/theme.css?v=1">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<style>
-  /* Dark-native glass theme, aurora-mesh backdrop -- inspired by the
-     gethomepage/homepage aesthetic (translucent widget cards floating
-     over a moody gradient) but fully self-contained CSS, no external
-     art asset. Light mode is a real override, not an afterthought. */
-  :root {
-    --bg-0: #0b0e14; --bg-1: #10141d;
-    --surface-1: rgba(255,255,255,0.045); --surface-1-solid: #161b26;
-    --text-primary: #f3f4f6; --text-secondary: #a8adb8; --muted: #6f7480;
-    --grid: rgba(255,255,255,0.08); --border: rgba(255,255,255,0.09);
-    --blue: #4a90e8; --aqua: #22c48f; --yellow: #eda100; --green: #22c48f;
-    --violet: #9085e9; --red: #e6675f; --magenta: #e87ba4; --orange: #eb8a4d;
-    --good: #22c48f; --warning: #fab219; --critical: #e6675f;
-    /* Chart series order (fixed, never cycled) -- validated against
-       this surface for lightness band, CVD separation and contrast
-       (dataviz six-checks). Status colors above stay reserved. */
-    --chart-1: #4a90e8; --chart-2: #159c6c;
-    --chart-3: #9085e9; --chart-4: #d06a2c;
-    --shadow: 0 12px 40px rgba(0,0,0,0.45);
-  }
-  /* Light values apply when the OS prefers light AND the viewer hasn't
-     explicitly picked dark (:not(...) guard), or when the viewer's
-     toggle explicitly picked light (the [data-theme="light"] block) --
-     the toggle must win over the OS setting in both directions. */
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) {
-      --bg-0: #f3f4f2; --bg-1: #eceee9;
-      --surface-1: rgba(255,255,255,0.72); --surface-1-solid: #fcfcfb;
-      --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
-      --grid: rgba(11,11,11,0.08); --border: rgba(11,11,11,0.08);
-      --blue: #2a78d6; --aqua: #1baf7a; --yellow: #eda100; --green: #008300;
-      --violet: #4a3aa7; --red: #e34948; --magenta: #e87ba4; --orange: #eb6834;
-      --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
-      --chart-1: #2a78d6; --chart-2: #0e8f60;
-      --chart-3: #4a3aa7; --chart-4: #c25a1f;
-      --shadow: 0 8px 24px rgba(11,11,11,0.08);
-    }
-  }
-  :root[data-theme="light"] {
-    --bg-0: #f3f4f2; --bg-1: #eceee9;
-    --surface-1: rgba(255,255,255,0.72); --surface-1-solid: #fcfcfb;
-    --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
-    --grid: rgba(11,11,11,0.08); --border: rgba(11,11,11,0.08);
-    --blue: #2a78d6; --aqua: #1baf7a; --yellow: #eda100; --green: #008300;
-    --violet: #4a3aa7; --red: #e34948; --magenta: #e87ba4; --orange: #eb6834;
-    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
-    --chart-1: #2a78d6; --chart-2: #0e8f60;
-    --chart-3: #4a3aa7; --chart-4: #c25a1f;
-    --shadow: 0 8px 24px rgba(11,11,11,0.08);
-  }
-  /* Explicit dark pick needs no override -- bare :root above is already
-     dark and the media guard already excludes it -- but stated for
-     clarity and in case the bare :root default ever changes. */
-  :root[data-theme="dark"] {
-    --bg-0: #0b0e14; --bg-1: #10141d;
-    --surface-1: rgba(255,255,255,0.045); --surface-1-solid: #161b26;
-    --text-primary: #f3f4f6; --text-secondary: #a8adb8; --muted: #6f7480;
-    --grid: rgba(255,255,255,0.08); --border: rgba(255,255,255,0.09);
-    --blue: #4a90e8; --aqua: #22c48f; --yellow: #eda100; --green: #22c48f;
-    --violet: #9085e9; --red: #e6675f; --magenta: #e87ba4; --orange: #eb8a4d;
-    --good: #22c48f; --warning: #fab219; --critical: #e6675f;
-    --chart-1: #4a90e8; --chart-2: #159c6c;
-    --chart-3: #9085e9; --chart-4: #d06a2c;
-    --shadow: 0 12px 40px rgba(0,0,0,0.45);
-  }
-  body {
-    color: var(--text-primary);
-    background-color: var(--bg-0);
-    background-image:
-      radial-gradient(60vw 60vw at 8% -10%, color-mix(in srgb, var(--blue) 22%, transparent), transparent 60%),
-      radial-gradient(55vw 55vw at 100% 0%, color-mix(in srgb, var(--violet) 16%, transparent), transparent 55%),
-      radial-gradient(70vw 70vw at 50% 110%, color-mix(in srgb, var(--aqua) 14%, transparent), transparent 60%);
-    background-attachment: fixed;
-    background-repeat: no-repeat;
-  }
-  .card {
-    background: var(--surface-1); border: 1px solid var(--border);
-    border-radius: 20px; backdrop-filter: blur(24px) saturate(140%);
-    -webkit-backdrop-filter: blur(24px) saturate(140%);
-    box-shadow: var(--shadow);
-  }
-  .stat-tile {
-    background: var(--tile-tint, var(--surface-1));
-    border: 1px solid var(--border);
-    border-radius: 16px; backdrop-filter: blur(24px) saturate(140%);
-    -webkit-backdrop-filter: blur(24px) saturate(140%);
-    padding: 0.7rem 0.4rem; text-align: center;
-  }
-  .stat-icon { font-size: 1.1rem; line-height: 1; }
-  .stat-value {
-    font-size: clamp(1rem, 4vw, 1.25rem); font-weight: 700;
-    color: var(--text-primary); line-height: 1.15; margin-top: 0.15rem;
-  }
-  .stat-label {
-    font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
-    color: var(--muted); font-weight: 600; margin-top: 0.15rem;
-  }
-  /* Circular progress ring, pure CSS conic-gradient -- no canvas/JS.
-     --pct (0-100) and --ring-color set inline per use. */
-  .ring {
-    --size: 84px;
-    width: var(--size); height: var(--size); border-radius: 50%; flex-shrink: 0;
-    background: conic-gradient(var(--ring-color, var(--blue)) calc(var(--pct, 0) * 1%), var(--grid) 0);
-    display: flex; align-items: center; justify-content: center;
-  }
-  .ring-inner {
-    width: calc(var(--size) - 13px); height: calc(var(--size) - 13px);
-    border-radius: 50%; background: var(--surface-1-solid);
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-  }
-  .ring-value { font-size: 1.35rem; font-weight: 700; line-height: 1; }
-  .ring-label {
-    font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--muted); font-weight: 600; margin-top: 0.15rem;
-  }
-  .ring-sm { --size: 42px; }
-  .ring-sm .ring-value { font-size: 0.8rem; }
-  .meter-track { height: 6px; border-radius: 999px; overflow: hidden; }
-  .meter-fill { height: 100%; border-radius: 999px; }
-  .hero-card {
-    border-radius: 24px; border: 1px solid var(--border);
-    backdrop-filter: blur(24px) saturate(140%);
-    -webkit-backdrop-filter: blur(24px) saturate(140%);
-    box-shadow: var(--shadow);
-    background:
-      linear-gradient(135deg, var(--hero-tint, transparent), transparent 60%),
-      var(--surface-1);
-  }
-  /* Body map (bodymap.py / _bodymap.html) */
-  .bm-body { fill: color-mix(in srgb, var(--muted) 18%, transparent); }
-  .bm-base, .bm-idle { fill: color-mix(in srgb, var(--muted) 30%, transparent); }
-  .bm-ok { fill: color-mix(in srgb, var(--good) 55%, transparent); }
-  .bm-warm { fill: color-mix(in srgb, var(--warning) 75%, transparent); }
-  .bm-hot { fill: color-mix(in srgb, var(--critical) 80%, transparent); }
-  .bm-focus { fill: color-mix(in srgb, var(--violet) 80%, transparent); }
-  svg path[class^="bm-"] { stroke: var(--surface-1-solid, #fff); stroke-width: 1.5; }
-  .chip-green { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
-  .chip-yellow { background: color-mix(in srgb, var(--warning) 22%, transparent); color: #f0a80a; }
-  .chip-red { background: color-mix(in srgb, var(--critical) 20%, transparent); color: var(--critical); }
-  @media (prefers-color-scheme: light) {
-    .chip-yellow { color: #8a5a00; }
-  }
-  .navlink { color: var(--text-secondary); transition: color 0.15s; }
-  .navlink:hover { color: var(--text-primary); }
-  .navlink.active { color: var(--blue); font-weight: 600; }
-  .navlink svg { width: 20px; height: 20px; }
-  ::selection { background: color-mix(in srgb, var(--blue) 35%, transparent); }
-  h1, h2, h3 { letter-spacing: -0.01em; }
-  .num { font-variant-numeric: tabular-nums; }
-</style>
 {% block head %}{% endblock %}
 </head>
-<body class="min-h-screen font-sans" style="font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;">
-  <div class="max-w-4xl lg:max-w-5xl xl:max-w-6xl mx-auto pb-24 md:pb-8">
-    <header class="sticky top-0 z-10" style="background: color-mix(in srgb, var(--bg-0) 78%, transparent); backdrop-filter: blur(16px);">
-      <div class="flex items-center justify-between px-4 py-3">
-        <span class="font-semibold text-lg flex items-center gap-2">
-          <img src="/static/icon-192.png" width="22" height="22" alt="" style="border-radius: 22%;">
-          Smart Coach
-        </span>
-        <div class="flex items-center gap-3">
-          <nav class="hidden md:flex gap-5 text-sm items-center">
-            <a href="/" class="navlink {{ 'active' if request.url.path == '/' }}">Aujourd'hui</a>
-            <a href="/progress" class="navlink {{ 'active' if request.url.path == '/progress' }}">Progres</a>
-            <a href="/trends" class="navlink {{ 'active' if request.url.path == '/trends' }}">Tendances</a>
-            <a href="/sessions" class="navlink {{ 'active' if request.url.path == '/sessions' }}">Seances</a>
-            <a href="/data" class="navlink {{ 'active' if request.url.path == '/data' }}">Donnees</a>
-            <a href="/achievements" class="navlink {{ 'active' if request.url.path == '/achievements' }}">Trophees</a>
-            <a href="/body" class="navlink {{ 'active' if request.url.path == '/body' }}">Corps 🔒</a>
-            <a href="/settings" class="navlink {{ 'active' if request.url.path == '/settings' }}">Reglages</a>
-            {% if request.session.get("username") %}
-            <form method="post" action="/logout" class="inline">
-              <button type="submit" class="text-xs px-2 py-1 rounded-full border" style="border-color: var(--border); color: var(--muted);">
-                {{ request.session.get("username") }} &middot; sortir
-              </button>
-            </form>
-            {% endif %}
-          </nav>
-          <button id="theme-toggle" type="button" aria-label="Changer de theme (clair/sombre)"
-            class="flex items-center justify-center rounded-full border shrink-0"
-            style="border-color: var(--border); color: var(--text-secondary); width: 32px; height: 32px;">
-            <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">
-              <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
-            </svg>
-            <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true" style="display:none;">
-              <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>
-            </svg>
+<body class="min-h-screen">
+  {# Width of the header and main column, read via self.container();
+     never printed here. The home page widens it for its three columns. #}
+  {% if false %}{% block container %}max-w-5xl xl:max-w-6xl{% endblock %}{% endif %}
+  {% set path = request.url.path %}
+  {% set nav = [
+    ("/", "sun", "Aujourd'hui"),
+    ("/progress", "trending-up", "Progrès"),
+    ("/trends", "activity", "Tendances"),
+    ("/sessions", "dumbbell", "Séances"),
+    ("/data", "database", "Données"),
+    ("/achievements", "trophy", "Trophées"),
+    ("/body", "lock", "Corps"),
+    ("/settings", "sliders", "Réglages"),
+  ] %}
+  <header class="sticky top-0 z-20" style="background: color-mix(in srgb, var(--bg-0) 88%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--border);">
+    <div class="{{ self.container() }} mx-auto flex items-center justify-between gap-3 px-4 h-14">
+      <a href="/" class="font-semibold flex items-center gap-2 shrink-0">
+        <img src="/static/icon-192.png" width="24" height="24" alt="" style="border-radius: 7px;">
+        <span>Smart Coach</span>
+      </a>
+      <nav class="hidden md:flex items-center gap-0.5" aria-label="Navigation">
+        {% for href, ic, label in nav %}
+        <a href="{{ href }}" class="navlink {{ 'active' if path == href }}" title="{{ label }}"
+           {{ 'aria-current="page"'|safe if path == href }}>
+          {{ icon(ic, 17) }}<span class="hidden xl:inline">{{ label }}</span>
+        </a>
+        {% endfor %}
+      </nav>
+      <div class="flex items-center gap-2 shrink-0">
+        {% if request.session.get("username") %}
+        <form method="post" action="/logout" class="hidden md:block">
+          <button type="submit" class="btn btn-sm" title="Se déconnecter">
+            {{ request.session.get("username") }} {{ icon("log-out", 14) }}
           </button>
-        </div>
+        </form>
+        {% endif %}
+        <button id="theme-toggle" type="button" aria-label="Changer de thème (clair/sombre)"
+          class="btn btn-sm" style="width: 32px; height: 32px; padding: 0;">
+          <span id="theme-icon-sun">{{ icon("sun", 16) }}</span>
+          <span id="theme-icon-moon" style="display:none;">{{ icon("moon", 16) }}</span>
+        </button>
       </div>
-    </header>
+    </div>
+  </header>
 
-    <main class="px-4 py-4 space-y-4">
-      {% block content %}{% endblock %}
-    </main>
-  </div>
+  <main class="{{ self.container() }} mx-auto px-4 pt-5 pb-28 md:pb-10 space-y-4">
+    {% block content %}{% endblock %}
+  </main>
 
-  <nav class="md:hidden fixed bottom-0 inset-x-0 flex justify-around py-2 z-10"
-       style="background: color-mix(in srgb, var(--bg-0) 82%, transparent); backdrop-filter: blur(20px); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom);">
-    {% set nav_icon_attrs = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' %}
-    <a href="/" class="navlink {{ 'active' if request.url.path == '/' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <svg {{ nav_icon_attrs|safe }}><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
-      Aujourd'hui</a>
-    <a href="/progress" class="navlink {{ 'active' if request.url.path == '/progress' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <svg {{ nav_icon_attrs|safe }}><polyline points="3 7 9 13 13 9 21 17"/><polyline points="15 17 21 17 21 11"/></svg>
-      Progres</a>
-    <a href="/trends" class="navlink {{ 'active' if request.url.path == '/trends' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <svg {{ nav_icon_attrs|safe }}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      Tendances</a>
-    <a href="/sessions" class="navlink {{ 'active' if request.url.path == '/sessions' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <svg {{ nav_icon_attrs|safe }}><path d="M4 6h16M4 12h16M4 18h10"/></svg>
-      Seances</a>
-    <a href="/data" class="navlink {{ 'active' if request.url.path == '/data' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <svg {{ nav_icon_attrs|safe }}><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
-      Donnees</a>
-    <a href="/achievements" class="navlink {{ 'active' if request.url.path == '/achievements' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <svg {{ nav_icon_attrs|safe }}><path d="M8 21h8M12 17v4M7 3h10v7a5 5 0 0 1-10 0zM7 5H4v2a3 3 0 0 0 3 3M17 5h3v2a3 3 0 0 1-3 3"/></svg>
-      Trophees</a>
-    <a href="/settings" class="navlink {{ 'active' if request.url.path == '/settings' }} text-[10px] flex flex-col items-center gap-0.5 px-1 py-1">
-      <svg {{ nav_icon_attrs|safe }}><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg>
-      Reglages</a>
+  <nav class="md:hidden fixed bottom-0 inset-x-0 z-20" aria-label="Navigation"
+       style="background: color-mix(in srgb, var(--surface-1) 94%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom);">
+    <div class="flex justify-around px-2 pt-1.5 pb-1">
+      {% for href, ic, label in nav[:4] %}
+      <a href="{{ href }}" class="tablink {{ 'active' if path == href }}">{{ icon(ic, 21) }}{{ label }}</a>
+      {% endfor %}
+      {% set more_active = path in nav[4:] | map(attribute=0) | list %}
+      <details class="relative" id="tab-more">
+        <summary class="tablink {{ 'active' if more_active }} list-none cursor-pointer">{{ icon("more", 21) }}Plus</summary>
+        <div class="card absolute right-0 bottom-full mb-2 p-1.5 w-48" style="box-shadow: 0 10px 30px rgba(0,0,0,0.25);">
+          {% for href, ic, label in nav[4:] %}
+          <a href="{{ href }}" class="navlink w-full {{ 'active' if path == href }}">{{ icon(ic, 17) }}{{ label }}</a>
+          {% endfor %}
+          {% if request.session.get("username") %}
+          <form method="post" action="/logout">
+            <button type="submit" class="navlink w-full">{{ icon("log-out", 17) }}Se déconnecter</button>
+          </form>
+          {% endif %}
+        </div>
+      </details>
+    </div>
   </nav>
 
   <script>
+    (() => {
+      // Close the mobile "Plus" menu on a tap anywhere else.
+      const more = document.getElementById('tab-more');
+      document.addEventListener('click', (e) => {
+        if (more.open && !more.contains(e.target)) more.open = false;
+      });
+    })();
     (() => {
       const root = document.documentElement;
       const btn = document.getElementById('theme-toggle');
@@ -279,7 +144,7 @@
       const v = (name) => css.getPropertyValue(name).trim();
       Chart.defaults.color = v('--text-secondary');
       Chart.defaults.borderColor = v('--grid');
-      Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+      Chart.defaults.font.family = "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif";
       Chart.defaults.font.size = 11;
       // Crosshair-style hover: nearest x, no need to hit the mark.
       Chart.defaults.interaction = { mode: 'index', intersect: false };

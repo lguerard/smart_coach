@@ -1,15 +1,24 @@
 {% extends "base.html" %}
 {% from "_bodymap.html" import body_figure %}
 {% block title %}Aujourd'hui - Smart Coach{% endblock %}
+{% block container %}max-w-7xl{% endblock %}
+
+{% macro metric(ic, label, value, unit="", color="text-primary") %}
+<div class="metric" style="--metric-color: var(--{{ color }});">
+  <p class="caption">{{ icon(ic, 13) }}<span class="truncate">{{ label }}</span></p>
+  <p class="metric-value">{% if value is none %}<span style="color: var(--muted);">–</span>{% else %}{{ value }}{% if unit %}<span class="metric-unit">{{ unit }}</span>{% endif %}{% endif %}</p>
+</div>
+{% endmacro %}
+
 {% block content %}
 
 {% if new_achievements_today %}
-<div class="card p-4" style="border-color: var(--yellow);">
+<div class="card p-4" style="border-color: color-mix(in srgb, var(--yellow) 55%, transparent);">
   {% for a in new_achievements_today %}
   <div class="flex items-center gap-3 {{ 'mt-2' if not loop.first }}">
     <span class="text-2xl">{{ a.icon }}</span>
     <div>
-      <p class="text-xs uppercase tracking-wide" style="color: var(--yellow);">Succes debloque</p>
+      <p class="caption" style="color: var(--yellow);">Succès débloqué</p>
       <p class="text-sm font-semibold">{{ a.name_fr }}</p>
       <p class="text-xs" style="color: var(--muted);">{{ a.desc_fr }}</p>
     </div>
@@ -17,31 +26,6 @@
   {% endfor %}
 </div>
 {% endif %}
-
-{% set level_pct = (100 * player_level.xp_into_level / player_level.xp_for_next_level) | round %}
-<a href="/achievements" class="hero-card p-5 flex items-center gap-4 block" style="--hero-tint: color-mix(in srgb, var(--blue) 16%, transparent);">
-  <div class="ring" style="--pct: {{ level_pct }}; --ring-color: var(--blue);">
-    <div class="ring-inner">
-      <span class="ring-value">{{ player_level.level }}</span>
-      <span class="ring-label">niveau</span>
-    </div>
-  </div>
-  <div class="flex-1 min-w-0">
-    <p class="text-sm font-semibold flex items-center gap-2">
-      <span class="text-lg">⚡</span> Niveau {{ player_level.level }}
-      <span class="text-xs font-normal ml-auto" style="color: var(--muted);">
-        {{ player_level.xp_into_level }} / {{ player_level.xp_for_next_level }} XP
-      </span>
-    </p>
-    <div class="mt-2 meter-track" style="background: color-mix(in srgb, var(--blue) 16%, var(--grid));">
-      <div class="meter-fill" style="width: {{ level_pct }}%; background: var(--blue);"></div>
-    </div>
-    <div class="flex items-center gap-4 mt-2 text-xs" style="color: var(--muted);">
-      <span>🏆 Coach Score {{ coach_score.unlocked_points }}/{{ coach_score.total_points }}</span>
-      <span>{{ coach_score.unlocked_count }}/{{ coach_score.total_count }} succes</span>
-    </div>
-  </div>
-</a>
 
 {% set steps = wellness.get("steps_today") %}
 {% set rhr = wellness.get("resting_hr") %}
@@ -52,357 +36,395 @@
 {% set battery_charged = wellness.get("body_battery_charged") %}
 {% set battery_drained = wellness.get("body_battery_drained") %}
 {% set stress_avg = wellness.get("stress_avg_level") %}
-<div class="card p-4">
-  <h2 class="text-sm font-semibold mb-3">Donnees du jour</h2>
-  <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--blue) 8%, var(--surface-1));">
-    <div class="stat-icon">👣</div>
-    <div class="stat-value">{{ steps if steps is not none else "-" }}</div>
-    <div class="stat-label">Pas</div>
-  </div>
-  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--red) 8%, var(--surface-1));">
-    <div class="stat-icon">💓</div>
-    <div class="stat-value">{{ rhr if rhr is not none else "-" }}</div>
-    <div class="stat-label">FC repos</div>
-  </div>
-  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--violet) 8%, var(--surface-1));">
-    {% if sleep_score is not none %}
-    <div class="ring ring-sm mx-auto" style="--pct: {{ sleep_score }}; --ring-color: var(--violet);">
-      <div class="ring-inner"><span class="ring-value">{{ sleep_score }}</span></div>
+
+<div class="home-grid">
+
+  {# ---------- Centre: today's session and the coach ---------- #}
+  <section class="home-main space-y-4 min-w-0">
+
+    {% if pending_feedback %}
+    <div class="card p-4" style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);">
+      <p class="text-sm font-semibold">
+        Comment était la séance
+        {{ session_label_fr_map.get(pending_feedback.session_type, pending_feedback.session_type) | lower }}
+        du {{ pending_feedback.local_date[8:10] }}/{{ pending_feedback.local_date[5:7] }} ?
+      </p>
+      <p class="text-xs mt-1" style="color: var(--muted);">
+        Ta réponse pèse sur le niveau des prochaines séances de ce type —
+        c'est le seul signal qui vienne de toi et pas d'un capteur.
+      </p>
+      <form method="post" action="/feedback" class="grid grid-cols-3 gap-2 mt-3">
+        <input type="hidden" name="date" value="{{ pending_feedback.local_date }}">
+        <button name="rating" value="easy" class="btn">Trop facile</button>
+        <button name="rating" value="right" class="btn btn-primary">Au bon niveau</button>
+        <button name="rating" value="hard" class="btn">Trop dure</button>
+      </form>
+    </div>
+    {% endif %}
+
+    {% if not entry %}
+    <div class="card p-6 text-center">
+      <p class="caption mb-2">{{ date_label }}</p>
+      <p class="text-sm" style="color: var(--text-secondary);">
+        Le coach n'a pas encore tourné aujourd'hui. Reviens après le
+        passage du cron du matin.
+      </p>
     </div>
     {% else %}
-    <div class="stat-icon">😴</div>
-    <div class="stat-value">-</div>
-    {% endif %}
-    <div class="stat-label mt-1">Sommeil</div>
-  </div>
-  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--aqua) 8%, var(--surface-1));">
-    <div class="stat-icon">💧</div>
-    <div class="stat-value">{{ (hydration / 1000) | round(1) ~ "L" if hydration is not none else "-" }}</div>
-    <div class="stat-label">Hydratation</div>
-  </div>
-  {% if readiness is not none or hrv is not none or battery_charged is not none or stress_avg is not none %}
-  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--green) 8%, var(--surface-1));">
-    <div class="stat-icon">🔋</div>
-    <div class="stat-value">{{ readiness if readiness is not none else "-" }}</div>
-    <div class="stat-label">Recuperation</div>
-  </div>
-  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--aqua) 8%, var(--surface-1));">
-    <div class="stat-icon">🫀</div>
-    <div class="stat-value">{{ (hrv | round | int) if hrv is not none else "-" }}</div>
-    <div class="stat-label">VFC (ms)</div>
-  </div>
-  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--yellow) 8%, var(--surface-1));">
-    <div class="stat-icon">⚡</div>
-    <div class="stat-value">
-      {% if battery_charged is not none %}+{{ battery_charged }}/-{{ battery_drained or 0 }}{% else %}-{% endif %}
-    </div>
-    <div class="stat-label">Batterie corps</div>
-  </div>
-  <div class="stat-tile" style="--tile-tint: color-mix(in srgb, var(--orange) 8%, var(--surface-1));">
-    {% if stress_avg is not none %}
-    <div class="ring ring-sm mx-auto" style="--pct: {{ stress_avg }}; --ring-color: var(--orange);">
-      <div class="ring-inner"><span class="ring-value">{{ stress_avg }}</span></div>
-    </div>
-    {% else %}
-    <div class="stat-icon">🧠</div>
-    <div class="stat-value">-</div>
-    {% endif %}
-    <div class="stat-label mt-1">Stress</div>
-  </div>
-  {% endif %}
-  </div>
-</div>
 
-{% if pending_feedback %}
-<div class="card p-4" style="border-color: var(--blue);">
-  <p class="text-sm font-semibold">
-    Comment etait la seance
-    {{ session_label_fr_map.get(pending_feedback.session_type, pending_feedback.session_type) | lower }}
-    du {{ pending_feedback.local_date[8:10] }}/{{ pending_feedback.local_date[5:7] }} ?
-  </p>
-  <p class="text-xs mt-1" style="color: var(--muted);">
-    Ta reponse pese sur le niveau des prochaines seances de ce type —
-    c'est le seul signal qui vienne de toi et pas d'un capteur.
-  </p>
-  <form method="post" action="/feedback" class="flex gap-2 mt-3">
-    <input type="hidden" name="date" value="{{ pending_feedback.local_date }}">
-    <button name="rating" value="easy" class="flex-1 text-xs px-3 py-2 rounded-lg border"
-      style="border-color: var(--border); color: var(--text-secondary);">Trop facile</button>
-    <button name="rating" value="right" class="flex-1 text-xs px-3 py-2 rounded-lg text-white"
-      style="background: var(--blue);">Au bon niveau</button>
-    <button name="rating" value="hard" class="flex-1 text-xs px-3 py-2 rounded-lg border"
-      style="border-color: var(--border); color: var(--text-secondary);">Trop dure</button>
-  </form>
-</div>
-{% endif %}
-
-{% if status_signals or target_rows %}
-<div class="grid md:grid-cols-2 gap-4">
-  {% if status_signals %}
-  <div class="card p-4">
-    <h2 class="text-sm font-semibold mb-2">Signaux du jour</h2>
-    {% for s in status_signals %}
-    <div class="flex items-center justify-between text-xs {{ 'mt-2' if not loop.first }}">
-      <span class="flex items-center gap-2">
-        <span style="color: var(--{{ 'green' if s.vote == 'green' else 'yellow' if s.vote == 'yellow' else 'red' }});">●</span>
-        {{ s.label }}
-      </span>
-      <span style="color: var(--muted);">{{ s.detail }}</span>
-    </div>
-    {% endfor %}
-    <p class="text-xs mt-3" style="color: var(--muted);">
-      Le statut du jour est vert seulement si tous ces signaux le sont ;
-      un seul rouge suffit a le passer en rouge.
-      {% if status_signals | length < 4 %}
-      <br>Calcule sur {{ status_signals | length }} signal{{ "s" if status_signals | length > 1 }}
-      seulement — les autres n'ont pas de donnee aujourd'hui, le verdict
-      est donc moins sur qu'a l'accoutumee.
-      {% endif %}
-    </p>
-  </div>
-  {% endif %}
-
-  {% if target_rows %}
-  <div class="card p-4">
-    <h2 class="text-sm font-semibold mb-2">Objectifs du jour</h2>
-    {% for row in target_rows %}
-    {% set pct = (100 * row.actual / row.target) | round %}
-    <div class="{{ 'mt-3' if not loop.first }}">
-      <div class="flex items-center justify-between text-xs" style="color: var(--text-secondary);">
-        <span>{{ row.label }}</span>
-        <span>{{ row.actual | round | int }} / {{ row.target }} {{ row.unit }}</span>
-      </div>
-      {% set fill_color = 'var(--green)' if pct >= 100 else 'var(--blue)' %}
-      <div class="mt-1 meter-track" style="background: color-mix(in srgb, {{ fill_color }} 16%, var(--grid));">
-        <div class="meter-fill" style="width: {{ [pct, 100] | min }}%; background: {{ fill_color }};"></div>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-</div>
-{% endif %}
-
-{% if not entry %}
-<div class="card p-5 text-center">
-  <p class="text-sm" style="color: var(--muted);">
-    Le coach n'a pas encore tourne aujourd'hui ({{ date }}). Revenez apres
-    le passage du cron du matin.
-  </p>
-</div>
-{% else %}
-
-{% set status_var = 'good' if entry.status == 'green' else 'warning' if entry.status == 'yellow' else 'critical' %}
-<div class="hero-card p-5" style="--hero-tint: color-mix(in srgb, var(--{{ status_var }}) 14%, transparent);">
-  <div class="flex items-center justify-between mb-3">
-    <p class="text-xs uppercase tracking-wide" style="color: var(--muted);">{{ date }}</p>
-    {% if entry.status %}
-    <span class="chip-{{ entry.status }} text-xs font-medium px-3 py-1.5 rounded-full">
-      {{ status_label_fr[entry.status] }}
-    </span>
-    {% endif %}
-  </div>
-
-  <div class="flex items-center gap-4">
-    {% if readiness is not none %}
-    <div class="ring" style="--pct: {{ readiness }}; --ring-color: var(--{{ status_var }});">
-      <div class="ring-inner">
-        <span class="ring-value">{{ readiness }}</span>
-        <span class="ring-label">forme</span>
-      </div>
-    </div>
-    {% endif %}
-    <div class="flex-1 min-w-0">
-      <h1 class="text-lg font-semibold flex items-center gap-2 flex-wrap">
-        {% if tier == 'rest' %}Repos{% elif tier == 'recovery' %}Marche de recuperation{% else %}{{ session_label_fr.get(entry.session_type, off_title) }}{% endif %}
-        {% if in_deload and tier == 'train' %}
-        <span class="text-xs font-medium px-2 py-0.5 rounded-full" style="background: color-mix(in srgb, var(--violet) 20%, transparent); color: var(--violet);">
-          🛡 deload
+    {% set status_var = 'good' if entry.status == 'green' else 'warning' if entry.status == 'yellow' else 'critical' %}
+    {% set kind = 'rest' if tier == 'rest' else 'recovery' if tier == 'recovery' else entry.session_type %}
+    {% set title = 'Repos' if tier == 'rest' else 'Marche de récupération' if tier == 'recovery' else session_label_fr.get(entry.session_type, off_title) %}
+    <div class="hero-card p-5" style="--hero-tint: color-mix(in srgb, var(--{{ status_var }}) 10%, transparent);">
+      <div class="flex items-center justify-between gap-2 mb-3">
+        <p class="caption">{{ date_label }}</p>
+        {% if entry.status %}
+        <span class="chip-{{ entry.status }} text-xs font-semibold px-2.5 py-1 rounded-full">
+          {{ status_label_fr[entry.status] }}
         </span>
         {% endif %}
-      </h1>
-      {% if tier != 'train' and entry.session_type %}
-      <p class="text-sm mt-1" style="color: var(--text-secondary);">
-        a la place de {{ off_title }}
+      </div>
+
+      <div class="flex items-center gap-4">
+        {% if readiness is not none %}
+        <div class="ring" style="--pct: {{ readiness }}; --ring-color: var(--{{ status_var }});">
+          <div class="ring-inner">
+            <span class="ring-value">{{ readiness }}</span>
+            <span class="ring-label">forme</span>
+          </div>
+        </div>
+        {% endif %}
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-1.5">
+            {{ session_badge(kind, 'Ce soir' if tier == 'train' else "Aujourd'hui") }}
+            {% if in_deload and tier == 'train' %}
+            <span class="badge" style="--badge: var(--violet);">{{ icon('shield', 14) }}deload</span>
+            {% endif %}
+          </div>
+          <h1 class="text-xl font-semibold mt-1.5">{{ title }}</h1>
+          {% if tier != 'train' and entry.session_type %}
+          <p class="text-sm" style="color: var(--text-secondary);">à la place de {{ off_title }}</p>
+          {% endif %}
+          {% if entry.level is not none and tier == 'train' %}
+          <form method="post" action="/today/level" class="flex items-center gap-1.5 text-sm mt-2" style="color: var(--text-secondary);">
+            Niveau
+            <input name="level" type="number" min="0" max="10" value="{{ entry.level }}"
+              class="w-14 rounded-lg border px-2 py-1 text-sm text-right font-semibold"
+              style="border-color: var(--border); color: var(--text-primary);">
+            /10
+            <button type="submit" class="btn btn-primary btn-sm ml-1">OK</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if level_reason and tier == 'train' %}
+      <p class="text-xs mt-3" style="color: var(--muted);"><span class="caption">Pourquoi</span> · {{ level_reason }}</p>
+      {% endif %}
+      {% if description %}
+      <p class="text-sm mt-3 p-3 rounded-lg" style="background: var(--surface-2); color: var(--text-secondary);">
+        {% if tier == 'train' %}{{ description.split(': ', 1)[1].split(' (statut')[0] }}{% else %}{{ description }}{% endif %}
       </p>
       {% endif %}
-      {% if entry.level is not none and tier == 'train' %}
-      <form method="post" action="/today/level" class="flex items-center gap-1 text-sm mt-1" style="color: var(--text-secondary);">
-        Niveau
-        <input name="level" type="number" min="0" max="10" value="{{ entry.level }}"
-          class="w-14 rounded-lg border px-2 py-1 text-sm bg-transparent text-right font-semibold"
-          style="border-color: var(--border); color: var(--text-primary);">
-        /10
-        <button type="submit" class="text-xs px-2 py-1 rounded-lg text-white ml-1" style="background: var(--blue);">OK</button>
-      </form>
+      {% if cal_note %}
+      <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
       {% endif %}
-      {% if level_reason and tier == 'train' %}
-      <p class="text-xs mt-1" style="color: var(--muted);">Pourquoi : {{ level_reason }}</p>
+      {% if tier == 'train' and values and values.variants %}
+      <details class="mt-3 text-sm">
+        <summary class="cursor-pointer text-xs font-medium link">Les mouvements de ce soir</summary>
+        <ul class="mt-2 divide-y" style="border-color: var(--border);">
+          {% for slot, v in values.variants.items() %}
+          <li class="py-2" style="border-color: var(--border);">
+            <div class="flex items-baseline justify-between gap-3">
+              <span class="font-medium">{{ v.name }}</span>
+              <span class="num text-sm font-semibold shrink-0" style="color: var(--accent-text);">{{ values[slot] }}{{ ' s' if slot.endswith('_sec') }}</span>
+            </div>
+            <p class="text-xs" style="color: var(--text-secondary);">{{ v.cue }}</p>
+            {% if v.range or v.next %}
+            <p class="text-xs" style="color: var(--muted);">{% if v.range %}plage {{ v.range[0] }}-{{ v.range[1] }}{% endif %}{% if v.range and v.next %} · {% endif %}{% if v.next %}ensuite : {{ v.next }}{% endif %}</p>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
       {% endif %}
     </div>
-  </div>
 
-  {% if description %}
-  <p class="text-sm mt-3 p-3 rounded-xl" style="background: color-mix(in srgb, var(--surface-1-solid) 60%, transparent); color: var(--text-secondary);">
-    {% if tier == 'train' %}{{ description.split(': ', 1)[1].split(' (statut')[0] }}{% else %}{{ description }}{% endif %}
-  </p>
-  {% endif %}
-  <form method="post" action="/sick" class="flex items-center gap-2 flex-wrap text-xs mt-3" style="color: var(--muted);">
-    {% if sick_today %}
-    <span>Malade jusqu'au {{ sick_until }}.</span>
-    <button name="days" value="0" class="px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--blue);">Je vais mieux</button>
-    {% else %}
-    <span>Malade ?</span>
-    <button name="days" value="1" class="px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--blue);">Aujourd'hui</button>
-    <button name="days" value="3" class="px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--blue);">3 jours</button>
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="card-title">{{ icon('message', 16) }} Message du coach</h2>
+        <button
+          hx-post="/regenerate" hx-target="#coach-message" hx-swap="outerHTML"
+          hx-indicator="#regen-spinner" class="btn btn-sm" title="Réécrire le message">
+          {{ icon('refresh', 14) }}<span class="hidden sm:inline">Réécrire</span>
+        </button>
+      </div>
+      {% include "_message.html" %}
+      <p id="regen-spinner" class="htmx-indicator text-xs mt-2" style="color: var(--muted);">
+        Génération en cours...
+      </p>
+    </div>
     {% endif %}
-    <span>(pris en compte des demain matin)</span>
-  </form>
-  {% if cal_note %}
-  <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
-  {% endif %}
-  {% if tier == 'train' and values and values.variants %}
-  <details class="mt-3 text-sm">
-    <summary class="cursor-pointer text-xs" style="color: var(--blue);">Les mouvements de ce soir</summary>
-    <ul class="mt-2 space-y-2">
-      {% for slot, v in values.variants.items() %}
-      <li>
-        <span class="font-medium">{{ v.name }}</span>
-        <span class="text-xs" style="color: var(--muted);">{{ values[slot] }}{{ 's' if slot.endswith('_sec') }}{% if v.range %} · plage {{ v.range[0] }}-{{ v.range[1] }}{% endif %}</span><br>
-        <span class="text-xs" style="color: var(--text-secondary);">{{ v.cue }}</span>
-        {% if v.next %}<br><span class="text-xs" style="color: var(--muted);">Ensuite : {{ v.next }}</span>{% endif %}
-      </li>
+
+    <div class="card p-4">
+      <h2 class="card-title mb-3">{{ icon('activity', 16) }} Données du jour</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {{ metric('footprints', 'Pas', steps, '', 'orange') }}
+        {{ metric('heart-pulse', 'FC repos', rhr, 'bpm', 'red') }}
+        {{ metric('moon', 'Sommeil', sleep_score, '/100', 'violet') }}
+        {{ metric('droplet', 'Hydratation', (hydration / 1000) | round(1) if hydration is not none else none, 'L', 'blue') }}
+        {% if readiness is not none or hrv is not none or battery_charged is not none or stress_avg is not none %}
+        {{ metric('zap', 'Récupération', readiness, '/100', 'green') }}
+        {{ metric('activity', 'VFC', (hrv | round | int) if hrv is not none else none, 'ms', 'magenta') }}
+        {{ metric('battery', 'Batterie', ('+' ~ battery_charged ~ ' / −' ~ (battery_drained or 0)) if battery_charged is not none else none, '', 'aqua') }}
+        {{ metric('gauge', 'Stress', stress_avg, '/100', 'yellow') }}
+        {% endif %}
+      </div>
+    </div>
+
+    {% if recovery_fig %}
+    <div class="card p-5">
+      <h2 class="card-title mb-2">{{ icon('flame', 16) }} Récupération musculaire</h2>
+      {{ body_figure(recovery_fig) }}
+      <div class="flex flex-wrap justify-center gap-3 text-xs mt-2" style="color: var(--muted);">
+        <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-hot"/></svg> fatigué</span>
+        <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-warm"/></svg> en récupération</span>
+        <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-ok"/></svg> prêt</span>
+        <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-idle"/></svg> pas travaillé cette semaine</span>
+      </div>
+      {% if tired %}
+      <ul class="text-xs mt-3 space-y-1" style="color: var(--text-secondary);">
+        {% for t in tired[:5] %}
+        <li>{{ t.label }} : {{ 'fatigué' if t.state == 'fatigued' else 'en récupération' }}{% if t.cause %} ({{ t.cause }}){% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endif %}
+  </section>
+
+  {# ---------- Left: level, quick actions, week / month ---------- #}
+  <aside class="home-side space-y-4 min-w-0">
+    {% set level_pct = (100 * player_level.xp_into_level / player_level.xp_for_next_level) | round %}
+    <a href="/achievements" class="card p-4 flex items-center gap-3 block">
+      <div class="ring" style="--size: 64px; --pct: {{ level_pct }}; --ring-color: var(--accent);">
+        <div class="ring-inner">
+          <span class="ring-value" style="font-size: 1.15rem;">{{ player_level.level }}</span>
+          <span class="ring-label">niveau</span>
+        </div>
+      </div>
+      <div class="flex-1 min-w-0">
+        <p class="caption">Progression</p>
+        <p class="text-sm font-semibold num mt-0.5">{{ player_level.xp_into_level }} / {{ player_level.xp_for_next_level }} <span class="metric-unit">XP</span></p>
+        <div class="mt-1.5 meter-track"><div class="meter-fill" style="width: {{ level_pct }}%; background: var(--accent);"></div></div>
+        <p class="text-xs mt-1.5 truncate" style="color: var(--muted);">
+          {{ icon('trophy', 12) }} {{ coach_score.unlocked_points }}/{{ coach_score.total_points }} pts · {{ coach_score.unlocked_count }}/{{ coach_score.total_count }} succès
+        </p>
+      </div>
+    </a>
+
+    <div class="card p-4">
+      <p class="caption mb-2.5">Actions rapides</p>
+      <div class="grid gap-2">
+        <a href="/sessions" class="btn justify-start">{{ icon('dumbbell', 15) }} Mes séances</a>
+        <a href="/body" class="btn justify-start">{{ icon('lock', 15) }} Corps</a>
+      </div>
+      <form method="post" action="/sick" class="mt-3 pt-3" style="border-top: 1px solid var(--border);">
+        {% if sick_today %}
+        <p class="text-xs mb-2" style="color: var(--text-secondary);">{{ icon('thermometer', 13) }} Malade jusqu'au {{ sick_until }}.</p>
+        <button name="days" value="0" class="btn btn-sm w-full">{{ icon('check', 13) }} Je vais mieux</button>
+        {% else %}
+        <p class="text-xs mb-2" style="color: var(--text-secondary);">{{ icon('thermometer', 13) }} Malade ?</p>
+        <div class="grid grid-cols-2 gap-2">
+          <button name="days" value="1" class="btn btn-sm">Aujourd'hui</button>
+          <button name="days" value="3" class="btn btn-sm">3 jours</button>
+        </div>
+        {% endif %}
+        <p class="text-[11px] mt-1.5" style="color: var(--muted);">Pris en compte dès demain matin.</p>
+      </form>
+    </div>
+
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="card-title">{{ icon('calendar', 16) }} Activité</h2>
+        <div class="seg" role="group" aria-label="Période">
+          <button type="button" data-period="week" aria-pressed="true">7 j</button>
+          <button type="button" data-period="month" aria-pressed="false">30 j</button>
+        </div>
+      </div>
+      {% for key, st in period.items() %}
+      {# [hidden] on a wrapper: Tailwind's .grid would override it on the grid itself. #}
+      <div data-period-panel="{{ key }}" {{ 'hidden' if key != 'week' }}><div class="grid grid-cols-2 gap-2">
+        {{ metric('dumbbell', 'Séances', st.sessions, '', 'accent') }}
+        {{ metric('timer', 'Durée', st.active_min, 'min', 'orange') }}
+        {{ metric('flame', 'Intensité', st.intensity_min, 'min', 'red') }}
+        {{ metric('footprints', 'Pas / j', ('{:,}'.format(st.steps_avg).replace(',', ' ')) if st.steps_avg is not none else none, '', 'orange') }}
+        <div class="col-span-2">{{ metric('map-pin', 'Distance', st.distance_km, 'km', 'blue') }}</div>
+      </div></div>
       {% endfor %}
-    </ul>
-  </details>
-  {% endif %}
-</div>
+    </div>
 
-{% if recovery_fig %}
-<div class="card p-5">
-  <h2 class="font-semibold mb-2 flex items-center gap-2">
-    <span style="color: var(--orange);">●</span> Récupération musculaire
-  </h2>
-  {{ body_figure(recovery_fig) }}
-  <div class="flex flex-wrap justify-center gap-3 text-xs mt-2" style="color: var(--muted);">
-    <span><svg width="10" height="10"><rect width="10" height="10" class="bm-hot"/></svg> fatigué</span>
-    <span><svg width="10" height="10"><rect width="10" height="10" class="bm-warm"/></svg> en récupération</span>
-    <span><svg width="10" height="10"><rect width="10" height="10" class="bm-ok"/></svg> prêt</span>
-    <span><svg width="10" height="10"><rect width="10" height="10" class="bm-idle"/></svg> pas travaillé cette semaine</span>
-  </div>
-  {% if tired %}
-  <ul class="text-xs mt-3 space-y-1" style="color: var(--text-secondary);">
-    {% for t in tired[:5] %}
-    <li>{{ t.label }} : {{ 'fatigué' if t.state == 'fatigued' else 'en récupération' }}{% if t.cause %} ({{ t.cause }}){% endif %}</li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-</div>
-{% endif %}
+    <div class="px-1 space-y-1 text-xs">
+      {% for src in sync_sources %}
+      <p class="flex justify-between gap-2" style="color: var({{ '--yellow' if src.stale else '--muted' }});">
+        <span>{% if src.stale %}⚠ {% endif %}{{ src.label }}</span>
+        <span class="num">{{ src.when if src.when else "jamais" }}</span>
+      </p>
+      {% endfor %}
+      {% if sync_sources | selectattr('stale') | list %}
+      <p style="color: var(--yellow);">
+        Une source n'a pas été mise à jour depuis plus de 30 h — les
+        chiffres peuvent dater.
+      </p>
+      {% endif %}
+    </div>
+  </aside>
 
-{% if movement.flags or movement.steps or movement.stress_avg is defined %}
-<div class="card p-5">
-  <h2 class="font-semibold mb-3 flex items-center gap-2">
-    <span style="color: var(--green);">●</span> Hier
-  </h2>
-  <div class="flex flex-wrap gap-2 text-xs">
-    {% if movement.steps %}
-    <span class="chip-{{ 'green' if movement.steps.verdict == 'reached' else 'yellow' if movement.steps.verdict == 'close' else 'red' }} px-3 py-1.5 rounded-full">
-      {{ movement.steps.value }} pas ({{ movement.steps.pct }}%)
-    </span>
+  {# ---------- Right: goals and signals ---------- #}
+  <aside class="home-goals space-y-4 min-w-0">
+    {% if target_rows %}
+    <div class="card p-4">
+      <h2 class="card-title mb-3">{{ icon('target', 16) }} Objectifs du jour</h2>
+      {% for row in target_rows %}
+      {% set pct = (100 * row.actual / row.target) | round %}
+      {% set fill = 'var(--green)' if pct >= 100 else 'var(--accent)' %}
+      <div class="{{ 'mt-3' if not loop.first }}">
+        <div class="flex items-baseline justify-between text-xs">
+          <span style="color: var(--text-secondary);">{{ row.label }}</span>
+          <span class="num"><span class="font-semibold">{{ row.actual | round | int }}</span><span style="color: var(--muted);"> / {{ row.target }} {{ row.unit }}</span></span>
+        </div>
+        <div class="mt-1 meter-track"><div class="meter-fill" style="width: {{ [pct, 100] | min }}%; background: {{ fill }};"></div></div>
+      </div>
+      {% endfor %}
+    </div>
     {% endif %}
-    {% if movement.floors %}
-    <span class="chip-{{ 'green' if movement.floors.verdict == 'reached' else 'yellow' if movement.floors.verdict == 'close' else 'red' }} px-3 py-1.5 rounded-full">
-      {{ movement.floors.value|round|int }} etages / {{ movement.floors.goal }}
-    </span>
-    {% endif %}
-    {% if movement.intensity_week and movement.intensity_week.verdict != 'too_early' %}
-    <span class="chip-{{ 'green' if movement.intensity_week.verdict == 'reached' else 'yellow' if movement.intensity_week.verdict == 'close' else 'red' }} px-3 py-1.5 rounded-full">
-      {{ movement.intensity_week.value }} min d'intensite sur 7 j / {{ movement.intensity_week.goal }}
-    </span>
-    {% endif %}
-    {% if movement.sedentary_hours is defined %}
-    <span class="chip-{{ 'red' if 'sedentary_high' in movement.flags else 'green' }} px-3 py-1.5 rounded-full">
-      {{ movement.sedentary_hours }} h assis
-    </span>
-    {% endif %}
-    {% if movement.stress_avg is defined %}
-    <span class="chip-{{ 'yellow' if 'stress_high' in movement.flags else 'green' }} px-3 py-1.5 rounded-full">
-      stress {{ movement.stress_avg }}
-    </span>
-    {% endif %}
-    {% if movement.battery_lowest is defined %}
-    <span class="chip-{{ 'red' if 'battery_drained' in movement.flags else 'green' }} px-3 py-1.5 rounded-full">
-      batterie mini {{ movement.battery_lowest }}
-    </span>
-    {% endif %}
-  </div>
-</div>
-{% endif %}
 
-{% if desk_break and desk_break['items'] %}
-<div class="card p-5">
-  <h2 class="font-semibold mb-1 flex items-center gap-2">
-    <span style="color: var(--violet);">●</span> Pause bureau
-    <span class="text-xs font-normal" style="color: var(--muted);">~{{ desk_break.total_min }} min, silencieux</span>
-  </h2>
-  {% if desk_break.gentle_only %}
-  <p class="text-xs mb-2" style="color: var(--muted);">Journee douce : mobilite et respiration seulement.</p>
-  {% endif %}
-  <ul class="space-y-2 text-sm">
-    {% for item in desk_break['items'] %}
-    <li>
-      <span class="font-medium">{{ item.name }}</span>
-      <span class="text-xs" style="color: var(--muted);">({{ 'assis' if item.posture == 'seated' else 'debout' }}, {{ item.seconds }} s)</span><br>
-      <span style="color: var(--text-secondary);">{{ item.how }}</span>
-      {% if item.when %}<br><span class="text-xs" style="color: var(--muted);">A faire : {{ item.when }}</span>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% for note in desk_break.notes %}
-  <p class="text-xs mt-2" style="color: var(--text-secondary);">{{ note }}</p>
-  {% endfor %}
-</div>
-{% endif %}
+    {% if status_signals %}
+    <div class="card p-4">
+      <h2 class="card-title mb-2">{{ icon('gauge', 16) }} Signaux du jour</h2>
+      {% for s in status_signals %}
+      <div class="flex items-center justify-between gap-2 text-xs {{ 'mt-2' if not loop.first }}">
+        <span class="flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full" style="background: var(--{{ 'good' if s.vote == 'green' else 'warning' if s.vote == 'yellow' else 'critical' }});"></span>
+          {{ s.label }}
+        </span>
+        <span class="text-right" style="color: var(--muted);">{{ s.detail }}</span>
+      </div>
+      {% endfor %}
+      <p class="text-xs mt-3" style="color: var(--muted);">
+        Vert seulement si tous ces signaux le sont ; un seul rouge suffit
+        à passer la journée en rouge.
+        {% if status_signals | length < 4 %}
+        Calculé sur {{ status_signals | length }} signal{{ "s" if status_signals | length > 1 }}
+        seulement — les autres n'ont pas de donnée aujourd'hui.
+        {% endif %}
+      </p>
+    </div>
+    {% endif %}
 
-<div class="card p-5">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="font-semibold flex items-center gap-2">
-      <span style="color: var(--blue);">●</span> Coach
-    </h2>
-    <button
-      hx-post="/regenerate" hx-target="#coach-message" hx-swap="outerHTML"
-      hx-indicator="#regen-spinner"
-      class="text-xs font-medium px-3 py-1.5 rounded-full border"
-      style="border-color: var(--border); color: var(--blue);">
-      ↻
-    </button>
-  </div>
-  {% include "_message.html" %}
-  <p id="regen-spinner" class="htmx-indicator text-xs mt-2" style="color: var(--muted);">
-    Generation en cours...
-  </p>
-</div>
+    {% if movement.flags or movement.steps or movement.stress_avg is defined %}
+    <div class="card p-4">
+      <h2 class="card-title mb-3">{{ icon('footprints', 16) }} Hier</h2>
+      <div class="flex flex-wrap gap-1.5 text-xs">
+        {% if movement.steps %}
+        <span class="chip-{{ 'green' if movement.steps.verdict == 'reached' else 'yellow' if movement.steps.verdict == 'close' else 'red' }} px-2.5 py-1 rounded-full">
+          {{ movement.steps.value }} pas ({{ movement.steps.pct }}%)
+        </span>
+        {% endif %}
+        {% if movement.floors %}
+        <span class="chip-{{ 'green' if movement.floors.verdict == 'reached' else 'yellow' if movement.floors.verdict == 'close' else 'red' }} px-2.5 py-1 rounded-full">
+          {{ movement.floors.value|round|int }} étages / {{ movement.floors.goal }}
+        </span>
+        {% endif %}
+        {% if movement.intensity_week and movement.intensity_week.verdict != 'too_early' %}
+        <span class="chip-{{ 'green' if movement.intensity_week.verdict == 'reached' else 'yellow' if movement.intensity_week.verdict == 'close' else 'red' }} px-2.5 py-1 rounded-full">
+          {{ movement.intensity_week.value }} min d'intensité sur 7 j / {{ movement.intensity_week.goal }}
+        </span>
+        {% endif %}
+        {% if movement.sedentary_hours is defined %}
+        <span class="chip-{{ 'red' if 'sedentary_high' in movement.flags else 'green' }} px-2.5 py-1 rounded-full">
+          {{ movement.sedentary_hours }} h assis
+        </span>
+        {% endif %}
+        {% if movement.stress_avg is defined %}
+        <span class="chip-{{ 'yellow' if 'stress_high' in movement.flags else 'green' }} px-2.5 py-1 rounded-full">
+          stress {{ movement.stress_avg }}
+        </span>
+        {% endif %}
+        {% if movement.battery_lowest is defined %}
+        <span class="chip-{{ 'red' if 'battery_drained' in movement.flags else 'green' }} px-2.5 py-1 rounded-full">
+          batterie mini {{ movement.battery_lowest }}
+        </span>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
 
-<div class="flex items-center justify-center gap-4 text-xs">
-  {% for src in sync_sources %}
-  <span style="color: var({{ '--yellow' if src.stale else '--muted' }});">
-    {% if src.stale %}⚠ {% endif %}{{ src.label }} :
-    {{ src.when if src.when else "jamais" }}
-  </span>
-  {% endfor %}
+    {% if desk_break and desk_break['items'] %}
+    <div class="card p-4">
+      <h2 class="card-title mb-1">{{ icon('laptop', 16) }} Pause bureau
+        <span class="text-xs font-normal ml-auto" style="color: var(--muted);">~{{ desk_break.total_min }} min, silencieux</span>
+      </h2>
+      {% if desk_break.gentle_only %}
+      <p class="text-xs mb-2" style="color: var(--muted);">Journée douce : mobilité et respiration seulement.</p>
+      {% endif %}
+      <ul class="space-y-2 text-sm mt-2">
+        {% for item in desk_break['items'] %}
+        <li>
+          <span class="font-medium">{{ item.name }}</span>
+          <span class="text-xs" style="color: var(--muted);">({{ 'assis' if item.posture == 'seated' else 'debout' }}, {{ item.seconds }} s)</span><br>
+          <span class="text-xs" style="color: var(--text-secondary);">{{ item.how }}</span>
+          {% if item.when %}<br><span class="text-xs" style="color: var(--muted);">À faire : {{ item.when }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% for note in desk_break.notes %}
+      <p class="text-xs mt-2" style="color: var(--text-secondary);">{{ note }}</p>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </aside>
 </div>
-{% if sync_sources | selectattr('stale') | list %}
-<p class="text-xs text-center" style="color: var(--yellow);">
-  Une source n'a pas ete mise a jour depuis plus de 30 h — les chiffres
-  ci-dessus peuvent dater.
-</p>
-{% endif %}
-
-{% endif %}
 {% endblock %}
 
 {% block head %}
-<style>.htmx-indicator { opacity: 0; } .htmx-request.htmx-indicator, .htmx-request .htmx-indicator { opacity: 1; }</style>
+<style>
+  /* Phone: one column (session first). Laptop: level + actions on the
+     left, the day in the middle. Wide screen: goals get their own
+     third column. */
+  .home-grid { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "side" "goals"; }
+  .home-main { grid-area: main; } .home-side { grid-area: side; } .home-goals { grid-area: goals; }
+  @media (min-width: 1024px) {
+    .home-grid { grid-template-columns: 270px minmax(0, 1fr);
+      grid-template-rows: auto 1fr; grid-template-areas: "side main" "side goals";
+      align-items: start; }
+  }
+  @media (min-width: 1280px) {
+    .home-grid { grid-template-columns: 270px minmax(0, 1fr) 310px;
+      grid-template-rows: auto; grid-template-areas: "side main goals"; }
+  }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const buttons = document.querySelectorAll('[data-period]');
+    const show = (period) => {
+      buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.period === period)));
+      document.querySelectorAll('[data-period-panel]').forEach((panel) => {
+        panel.hidden = panel.dataset.periodPanel !== period;
+      });
+    };
+    buttons.forEach((b) => b.addEventListener('click', () => {
+      show(b.dataset.period);
+      try { localStorage.setItem('period', b.dataset.period); } catch (e) {}
+    }));
+    try {
+      const saved = localStorage.getItem('period');
+      if (saved === 'week' || saved === 'month') show(saved);
+    } catch (e) {}
+  })();
+</script>
 {% endblock %}
