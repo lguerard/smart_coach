@@ -8,6 +8,40 @@
 
 {% block content %}
 
+{% if rateable %}
+<div id="notes" class="card p-4" style="scroll-margin-top: 4.5rem;">
+  <h2 class="card-title mb-1">{{ icon('target', 16) }} Noter mes séances</h2>
+  <p class="text-xs mb-3" style="color: var(--muted);">
+    Ta note pèse sur le niveau des prochaines séances du même type — c'est
+    le seul signal qui vienne de toi et pas d'un capteur. Tu peux la
+    changer tant que la séance date de moins de deux semaines.
+  </p>
+  <div class="divide-y" style="border-color: var(--border);">
+    {% for r in rateable %}
+    <form method="post" action="/feedback" class="py-2.5 flex flex-wrap items-center justify-between gap-2" style="border-color: var(--border);">
+      <input type="hidden" name="date" value="{{ r.date }}">
+      <input type="hidden" name="next" value="sessions">
+      <div class="min-w-0">
+        <p class="text-sm font-medium">
+          {{ session_label_fr.get(r.session_type, r.session_type) }}
+          {% if r.level is not none %}<span class="text-xs font-normal" style="color: var(--muted);">· niveau {{ r.level }}</span>{% endif %}
+        </p>
+        <p class="text-xs" style="color: var(--muted);">
+          {{ "aujourd'hui" if r.date == today else r.date[8:10] ~ "/" ~ r.date[5:7] }}
+          {% if r.rating is none %}· <span style="color: var(--warning);">pas encore notée</span>{% endif %}
+        </p>
+      </div>
+      <div class="seg" role="group" aria-label="Note de la séance du {{ r.date }}">
+        {% for value, label in [("easy", "Trop facile"), ("right", "Au bon niveau"), ("hard", "Trop dure")] %}
+        <button name="rating" value="{{ value }}" aria-pressed="{{ 'true' if r.rating == value else 'false' }}">{{ label }}</button>
+        {% endfor %}
+      </div>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <div class="card p-4">
   <h2 class="font-semibold text-sm mb-1">Tous les trajets -- toute activite</h2>
   {% if route_features %}

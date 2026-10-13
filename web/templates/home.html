@@ -47,14 +47,15 @@
       <p class="text-sm font-semibold">
         Comment était la séance
         {{ session_label_fr_map.get(pending_feedback.session_type, pending_feedback.session_type) | lower }}
-        du {{ pending_feedback.local_date[8:10] }}/{{ pending_feedback.local_date[5:7] }} ?
+        du {{ pending_feedback.date[8:10] }}/{{ pending_feedback.date[5:7] }} ?
       </p>
       <p class="text-xs mt-1" style="color: var(--muted);">
         Ta réponse pèse sur le niveau des prochaines séances de ce type —
         c'est le seul signal qui vienne de toi et pas d'un capteur.
+        <a href="/sessions#notes" class="link">Noter un autre jour</a>
       </p>
       <form method="post" action="/feedback" class="grid grid-cols-3 gap-2 mt-3">
-        <input type="hidden" name="date" value="{{ pending_feedback.local_date }}">
+        <input type="hidden" name="date" value="{{ pending_feedback.date }}">
         <button name="rating" value="easy" class="btn">Trop facile</button>
         <button name="rating" value="right" class="btn btn-primary">Au bon niveau</button>
         <button name="rating" value="hard" class="btn">Trop dure</button>

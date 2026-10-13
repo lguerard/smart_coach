@@ -550,20 +550,12 @@ def home(request: Request) -> HTMLResponse:
         wellness, training.rhr_baseline(conn, user_id, date), feedback,
         training.muscle_votes(conn, user_id, date, session_type_today),
     )
-    # Asked the evening of a session day, once. Yesterday's session
-    # counts too: the question usually gets answered the next morning.
-    yesterday = (
-        dt.date.fromisoformat(date) - dt.timedelta(days=1)
-    ).isoformat()
-    pending_feedback = conn.execute(
-        "SELECT local_date, session_type FROM coach_log "
-        "WHERE user_id = ? AND local_date IN (?, ?) "
-        "AND session_type IS NOT NULL "
-        "AND COALESCE(tier, 'train') = 'train' AND local_date NOT IN "
-        "(SELECT local_date FROM session_feedback WHERE user_id = ?) "
-        "ORDER BY local_date DESC LIMIT 1",
-        (user_id, date, yesterday, user_id),
-    ).fetchone()
+    # Yesterday's unrated session first, today's once it can have
+    # happened; every other day is rated from the Sessions page.
+    pending_feedback = training.pending_feedback(
+        conn, user_id, date,
+        dt.datetime.now(metrics.local_tz(conn, user_id)),
+    )
     # Ingestion silently stopping is the failure mode that hurts most:
     # the dashboard keeps showing yesterday's numbers as if they were
     # today's. Shown in the user's own timezone, flagged past 30 h --
@@ -691,7 +683,7 @@ async def submit_feedback(request: Request):
     rating = str(form.get("rating", ""))
     date = str(form.get("date", ""))
     if rating not in ("easy", "right", "hard") or not date:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(_feedback_return(form), status_code=303)
 
     row = conn.execute(
         "SELECT session_type FROM coach_log WHERE user_id = ? AND "
@@ -711,7 +703,13 @@ async def submit_feedback(request: Request):
              dt.datetime.now(dt.timezone.utc).isoformat()),
         )
         conn.commit()
-    return RedirectResponse("/", status_code=303)
+    return RedirectResponse(_feedback_return(form), status_code=303)
+
+
+def _feedback_return(form) -> str:
+    """Where a rating sends the viewer back: the page it came from, from
+    a fixed list -- never a URL taken from the form as is."""
+    return "/sessions#notes" if form.get("next") == "sessions" else "/"
 
 
 @app.post("/regenerate", response_class=HTMLResponse)
@@ -1134,6 +1132,11 @@ def sessions(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "sessions.html", {
             "sessions": items, "route_features": route_features,
+            "rateable": training.rateable_sessions(
+                conn, user_id, today_str(conn, user_id),
+            ),
+            "today": today_str(conn, user_id),
+            "session_label_fr": training.SESSION_LABEL_FR,
         },
     )
 

@@ -873,6 +873,91 @@ def recent_feedback(
     ]
 
 
+RATEABLE_DAYS = 14
+
+
+def rateable_sessions(
+    conn: sqlite3.Connection, user_id: int, date: str,
+    days: int = RATEABLE_DAYS,
+) -> list[dict]:
+    """Planned training sessions that can still be rated, newest first.
+
+    Only days the morning run kept as a real session (tier ``train``):
+    a rest day or a recovery walk has no level to move, so nothing to
+    rate. Already-rated days stay listed so a rating can be changed.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): Today's ISO local date (included).
+        days (int): How far back to list.
+
+    Returns:
+        list[dict]: ``{date, session_type, level, rating}``, ``rating``
+        ``None`` when not rated yet.
+    """
+    start = (dt.date.fromisoformat(date) - dt.timedelta(days=days - 1)).isoformat()
+    rows = conn.execute(
+        "SELECT c.local_date, c.session_type, c.level, f.rating "
+        "FROM coach_log c LEFT JOIN session_feedback f "
+        "ON f.user_id = c.user_id AND f.local_date = c.local_date "
+        "WHERE c.user_id = ? AND c.local_date BETWEEN ? AND ? "
+        "AND c.id = (SELECT MAX(id) FROM coach_log WHERE user_id = c.user_id "
+        "AND local_date = c.local_date) "
+        "AND c.session_type IS NOT NULL AND COALESCE(c.tier, 'train') = 'train' "
+        "ORDER BY c.local_date DESC",
+        (user_id, start, date),
+    ).fetchall()
+    return [
+        {"date": r["local_date"], "session_type": r["session_type"],
+         "level": r["level"], "rating": r["rating"]}
+        for r in rows
+    ]
+
+
+def pending_feedback(
+    conn: sqlite3.Connection, user_id: int, date: str, now: dt.datetime,
+) -> Optional[dict]:
+    """The one session the home page asks about, or ``None``.
+
+    Yesterday's unrated session comes first: today's used to win just
+    by being newer, so it hid yesterday's behind a session not done
+    yet. Today's is only asked once it can have happened -- a workout
+    is recorded today, or the scheduled slot is over.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): Today's ISO local date.
+        now (datetime): Current local time (naive or aware, local).
+
+    Returns:
+        Optional[dict]: A ``rateable_sessions`` row, or ``None``.
+    """
+    unrated = [
+        row for row in rateable_sessions(conn, user_id, date, days=2)
+        if row["rating"] is None
+    ]
+    for row in sorted(unrated, key=lambda r: r["date"]):
+        if row["date"] != date:
+            return row
+        done = conn.execute(
+            "SELECT 1 FROM exercise_sessions WHERE user_id = ? AND "
+            "local_date = ? LIMIT 1", (user_id, date),
+        ).fetchone()
+        slot = schedule_for_user(conn, user_id)[
+            dt.date.fromisoformat(date).weekday()
+        ]
+        try:
+            hour, minute = (int(x) for x in str(slot.get("start") or "").split(":"))
+            end = (hour * 60 + minute) + int(slot.get("duration_min") or 0)
+        except ValueError:
+            end = 24 * 60  # no usable slot: wait for a recorded workout
+        if done or now.hour * 60 + now.minute >= end:
+            return row
+    return None
+
+
 def _feedback_vote(feedback: Optional[list[str]]) -> Optional[str]:
     if not feedback or len(feedback) < FEEDBACK_STREAK:
         return None
@@ -2589,5 +2674,48 @@ if __name__ == "__main__":
     )
     assert again["deload_triggered"] is False
     assert again["level"] == 4
+
+    # Rating: yesterday's unrated session is asked before today's, and
+    # today's only once it can have happened.
+    fb_dir = tempfile.mkdtemp()
+    fb_conn = db_module.connect(Path(fb_dir) / "fb.db")
+    db_module.init_db(fb_conn)
+    fb = db_module.create_user(fb_conn, "fb", "pw-123456")
+    for day, kind, tier in (("2026-10-12", "lower_body", "train"),
+                            ("2026-10-13", "upper_body", "train"),
+                            ("2026-10-11", "treadmill", "rest"),
+                            ("2026-09-20", "treadmill", "train")):
+        fb_conn.execute(
+            "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+            "session_type, level, message, tier) VALUES (?, '', ?, 'green', "
+            "?, 3, '', ?)", (fb, day, kind, tier),
+        )
+    fb_conn.commit()
+    listed = rateable_sessions(fb_conn, fb, "2026-10-13")
+    # Rest day and the 3-week-old session are not offered.
+    assert [r["date"] for r in listed] == ["2026-10-13", "2026-10-12"], listed
+    morning = dt.datetime(2026, 10, 13, 8, 0)  # a Tuesday
+    assert pending_feedback(fb_conn, fb, "2026-10-13", morning)["date"] == "2026-10-12"
+    fb_conn.execute(
+        "INSERT INTO session_feedback VALUES (?, '2026-10-12', 'lower_body', "
+        "'hard', '')", (fb,),
+    )
+    fb_conn.commit()
+    assert rateable_sessions(fb_conn, fb, "2026-10-13")[1]["rating"] == "hard"
+    # Yesterday rated; today's 20:00 slot (30 min) is not over at 08:00.
+    assert pending_feedback(fb_conn, fb, "2026-10-13", morning) is None
+    assert pending_feedback(
+        fb_conn, fb, "2026-10-13", dt.datetime(2026, 10, 13, 20, 29),
+    ) is None
+    assert pending_feedback(
+        fb_conn, fb, "2026-10-13", dt.datetime(2026, 10, 13, 20, 30),
+    )["date"] == "2026-10-13"
+    # A workout already recorded today: ask now.
+    fb_conn.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date) VALUES ('w', ?, '', '', '2026-10-13')", (fb,),
+    )
+    fb_conn.commit()
+    assert pending_feedback(fb_conn, fb, "2026-10-13", morning)["date"] == "2026-10-13"
 
     print("training.py: all checks passed")

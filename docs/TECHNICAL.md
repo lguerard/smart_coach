@@ -144,7 +144,12 @@ teal or blue, picked under Settings > Apparence (`accent` setting,
 `<html data-accent>`, tokens in `web/static/theme.css`). Today is laid
 out in three columns on a wide screen: level, quick actions and 7/30-day
 activity (`metrics.period_stats`) on the left, the session and the
-coach's message in the middle, goals and signals on the right.
+coach's message in the middle, goals and signals on the right. How a
+session felt (too easy / right / too hard) is asked on Today for
+yesterday's session first, and for today's only once a workout is
+recorded or its slot is over (`training.pending_feedback`); any
+session of the last two weeks can be rated or re-rated from Sessions
+(`training.rateable_sessions`).
 
 ## Architecture
 
