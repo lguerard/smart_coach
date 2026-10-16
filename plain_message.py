@@ -70,6 +70,17 @@ def _session_line(session: dict, fr: bool) -> str:
              f" {replaces} is cancelled tonight: it is the only thing to "
              "do today.") if replaces else ""
         )
+        incline = values.get("incline_pct")
+        if incline:
+            return (
+                f"Aujourd'hui, marche active en pente : "
+                f"{values.get('speed_kmh')} km/h, {incline} % de pente, "
+                f"{values.get('duration_min')} min.{instead}"
+                if fr else
+                f"Today, a brisk uphill walk: {values.get('speed_kmh')} "
+                f"km/h, {incline}% incline, {values.get('duration_min')} "
+                f"min.{instead}"
+            )
         return (
             f"Aujourd'hui, marche tranquille : {values.get('speed_kmh')} "
             f"km/h, a plat, {values.get('duration_min')} min.{instead}"
@@ -258,4 +269,8 @@ if __name__ == "__main__":
         "values": {"speed_kmh": 4.5, "duration_min": 20}}})
     assert "Kettlebell a la maison est annule ce soir" in walk, walk
     assert "seule chose" in walk, walk
+    uphill = render({"language": "fr", "angle": "recovery", "session": {
+        "type": "recovery", "replaces": "Tapis",
+        "values": {"speed_kmh": 5.0, "incline_pct": 5, "duration_min": 35}}})
+    assert "marche active en pente : 5.0 km/h, 5 % de pente, 35 min" in uphill
     print("plain_message.py: all checks passed")

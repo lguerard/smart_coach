@@ -90,18 +90,19 @@ def _logged(conn, uid):
 
 if __name__ == "__main__":
     desk.DESK_WEEKDAYS = range(7)  # whatever day the check runs on
-    # A red morning at level 0: a flat easy walk, everywhere.
+    # A red morning at level 0, no illness: an active uphill walk,
+    # everywhere (watch, calendar, message, log).
     _reset()
     _install({"sleep_score": 40})
     conn, user = _user()
     run_coach.run_for_user(conn, user)
     stype, level, values = calls["pushed"][0]
-    assert stype == "recovery" and values["incline_pct"] == 0, calls
+    assert stype == "recovery" and values == training.ACTIVE_RECOVERY_VALUES, calls
     assert calls["retired"] == [], calls
     assert calls["week"], "the week ahead is planned every morning"
     assert calls["calendar"][0].startswith("RECUPERATION"), calls
     # The event title says it too: never "Tapis" above a walk.
-    assert calls["titles"][0].startswith("Marche de récupération"), calls
+    assert calls["titles"][0].startswith("Marche active 35 min"), calls
     assert "annulé" in calls["titles"][0], calls
     session = calls["payloads"][0]["today_session"]
     assert session["type"] == "recovery", session
@@ -112,6 +113,7 @@ if __name__ == "__main__":
     assert all(i["kind"] != "strength" for i in brk["items"]), brk
     row = _logged(conn, user["id"])
     assert row["tier"] == training.TIER_RECOVERY and row["tier_reason"], dict(row)
+    assert row["recovery_kind"] == training.RECOVERY_ACTIVE, dict(row)
     # The payload carries the same blocks a regenerated message gets.
     for key in ("activity_yesterday", "illness_watch", "today_remaining",
                 "movement_yesterday"):

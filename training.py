@@ -218,6 +218,49 @@ TIER_LABEL_FR = {
     TIER_REST: "repos",
 }
 RECOVERY_VALUES = {"speed_kmh": 4.5, "incline_pct": 0, "duration_min": 20}
+# A red day with nothing left to cut, and no sign of illness: a walk that
+# still counts -- brisk, uphill, long enough to burn ~200-250 kcal --
+# while sparing the muscles. The flat walk above stays for the way back
+# from a rest day, when the body was the problem.
+ACTIVE_RECOVERY_VALUES = {"speed_kmh": 5.0, "incline_pct": 5, "duration_min": 35}
+RECOVERY_GENTLE, RECOVERY_ACTIVE = "gentle", "active"
+# Recoveries that are not about illness: at most this many per rolling
+# week. Past that, a red day trains at its (already lowered) level --
+# weight loss and muscle both need the sessions to happen.
+ACTIVE_RECOVERY_PER_WEEK = 1
+
+
+def recovery_values(kind: Optional[str]) -> dict:
+    """Walk targets for a recovery day of ``kind`` (gentle by default,
+    which is also what rows logged before kinds existed were)."""
+    return dict(
+        ACTIVE_RECOVERY_VALUES if kind == RECOVERY_ACTIVE else RECOVERY_VALUES
+    )
+
+
+def active_recoveries_recent(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> int:
+    """Active (non-illness) recovery days in the 6 days before ``date``.
+
+    Parameters:
+        conn (sqlite3.Connection): smart_coach db connection.
+        user_id (int): Owning user.
+        date (str): Today's ISO local date (not counted).
+
+    Returns:
+        int: How many of those days the morning run made an active
+        recovery walk (latest row per day).
+    """
+    start = (dt.date.fromisoformat(date) - dt.timedelta(days=6)).isoformat()
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM coach_log c WHERE c.user_id = ? "
+        "AND c.local_date >= ? AND c.local_date < ? "
+        "AND c.id = (SELECT MAX(id) FROM coach_log WHERE user_id = c.user_id "
+        "AND local_date = c.local_date) "
+        "AND c.tier = 'recovery' AND c.recovery_kind = 'active'",
+        (user_id, start, date),
+    ).fetchone()["n"]
 
 
 def sick_until(conn: sqlite3.Connection, user_id: int) -> Optional[str]:
@@ -376,44 +419,44 @@ def tier_before_guardrail(
         }
     if previous_tier(conn, user_id, date) == TIER_REST:
         return {
-            "tier": TIER_RECOVERY,
+            "tier": TIER_RECOVERY, "kind": RECOVERY_GENTLE,
             "reasons": ["reprise douce apres un jour de repos"],
         }
     return None
 
 
 def tier_after_guardrail(
-    status: Optional[str], level: Optional[int], red_days_before: int,
+    status: Optional[str], level: Optional[int], active_recent: int = 0,
 ) -> Optional[dict]:
-    """Recovery forced by red days the level system cannot absorb.
+    """Active recovery for a red day the level system cannot absorb.
+
+    A red day normally trains at a lowered level (``adjust_level``),
+    including the second or third red day running -- the deload
+    guardrail handles streaks. Only a red day with the level already at
+    its floor, nothing left to lighten, becomes a walk: an active one,
+    uphill, and at most ``ACTIVE_RECOVERY_PER_WEEK`` per rolling week;
+    past that it trains at the floor level.
 
     Parameters:
         status (str | None): Today's ``compute_status`` result.
         level (int | None): Today's level AFTER the guardrail.
-        red_days_before (int): ``consecutive_red_days`` for yesterday
-            backwards.
+        active_recent (int): ``active_recoveries_recent`` for today.
 
     Returns:
-        dict | None: ``{"tier": recovery, "reasons"}`` when today is
-        red and either the level is already at its floor (nothing left
-        to cut) or it is the second red day running; None otherwise.
+        dict | None: ``{"tier": recovery, "kind": active, "reasons"}``,
+        or None to train.
     """
-    if status != "red" or level is None:
+    if status != "red" or level is None or level > LEVEL_MIN:
         return None
-    if level <= LEVEL_MIN:
-        return {
-            "tier": TIER_RECOVERY,
-            "reasons": [
-                "jour rouge et niveau deja au minimum : la seance ne "
-                "peut plus s'alleger"
-            ],
-        }
-    if red_days_before >= 1:
-        return {
-            "tier": TIER_RECOVERY,
-            "reasons": [f"{red_days_before + 1}e jour rouge de suite"],
-        }
-    return None
+    if active_recent >= ACTIVE_RECOVERY_PER_WEEK:
+        return None
+    return {
+        "tier": TIER_RECOVERY, "kind": RECOVERY_ACTIVE,
+        "reasons": [
+            "jour rouge et niveau deja au minimum : marche active a la "
+            "place, pour garder la depense sans fatiguer les muscles"
+        ],
+    }
 
 
 def describe_tier_fr(
@@ -439,8 +482,10 @@ def describe_tier_fr(
             "tranquille si l'envie est la."
         )
     values = values or RECOVERY_VALUES
+    kind = ("marche active en pente" if values.get("incline_pct")
+            else "marche tranquille a plat")
     return (
-        "RECUPERATION - marche tranquille a plat : "
+        f"RECUPERATION - {kind} : "
         f"{values['speed_kmh']} km/h, inclinaison "
         f"{values['incline_pct']}%, {values['duration_min']} min continu, "
         f"a la place de {scheduled_title} ({why})."
@@ -467,8 +512,9 @@ def tier_event_title(
     if tier == TIER_REST:
         return f"Repos ({scheduled_title} annulé)"
     if tier == TIER_RECOVERY:
-        minutes = (values or RECOVERY_VALUES).get("duration_min")
-        return f"Marche de récupération {minutes} min ({scheduled_title} annulé)"
+        values = values or RECOVERY_VALUES
+        walk = "Marche active" if values.get("incline_pct") else "Marche de récupération"
+        return f"{walk} {values.get('duration_min')} min ({scheduled_title} annulé)"
     return None
 
 
@@ -1544,6 +1590,7 @@ def _render_session(
     conn: sqlite3.Connection, user_id: int, session_type: Optional[str],
     level: Optional[int], status: Optional[str], tier: str,
     reasons: list[str], title: str, date: Optional[str] = None,
+    recovery_kind: Optional[str] = None,
 ) -> tuple[dict, Optional[str]]:
     """Values and French description for whatever the day asks for.
 
@@ -1559,6 +1606,7 @@ def _render_session(
         tier (str): ``TIER_TRAIN`` / ``TIER_RECOVERY`` / ``TIER_REST``.
         reasons (list[str]): Why the tier is not training.
         title (str): The scheduled session's title.
+        recovery_kind (str | None): ``RECOVERY_ACTIVE`` or gentle.
 
     Returns:
         tuple[dict, str | None]: ``(values, description)``; description
@@ -1567,7 +1615,7 @@ def _render_session(
     if tier == TIER_REST:
         return {}, describe_tier_fr(TIER_REST, title, reasons)
     if tier == TIER_RECOVERY:
-        values = dict(RECOVERY_VALUES)
+        values = recovery_values(recovery_kind)
         return values, describe_tier_fr(TIER_RECOVERY, title, reasons, values)
     if session_type is None:
         return {}, None
@@ -1715,7 +1763,8 @@ def plan_day(
     Order of decisions: an illness (declared, or read from the sensors)
     cuts every session type and rests the day, skipping the level
     system entirely; otherwise the normal level adjustment runs and a
-    red day it cannot absorb becomes a recovery walk.
+    red day it cannot absorb (level already at its floor) becomes an
+    active recovery walk, at most once a week.
 
     Parameters:
         conn (sqlite3.Connection): smart_coach db connection.
@@ -1730,6 +1779,7 @@ def plan_day(
     Returns:
         dict: ``session_type`` (the scheduled one), ``status``,
         ``level``, ``tier``, ``tier_reasons``, ``values``,
+        ``recovery_kind`` (gentle / active on a recovery day, else None),
         ``description`` (None for an ordinary off-system day),
         ``in_deload``, ``deload_triggered`` and ``illness_deload``.
     """
@@ -1768,7 +1818,7 @@ def plan_day(
                 _all_votes(wellness, baseline, feedback, extra),
             )
             tier_info = tier_after_guardrail(
-                status, level, consecutive_red_days(conn, user_id, date),
+                status, level, active_recoveries_recent(conn, user_id, date),
             )
         else:
             # A rest or recovery day is not scored against the level
@@ -1782,9 +1832,10 @@ def plan_day(
             }
     tier = tier_info["tier"] if tier_info else TIER_TRAIN
     reasons = list(tier_info["reasons"]) if tier_info else []
+    recovery_kind = (tier_info or {}).get("kind") if tier == TIER_RECOVERY else None
     values, description = _render_session(
         conn, user_id, session_type, level, status, tier, reasons,
-        template.get("title", ""), date,
+        template.get("title", ""), date, recovery_kind,
     )
     if tier == TIER_TRAIN and deload.get("deload_triggered") and description:
         reason_fr, reason_en = _DELOAD_REASON[deload["trigger"]]
@@ -1796,6 +1847,7 @@ def plan_day(
     return {
         "session_type": session_type, "status": status, "level": level,
         "tier": tier, "tier_reasons": reasons, "values": values,
+        "recovery_kind": recovery_kind,
         "description": description,
         "in_deload": bool(deload.get("in_deload")),
         "deload_triggered": bool(deload.get("deload_triggered")),
@@ -1868,9 +1920,12 @@ def plan_from_log(
     session_type = entry["session_type"]
     tier = entry["tier"] or TIER_TRAIN
     reasons = [entry["tier_reason"]] if entry["tier_reason"] else []
+    recovery_kind = (
+        entry["recovery_kind"] if "recovery_kind" in entry.keys() else None
+    )
     values, description = _render_session(
         conn, user_id, session_type, entry["level"], entry["status"],
-        tier, reasons, template.get("title", ""), date,
+        tier, reasons, template.get("title", ""), date, recovery_kind,
     )
     until = (
         get_deload_until(conn, user_id, session_type) if session_type else None
@@ -1878,7 +1933,8 @@ def plan_from_log(
     return {
         "session_type": session_type, "status": entry["status"],
         "level": entry["level"], "tier": tier, "tier_reasons": reasons,
-        "values": values, "description": description,
+        "values": values, "recovery_kind": recovery_kind,
+        "description": description,
         "in_deload": bool(until and until >= date),
         "deload_triggered": False, "illness_deload": {},
         "level_reason": (
@@ -2146,19 +2202,52 @@ if __name__ == "__main__":
 
     # THE REPORTED CASE. Level 0, a red morning: the old flow could only
     # hand back the level-0 session -- 5.5 km/h at 12% incline -- again
-    # and again. It must become an easy flat walk.
+    # and again. It becomes a walk -- an active, uphill one: no illness
+    # here, and a flat 20 minutes does nothing for weight or muscle.
     pc, pu = _fresh()
     plan = plan_day(pc, pu, D, _template(pc, pu, 0), RED, HEALTHY)
     assert get_level(pc, pu, "treadmill") == 0
     assert plan["tier"] == TIER_RECOVERY, plan
-    assert plan["values"] == RECOVERY_VALUES, plan
-    assert plan["values"]["incline_pct"] == 0
+    assert plan["recovery_kind"] == RECOVERY_ACTIVE, plan
+    assert plan["values"] == ACTIVE_RECOVERY_VALUES, plan
+    assert plan["values"]["incline_pct"] > 0
+    assert "marche active en pente" in plan["description"], plan
     assert plan["description"].startswith("RECUPERATION"), plan
     assert "niveau deja au minimum" in plan["description"], plan
     payload = session_payload(plan, _template(pc, pu, 0))
     assert payload["type"] == "recovery", payload
     assert payload["scheduled_type"] == "treadmill", payload
     assert payload["tier_reasons"], payload
+    # The dashboard rebuilds the same walk from the log row.
+    pc.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier, tier_reason, recovery_kind) "
+        "VALUES (?, 'x', ?, 'red', 'treadmill', 0, 'm', 'recovery', 'r', "
+        "'active')", (pu, D))
+    pc.commit()
+    entry = pc.execute("SELECT * FROM coach_log WHERE user_id = ?", (pu,)).fetchone()
+    assert plan_from_log(pc, pu, D, _template(pc, pu, 0), entry)["values"] == (
+        ACTIVE_RECOVERY_VALUES
+    )
+    # One active recovery a week: the next red floor day this week
+    # trains at level 0 instead of walking again.
+    again = plan_day(pc, pu, "2026-10-07", _template(pc, pu, 2), RED, HEALTHY)
+    assert again["tier"] == TIER_TRAIN, again
+    # A week later the walk is available again.
+    later = plan_day(pc, pu, "2026-10-12", _template(pc, pu, 0), RED, HEALTHY)
+    assert later["tier"] == TIER_RECOVERY, later
+
+    # A second red day in a row with room left trains, lighter: the
+    # level drops again rather than the session being cancelled.
+    pc, pu = _fresh()
+    set_level(pc, pu, "treadmill", 4)
+    pc.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, 'x', '2026-10-04', "
+        "'red', 'treadmill', 4, 'm', 'train')", (pu,))
+    pc.commit()
+    second_red = plan_day(pc, pu, D, _template(pc, pu, 0), RED, HEALTHY)
+    assert second_red["tier"] == TIER_TRAIN and second_red["level"] == 3, second_red
 
     # A red day with room left to lighten still just lightens...
     pc, pu = _fresh()
@@ -2250,7 +2339,9 @@ if __name__ == "__main__":
                     HEALTHY)
     assert arms["tired_muscles"] is None and arms["status"] == "green"
 
-    # ...and the second red day in a row is a walk even with room left.
+    # The reported case: upper body done yesterday on a red day, red
+    # again today. It used to cancel today's session for a flat walk;
+    # it now trains, one level lighter.
     pc, pu = _fresh()
     set_level(pc, pu, "treadmill", 3)
     pc.execute(
@@ -2259,8 +2350,7 @@ if __name__ == "__main__":
         "'2026-10-04', 'red', 'upper_body', 3, 'm')", (pu,))
     pc.commit()
     plan = plan_day(pc, pu, D, _template(pc, pu, 0), RED, HEALTHY)
-    assert plan["tier"] == TIER_RECOVERY, plan
-    assert "2e jour rouge" in plan["tier_reasons"][0], plan
+    assert plan["tier"] == TIER_TRAIN and plan["level"] == 2, plan
 
     # Declared illness: no session, EVERY type cut, and the level
     # system untouched -- no red counted for a session not happening.
@@ -2515,16 +2605,14 @@ if __name__ == "__main__":
     # floor. Red at level 0 must now become a recovery walk...
     floor = tier_after_guardrail("red", 0, 0)
     assert floor["tier"] == TIER_RECOVERY, floor
+    assert floor["kind"] == RECOVERY_ACTIVE, floor
     assert "niveau deja au minimum" in floor["reasons"][0], floor
     # ...a red day with room left to lighten keeps the normal flow...
     assert tier_after_guardrail("red", 3, 0) is None
-    # ...until it is the second red day in a row, whatever the level.
-    second = tier_after_guardrail("red", 3, 1)
-    assert second["tier"] == TIER_RECOVERY, second
-    assert "2e jour rouge" in second["reasons"][0], second
-    assert "3e jour rouge" in tier_after_guardrail("red", 5, 2)["reasons"][0]
-    assert tier_after_guardrail("yellow", 0, 4) is None  # not red
-    assert tier_after_guardrail(None, None, 4) is None  # off-system day
+    # ...and one active recovery already this week -> train at the floor.
+    assert tier_after_guardrail("red", 0, 1) is None
+    assert tier_after_guardrail("yellow", 0, 0) is None  # not red
+    assert tier_after_guardrail(None, None, 0) is None  # off-system day
 
     # consecutive_red_days: per day across all types, a gap ends the
     # run, and the latest row for a date wins.

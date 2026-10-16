@@ -75,7 +75,8 @@
 
     {% set status_var = 'good' if entry.status == 'green' else 'warning' if entry.status == 'yellow' else 'critical' %}
     {% set kind = 'rest' if tier == 'rest' else 'recovery' if tier == 'recovery' else entry.session_type %}
-    {% set title = 'Repos' if tier == 'rest' else 'Marche de récupération' if tier == 'recovery' else session_label_fr.get(entry.session_type, off_title) %}
+    {% set walk = 'Marche active en pente' if values and values.incline_pct else 'Marche de récupération' %}
+    {% set title = 'Repos' if tier == 'rest' else walk if tier == 'recovery' else session_label_fr.get(entry.session_type, off_title) %}
     <div class="hero-card p-5" style="--hero-tint: color-mix(in srgb, var(--{{ status_var }}) 10%, transparent);">
       <div class="flex items-center justify-between gap-2 mb-3">
         <p class="caption">{{ date_label }}</p>
@@ -104,7 +105,7 @@
           </div>
           <h1 class="text-xl font-semibold mt-1.5">{{ title }}</h1>
           {% if tier != 'train' and entry.session_type %}
-          <p class="text-sm" style="color: var(--text-secondary);">à la place de {{ off_title }}</p>
+          <p class="text-sm" style="color: var(--text-secondary);">à la place de {{ off_title }} (annulé)</p>
           {% endif %}
           {% if entry.level is not none and tier == 'train' %}
           <form method="post" action="/today/level" class="flex items-center gap-1.5 text-sm mt-2" style="color: var(--text-secondary);">
@@ -119,6 +120,9 @@
         </div>
       </div>
 
+      {% if tier != 'train' and tier_reasons %}
+      <p class="text-xs mt-3" style="color: var(--muted);"><span class="caption">Pourquoi</span> · {{ tier_reasons | join(' ; ') }}</p>
+      {% endif %}
       {% if level_reason and tier == 'train' %}
       <p class="text-xs mt-3" style="color: var(--muted);"><span class="caption">Pourquoi</span> · {{ level_reason }}</p>
       {% endif %}

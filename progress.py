@@ -361,13 +361,29 @@ def tdee_estimate(
 KCAL_PER_KG_BODY_MASS = 7700  # standard energy-balance heuristic
 
 
+def macro_weight_kg(
+    conn: sqlite3.Connection, user_id: int, weight_kg: float,
+) -> float:
+    """The weight protein and fat ratios apply to: the target weight
+    when it is set and below the current one, else the current weight.
+    """
+    try:
+        target = float(db.get_setting(conn, user_id, "target_weight_kg") or 0)
+    except ValueError:
+        target = 0
+    return target if 0 < target < weight_kg else weight_kg
+
+
 def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Today's calorie/protein/fat/carb/hydration targets.
 
     Calorie target = TDEE estimate + the daily calorie delta implied
     by ``weekly_weight_change_kg`` (negative = cut, positive = bulk).
-    Protein/fat are bodyweight-ratio targets from Settings; carbs fill
-    whatever calories remain. All targets are omitted rather than
+    Protein/fat are bodyweight-ratio targets from Settings, applied to
+    the target weight when one is set below the current weight: excess
+    fat needs no protein, so 1.8 g/kg of a heavy body weight overshoots
+    what keeps and builds muscle during a cut. Carbs fill whatever
+    calories remain; hydration stays on the actual weight. All targets are omitted rather than
     guessed when an input (weight, TDEE) is missing.
 
     Returns:
@@ -397,8 +413,9 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
 
     protein_ratio = db.get_setting(conn, user_id, "protein_target_g_per_kg")
     fat_ratio = db.get_setting(conn, user_id, "fat_target_g_per_kg")
-    protein_target = round(weight_kg * float(protein_ratio)) if protein_ratio else None
-    fat_target = round(weight_kg * float(fat_ratio)) if fat_ratio else None
+    macro_kg = macro_weight_kg(conn, user_id, weight_kg)
+    protein_target = round(macro_kg * float(protein_ratio)) if protein_ratio else None
+    fat_target = round(macro_kg * float(fat_ratio)) if fat_ratio else None
     if protein_target is not None:
         result["protein_target_g"] = protein_target
     if fat_target is not None:
@@ -1577,6 +1594,19 @@ if __name__ == "__main__":
     assert targets["fat_target_g"] == round(weight_at_end * 0.9)
     assert targets["hydration_target_ml"] == round(weight_at_end * 35)
     assert "carb_target_g" in targets
+    # A target weight below the current one sets protein and fat; water
+    # stays on the real weight; a target above it changes nothing.
+    db.set_setting(conn, uid, "target_weight_kg", str(weight_at_end - 10))
+    lighter = macro_targets(conn, uid, end_date)
+    assert lighter["protein_target_g"] == round((weight_at_end - 10) * 1.8), lighter
+    assert lighter["fat_target_g"] == round((weight_at_end - 10) * 0.9), lighter
+    assert lighter["hydration_target_ml"] == targets["hydration_target_ml"]
+    assert lighter["carb_target_g"] > targets["carb_target_g"]  # same kcal
+    db.set_setting(conn, uid, "target_weight_kg", str(weight_at_end + 5))
+    assert macro_targets(conn, uid, end_date) == targets
+    db.set_setting(conn, uid, "target_weight_kg", "pas un nombre")
+    assert macro_targets(conn, uid, end_date) == targets
+    db.set_setting(conn, uid, "target_weight_kg", "")
     assert macro_targets(conn, other_uid, end_date) == {} or \
         macro_targets(conn, other_uid, end_date).get("protein_target_g") \
         != targets["protein_target_g"]  # isolated (other user's weight differs)

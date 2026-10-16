@@ -620,7 +620,12 @@ CREATE TABLE IF NOT EXISTS coach_log (
     tier TEXT,
     -- Why, in words, so the dashboard and a regenerated message can say
     -- it without re-deriving a decision that depended on that morning.
-    tier_reason TEXT
+    tier_reason TEXT,
+    level_reason TEXT,
+    -- On a recovery day: gentle (flat walk, back from a rest day) or
+    -- active (uphill walk on a red day at the floor level). NULL on
+    -- older rows = gentle.
+    recovery_kind TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_coach_log_user_date ON coach_log(user_id, local_date);
 """
@@ -799,7 +804,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     coach_cols = {
         row["name"] for row in conn.execute("PRAGMA table_info(coach_log)")
     }
-    for column in ("tier", "tier_reason", "level_reason"):
+    for column in ("tier", "tier_reason", "level_reason", "recovery_kind"):
         if column not in coach_cols:
             conn.execute(f"ALTER TABLE coach_log ADD COLUMN {column} TEXT")
     conn.commit()

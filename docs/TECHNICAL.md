@@ -151,6 +151,16 @@ recorded or its slot is over (`training.pending_feedback`); any
 session of the last two weeks can be rated or re-rated from Sessions
 (`training.rateable_sessions`).
 
+Hard days. A declared or sensor-read illness rests the day; the day
+after a rest is a gentle flat walk (20 min). A red day trains at a
+lowered level, even several in a row (the deload guardrail handles
+streaks); only a red day with the level already at its floor becomes
+an active uphill walk (35 min, 5 km/h, 5 %), at most once per rolling
+week (`training.tier_after_guardrail`, `coach_log.recovery_kind`). The
+calendar event is retitled on those days. Protein and fat targets use
+the target weight when it is set below the current one
+(`progress.macro_weight_kg`).
+
 ## Architecture
 
 ```text

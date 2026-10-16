@@ -175,12 +175,13 @@ def run_for_user(conn, user: dict) -> None:
 
     conn.execute(
         "INSERT INTO coach_log (user_id, created_at, local_date, status, "
-        "session_type, level, message, tier, tier_reason, level_reason) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "session_type, level, message, tier, tier_reason, level_reason, "
+        "recovery_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             user_id, dt.datetime.now(dt.timezone.utc).isoformat(), today,
             status, session_type, level, message, tier,
             "; ".join(plan["tier_reasons"]) or None, plan["level_reason"],
+            plan.get("recovery_kind"),
         ),
     )
     conn.commit()

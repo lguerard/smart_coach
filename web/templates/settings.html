@@ -64,12 +64,12 @@
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
     <label class="block text-sm">
-      Proteines cible (g / kg de poids de corps)
+      Proteines cible (g / kg -- du poids cible s'il est renseigne et plus bas, sinon du poids actuel)
       <input name="protein_target_g_per_kg" value="{{ settings.protein_target_g_per_kg }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
     <label class="block text-sm">
-      Lipides cible (g / kg de poids de corps)
+      Lipides cible (g / kg -- meme poids de reference que les proteines)
       <input name="fat_target_g_per_kg" value="{{ settings.fat_target_g_per_kg }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
@@ -79,7 +79,7 @@
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
     <label class="block text-sm">
-      Poids cible (kg, optionnel)
+      Poids cible (kg, optionnel -- sert aussi de base aux proteines et lipides)
       <input name="target_weight_kg" value="{{ settings.target_weight_kg }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>

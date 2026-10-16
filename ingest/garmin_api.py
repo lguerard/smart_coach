@@ -1416,9 +1416,12 @@ def build_workout(session_type: str, level: int, values: dict):
         return _treadmill_workout(level, values)
     if session_type == "recovery":
         # The same single-step walk, named for what it is: an easy flat
-        # walk replacing a session the day could not take.
+        # walk, or an active uphill one, replacing a session the day
+        # could not take.
         return _treadmill_workout(
-            level, values, name="Smart Coach - Marche recuperation",
+            level, values,
+            name=("Smart Coach - Marche active" if values.get("incline_pct")
+                  else "Smart Coach - Marche recuperation"),
         )
     return _circuit_workout(session_type, level, values)
 
