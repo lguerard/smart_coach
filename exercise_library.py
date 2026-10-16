@@ -80,7 +80,7 @@ LADDERS = {
                 ("SQUAT", "SQUAT")),
              _v("jump_squat", "squat saute",
                 "Descends, puis saute et reception souple, genoux flechis.",
-                ("SQUAT", "JUMP_SQUAT"), dataset="0514", noisy=True)],
+                ("PLYO", "JUMP_SQUAT"), dataset="0514", noisy=True)],
         ],
     },
     "lunges_per_leg": {
@@ -123,7 +123,7 @@ LADDERS = {
                 "hanche.", ("LUNGE", "")),
              _v("jump_lunge", "fente sautee",
                 "Change de jambe en sautant, reception souple.",
-                ("LUNGE", "ALTERNATING_JUMP_LUNGE"), dataset="3582",
+                ("PLYO", "ALTERNATING_JUMP_LUNGE"), dataset="3582",
                 noisy=True)],
         ],
     },
@@ -302,7 +302,7 @@ KETTLEBELL_SESSION = {
                       "Deux mains sur la poignee, de la hanche vers le haut "
                       "de l'epaule opposee, bras tendus ; pivote le pied "
                       "arriere. Change de cote a mi-temps.",
-                      ("CHOP", "CHOP"), loaded=True)]],
+                      ("CHOP", "STANDING_ROTATIONAL_CHOP"), loaded=True)]],
     },
     "kb_around_world_sec": {
         "unit": "sec", "muscles": {"abs": 0.8, "shoulders": 0.6,
@@ -333,7 +333,7 @@ KETTLEBELL_SESSION = {
         "rungs": [[_v("kb_upright_row", "tirage menton",
                       "Deux mains sur la poignee, monte la kettlebell le "
                       "long du corps jusqu'a la poitrine, coudes plus hauts "
-                      "que les poignets.", ("ROW", "KETTLEBELL_ROW"),
+                      "que les poignets.", ("SHRUG", "UPRIGHT_ROW"),
                       loaded=True)]],
     },
     "kb_curl_sec": {
@@ -367,7 +367,7 @@ KETTLEBELL_SESSION_B = {
                       "Assis, buste incline en arriere, dos droit, pieds au "
                       "sol (leves pour plus dur), kettlebell contre le "
                       "ventre : tourne d'un cote a l'autre, le regard "
-                      "suit.", ("CORE", ""), loaded=True)]],
+                      "suit.", ("CORE", "RUSSIAN_TWIST"), loaded=True)]],
     },
     "kb_triceps_ext_sec": {
         "unit": "sec", "muscles": {"triceps": 1.0, "shoulders": 0.3,
@@ -377,7 +377,8 @@ KETTLEBELL_SESSION_B = {
                       "Debout, ventre gaine, kettlebell tenue par les "
                       "cornes derriere la tete, coudes vers le plafond : "
                       "tends les bras, seuls les avant-bras bougent.",
-                      ("TRICEPS_EXTENSION", ""), loaded=True)]],
+                      ("TRICEPS_EXTENSION",
+                       "OVERHEAD_DUMBBELL_TRICEPS_EXTENSION"), loaded=True)]],
     },
     "kb_pullover_sec": {
         "unit": "sec", "muscles": {"chest": 0.8, "back": 0.7, "abs": 0.5,
@@ -387,7 +388,8 @@ KETTLEBELL_SESSION_B = {
                       "cornes bras presque tendus au-dessus de la "
                       "poitrine : descends-la derriere la tete sans "
                       "cambrer, ramene-la en serrant les pectoraux.",
-                      ("CORE", ""), loaded=True)]],
+                      ("TRICEPS_EXTENSION",
+                       "LYING_DUMBBELL_PULLOVER_TO_EXTENSION"), loaded=True)]],
     },
     "kb_hammer_curl_sec": {
         "unit": "sec", "muscles": {"biceps": 1.0, "shoulders": 0.1},
@@ -395,7 +397,7 @@ KETTLEBELL_SESSION_B = {
                       "Kettlebell tenue par la poignee, pouce vers le haut, "
                       "coude colle au corps : monte et redescends "
                       "lentement. Change de bras a mi-temps.",
-                      ("CURL", "KETTLEBELL_BICEPS_CURL"), loaded=True)]],
+                      ("CURL", "DUMBBELL_HAMMER_CURL"), loaded=True)]],
     },
     "kb_situp_press_sec": {
         "unit": "sec", "muscles": {"abs": 1.0, "shoulders": 0.3,
@@ -405,7 +407,7 @@ KETTLEBELL_SESSION_B = {
                       "buste et pousse la kettlebell vers le plafond en "
                       "haut, redescends lentement. Plus facile : crunch "
                       "simple, kettlebell contre la poitrine.",
-                      ("SIT_UP", ""), loaded=True)]],
+                      ("SIT_UP", "KETTLEBELL_SIT_UP"), loaded=True)]],
     },
 }
 # fmt: on

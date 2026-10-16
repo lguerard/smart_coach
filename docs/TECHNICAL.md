@@ -170,6 +170,14 @@ triceps, an active walk), sized from the person's levels, with tired
 muscles flagged; none on a rest day, only the walk on a recovery day,
 and they never move a level.
 
+Exercise names sent to the watch are checked against Garmin's own
+catalog (official FIT SDK, `scripts/garmin_catalog.mjs` +
+`scripts/build_garmin_names.py`); the checked list lives in
+`library/garmin_exercises_used.json` and the `ingest/garmin_api.py`
+self-check refuses any name not in it. `watch_test.py` previews, sends
+and removes "Smart Coach TEST" workouts (both kettlebell circuits, the
+bonus workouts) without touching the planned week.
+
 ## Architecture
 
 ```text

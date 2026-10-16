@@ -22,6 +22,7 @@ import training
 BONUS_WORK_SEC, BONUS_REST_SEC = 30, 15
 ACTIVE_WALK = {"speed_kmh": 5.0, "incline_pct": 5, "duration_min": 30}
 MAIN_MUSCLE = 0.8  # a workout "loads" a muscle at this weight or more
+CRUNCH_GARMIN = ("CRUNCH", "CRUNCH")  # the one move with no ladder
 
 
 def _tours(level: int) -> int:
@@ -35,7 +36,8 @@ def _timed(slots, level, date, equipment) -> list[dict]:
         variant = exercise_library.variant_for(slot, level, date, equipment)
         items.append({"slot": slot, "name": variant["name"],
                       "amount": f"{BONUS_WORK_SEC} s", "cue": variant["cue"],
-                      "muscles": variant["muscles"]})
+                      "muscles": variant["muscles"], "value": BONUS_WORK_SEC,
+                      "garmin": list(variant["garmin"])})
     return items
 
 
@@ -48,7 +50,8 @@ def _counted(values: dict, slots, level, date) -> list[dict]:
         amount = line[len(variant["name"]):].strip()
         items.append({"slot": slot, "name": variant["name"],
                       "amount": amount, "cue": variant["cue"],
-                      "muscles": variant["muscles"]})
+                      "muscles": variant["muscles"], "value": values[slot],
+                      "garmin": list(variant["garmin"])})
     return items
 
 
@@ -121,7 +124,8 @@ def bonus_workouts(
             "slot": "crunch", "name": "crunch", "amount": "15",
             "cue": "Allonge, genoux plies, decolle les epaules en soufflant, "
                    "le bas du dos reste au sol.",
-            "muscles": {"abs": 1.0},
+            "muscles": {"abs": 1.0}, "value": 15,
+            "garmin": list(CRUNCH_GARMIN),
         }] + _counted(bodyweight, ("dips",), upper, date)
         workouts.append({
             "key": "abs_arms", "title": "Abdos & triceps sans matériel",
@@ -150,9 +154,24 @@ def bonus_workouts(
         workout["minutes"] = round(
             workout.get("tours", _tours(upper)) * per_tour_s / 60
         )
-        for item in workout["items"]:
-            item.pop("slot", None)
+        workout.setdefault("tours", _tours(upper))
     return workouts + [walk]
+
+
+def as_values(workout: dict) -> dict:
+    """A bonus circuit in ``session_values`` form, for the watch
+    (``garmin_api.build_bonus_workout``): one step per item, a timed or
+    counted end by the slot's unit, ``BONUS_REST_SEC`` after each.
+    """
+    values = {item["slot"]: item["value"] for item in workout["items"]}
+    values.update({
+        "rounds": workout["tours"], "tours": workout["tours"],
+        "rest_sec": BONUS_REST_SEC, "duration_min": workout["minutes"],
+        "variants": {item["slot"]: {"name": item["name"],
+                                    "garmin": item["garmin"]}
+                     for item in workout["items"]},
+    })
+    return values
 
 
 if __name__ == "__main__":
@@ -197,4 +216,12 @@ if __name__ == "__main__":
     chest = next(w for w in flagged if w["key"] == "chest_triceps")
     assert chest["tired"] == [muscles.MUSCLES["chest"]], chest
     assert flagged[0]["tired"] == [], flagged[0]  # abs/arms: chest < 0.8
+    # On the watch: one step per move, timed or counted by unit.
+    kb_values = as_values(loaded[0])
+    assert kb_values["kb_russian_twist_sec"] == BONUS_WORK_SEC, kb_values
+    assert kb_values["rounds"] == loaded[0]["tours"], kb_values
+    assert kb_values["variants"]["kb_russian_twist_sec"]["garmin"] == [
+        "CORE", "RUSSIAN_TWIST"], kb_values
+    plain_values = as_values(plain[0])
+    assert plain_values["crunch"] == 15 and "plank_sec" in plain_values
     print("bonus.py: all checks passed")

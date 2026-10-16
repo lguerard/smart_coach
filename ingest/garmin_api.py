@@ -117,7 +117,7 @@ _EXERCISE_CATALOG = {
     "lunges_per_leg": ("LUNGE", "LUNGE"),
     "reverse_lunges_per_leg": ("LUNGE", ""),
     "wall_sit_sec": ("SQUAT", "BODY_WEIGHT_WALL_SQUAT"),
-    "calf_raises": ("CALF_RAISE", "CALF_RAISE"),
+    "calf_raises": ("CALF_RAISE", "STANDING_CALF_RAISE"),
     "glute_bridge": ("HIP_RAISE", "HIP_RAISE"),
     "pushups": ("PUSH_UP", "PUSH_UP"),
     "dips": ("TRICEPS_EXTENSION", "BODY_WEIGHT_DIP"),
@@ -127,6 +127,34 @@ _EXERCISE_CATALOG = {
     "mountain_climbers": ("PLANK", "MOUNTAIN_CLIMBER"),
     "jumping_jacks": ("CARDIO", "JUMPING_JACKS"),
 }
+
+
+CHECKED_NAMES_FILE = (
+    Path(__file__).resolve().parent.parent / "library"
+    / "garmin_exercises_used.json"
+)
+
+
+def exercise_names_used() -> list[tuple[str, str]]:
+    """Every (category, exercise name) a pushed workout can carry: the
+    ladder variants (bodyweight and kettlebell), the slot fallbacks and
+    the bonus crunch.
+    Checked against Garmin's catalog by scripts/build_garmin_names.py.
+    """
+    import exercise_library
+
+    pairs = {
+        tuple(variant["garmin"])
+        for ladders in (exercise_library.LADDERS,
+                        exercise_library.KETTLEBELL_LADDERS)
+        for slot in ladders.values() for rung in slot["rungs"]
+        for variant in rung
+    }
+    pairs |= set(_EXERCISE_CATALOG.values())
+    import bonus
+
+    pairs.add(bonus.CRUNCH_GARMIN)
+    return sorted(pairs)
 
 
 def get_client(username: str) -> Garmin:
@@ -1349,7 +1377,7 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
 
 
 def _circuit_workout(
-    session_type: str, level: int, values: dict,
+    session_type: str, level: int, values: dict, name: Optional[str] = None,
 ) -> FitnessEquipmentWorkout:
     """Build a repeat-group bodyweight-circuit workout.
 
@@ -1378,7 +1406,7 @@ def _circuit_workout(
         },
         workoutSteps=[group],
     )
-    label = training.SESSION_LABEL_FR[session_type]
+    label = training.SESSION_LABEL_FR.get(session_type, session_type)
     variants = values.get("variants") or {}
     description = ", ".join(
         f"{variants.get(key, {}).get('name') or _EXERCISE_LABEL_FR.get(key, key)} {value}"
@@ -1386,7 +1414,7 @@ def _circuit_workout(
         for key, value in values.items() if key not in _NON_STEP_KEYS
     )
     return FitnessEquipmentWorkout(
-        workoutName=f"Smart Coach - {label} niveau {level}",
+        workoutName=name or f"Smart Coach - {label} niveau {level}",
         estimatedDurationInSecs=values["duration_min"] * 60,
         description=f"{values['rounds']} tours - {description}",
         workoutSegments=[segment],
@@ -1424,6 +1452,25 @@ def build_workout(session_type: str, level: int, values: dict):
                   else "Smart Coach - Marche recuperation"),
         )
     return _circuit_workout(session_type, level, values)
+
+
+def build_bonus_workout(workout: dict, name: Optional[str] = None):
+    """A ``bonus.bonus_workouts`` entry as a Garmin workout.
+
+    Parameters:
+        workout (dict): One bonus workout (circuit or the active walk).
+        name (str | None): Workout name; "Smart Coach - Bonus <title>"
+            by default.
+
+    Returns:
+        FitnessEquipmentWorkout: Ready to upload.
+    """
+    import bonus
+
+    name = name or f"Smart Coach - Bonus {workout['title']}"
+    if not workout["items"]:
+        return _treadmill_workout(0, bonus.ACTIVE_WALK, name=name)
+    return _circuit_workout("bonus", 0, bonus.as_values(workout), name=name)
 
 
 WEEK_AHEAD_DAYS = 7  # today + the next six days are on the watch
@@ -1601,6 +1648,19 @@ if __name__ == "__main__":
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
     import db
+
+    # Every exercise name sent to the watch was checked against Garmin's
+    # catalog (scripts/build_garmin_names.py): an unknown one shows as a
+    # bare category on the watch, or nothing.
+    checked = json.loads(CHECKED_NAMES_FILE.read_text())
+    unchecked = [
+        (category, name) for category, name in exercise_names_used()
+        if category not in checked or (name and name not in checked[category])
+    ]
+    assert not unchecked, (
+        f"Garmin names never checked: {unchecked} -- run "
+        "scripts/build_garmin_names.py"
+    )
 
     class _FakeGarmin:
         """Canned-payload stand-in -- no live Garmin call is made."""
