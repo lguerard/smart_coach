@@ -345,8 +345,72 @@ KETTLEBELL_SESSION = {
                       loaded=True)]],
     },
 }
+# The second kettlebell circuit (training.KETTLEBELL_CIRCUITS "B"),
+# alternating with the one above: the upper body and abs the first one
+# barely touches -- chest and triceps (floor press, overhead
+# extension, pull-over), biceps (hammer curl) and abs (Russian twist,
+# sit-up press). Same 20/10 format, one kettlebell, no bench.
+KETTLEBELL_SESSION_B = {
+    "kb_floor_press_sec": {
+        "unit": "sec", "muscles": {"chest": 1.0, "triceps": 0.8,
+                                   "shoulders": 0.4},
+        "rungs": [[_v("kb_floor_press_2h", "developpe couche au sol",
+                      "Allonge sur le dos, genoux plies, kettlebell tenue "
+                      "par les cornes au-dessus de la poitrine : descends "
+                      "jusqu'a poser les coudes au sol, pousse vers le "
+                      "plafond.", ("BENCH_PRESS", "KETTLEBELL_CHEST_PRESS"),
+                      loaded=True)]],
+    },
+    "kb_russian_twist_sec": {
+        "unit": "sec", "muscles": {"abs": 1.0, "shoulders": 0.2},
+        "rungs": [[_v("kb_russian_twist", "rotation russe",
+                      "Assis, buste incline en arriere, dos droit, pieds au "
+                      "sol (leves pour plus dur), kettlebell contre le "
+                      "ventre : tourne d'un cote a l'autre, le regard "
+                      "suit.", ("CORE", ""), loaded=True)]],
+    },
+    "kb_triceps_ext_sec": {
+        "unit": "sec", "muscles": {"triceps": 1.0, "shoulders": 0.3,
+                                   "abs": 0.2},
+        "rungs": [[_v("kb_overhead_ext", "extension triceps au-dessus de "
+                      "la tete",
+                      "Debout, ventre gaine, kettlebell tenue par les "
+                      "cornes derriere la tete, coudes vers le plafond : "
+                      "tends les bras, seuls les avant-bras bougent.",
+                      ("TRICEPS_EXTENSION", ""), loaded=True)]],
+    },
+    "kb_pullover_sec": {
+        "unit": "sec", "muscles": {"chest": 0.8, "back": 0.7, "abs": 0.5,
+                                   "triceps": 0.3},
+        "rungs": [[_v("kb_pullover", "pull-over au sol",
+                      "Allonge, genoux plies, kettlebell tenue par les "
+                      "cornes bras presque tendus au-dessus de la "
+                      "poitrine : descends-la derriere la tete sans "
+                      "cambrer, ramene-la en serrant les pectoraux.",
+                      ("CORE", ""), loaded=True)]],
+    },
+    "kb_hammer_curl_sec": {
+        "unit": "sec", "muscles": {"biceps": 1.0, "shoulders": 0.1},
+        "rungs": [[_v("kb_hammer_curl", "curl marteau, 1 bras",
+                      "Kettlebell tenue par la poignee, pouce vers le haut, "
+                      "coude colle au corps : monte et redescends "
+                      "lentement. Change de bras a mi-temps.",
+                      ("CURL", "KETTLEBELL_BICEPS_CURL"), loaded=True)]],
+    },
+    "kb_situp_press_sec": {
+        "unit": "sec", "muscles": {"abs": 1.0, "shoulders": 0.3,
+                                   "triceps": 0.3},
+        "rungs": [[_v("kb_situp_press", "releve de buste avec poussee",
+                      "Allonge, kettlebell contre la poitrine : remonte le "
+                      "buste et pousse la kettlebell vers le plafond en "
+                      "haut, redescends lentement. Plus facile : crunch "
+                      "simple, kettlebell contre la poitrine.",
+                      ("SIT_UP", ""), loaded=True)]],
+    },
+}
 # fmt: on
 LADDERS.update(KETTLEBELL_SESSION)
+LADDERS.update(KETTLEBELL_SESSION_B)
 
 # With one kettlebell, these slots swap to loaded ladders. The hinge
 # (swing, deadlift) replaces the glute bridge, and a row and a press

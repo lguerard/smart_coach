@@ -161,6 +161,15 @@ calendar event is retitled on those days. Protein and fat targets use
 the target weight when it is set below the current one
 (`progress.macro_weight_kg`).
 
+Kettlebell days alternate two 20/10 circuits by date
+(`training.KETTLEBELL_CIRCUITS`): A is the standing video workout, B
+works chest, triceps, biceps and abs (floor press, Russian twist,
+overhead extension, pull-over, hammer curl, sit-up press). Today also
+lists optional bonus workouts (`bonus.py`: abs & arms, chest &
+triceps, an active walk), sized from the person's levels, with tired
+muscles flagged; none on a rest day, only the walk on a recovery day,
+and they never move a level.
+
 ## Architecture
 
 ```text

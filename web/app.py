@@ -42,6 +42,7 @@ from webauthn.helpers.structs import (
 
 import achievements
 import body
+import bonus
 import bodymap
 import coach_payload
 import db
@@ -627,6 +628,8 @@ def home(request: Request) -> HTMLResponse:
     desk_break = desk.break_for_day(
         conn, user_id, date, tier, entry["status"] if entry else None,
     )
+    # Optional extra workouts, "just in case" -- never move a level.
+    bonus_workouts = bonus.bonus_workouts(conn, user_id, date, tier, fatigue)
     # The left column's week/month switch: both windows rendered, the
     # segmented control only toggles which one is visible.
     period = {
@@ -640,7 +643,7 @@ def home(request: Request) -> HTMLResponse:
             "entry": entry, "values": session_values,
             "off_title": off_title, "tier": tier,
             "movement": movement, "desk_break": desk_break,
-            "period": period,
+            "period": period, "bonus_workouts": bonus_workouts,
             "recovery_fig": recovery_fig, "tired": tired,
             "level_reason": (
                 entry["level_reason"] if entry and "level_reason" in entry.keys()

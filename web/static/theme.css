@@ -261,3 +261,4 @@ svg path[class^="bm-"] { stroke: var(--surface-1-solid, #fff); stroke-width: 1.5
 .htmx-indicator { opacity: 0; }
 .htmx-request.htmx-indicator, .htmx-request .htmx-indicator { opacity: 1; }
 summary.tablink::-webkit-details-marker { display: none; }
+details > summary.list-none::-webkit-details-marker { display: none; }

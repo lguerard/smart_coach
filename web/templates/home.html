@@ -171,6 +171,46 @@
     </div>
     {% endif %}
 
+    {% if bonus_workouts %}
+    <div class="card p-4">
+      <h2 class="card-title mb-1">{{ icon('zap', 16) }} Séances bonus
+        <span class="text-xs font-normal ml-auto" style="color: var(--muted);">facultatives</span>
+      </h2>
+      <p class="text-xs mb-2" style="color: var(--muted);">
+        En plus si tu as du temps et de l'énergie, ou à la place d'une
+        séance impossible. Elles ne changent pas tes niveaux.
+      </p>
+      <div class="divide-y" style="border-color: var(--border);">
+        {% for w in bonus_workouts %}
+        <details class="py-2" style="border-color: var(--border);">
+          <summary class="cursor-pointer flex items-center justify-between gap-2 list-none">
+            <span class="text-sm font-medium">{{ w.title }}
+              <span class="text-xs font-normal" style="color: var(--muted);">· {{ w.goal }}</span></span>
+            <span class="badge shrink-0" style="--badge: var(--accent);">{{ icon('timer', 13) }}~{{ w.minutes }} min</span>
+          </summary>
+          <p class="text-xs mt-2" style="color: var(--text-secondary);">{{ w.format }}</p>
+          {% if w.tired %}
+          <p class="text-xs mt-1" style="color: var(--warning);">À éviter aujourd'hui : {{ w.tired | join(', ') }} encore fatigué(s).</p>
+          {% endif %}
+          {% if w["items"] %}
+          <ul class="mt-2 space-y-1.5">
+            {% for item in w["items"] %}
+            <li class="text-sm">
+              <div class="flex items-baseline justify-between gap-3">
+                <span>{{ item.name }}</span>
+                <span class="num text-sm font-semibold shrink-0" style="color: var(--accent-text);">{{ item.amount }}</span>
+              </div>
+              <p class="text-xs" style="color: var(--muted);">{{ item.cue }}</p>
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </details>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     <div class="card p-4">
       <h2 class="card-title mb-3">{{ icon('activity', 16) }} Données du jour</h2>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">

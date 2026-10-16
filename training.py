@@ -1471,10 +1471,24 @@ def calisthenics_values(
     }, level, date, equipment)
 
 
-KETTLEBELL_MOVES = (
-    "kb_woodchop_sec", "kb_around_world_sec", "kb_around_world_rev_sec",
-    "kb_goblet_squat_sec", "kb_upright_row_sec", "kb_curl_sec",
-)
+# Two kettlebell circuits, alternating day by day (so the usual Friday
+# and Saturday get one each): A is the standing video workout, B works
+# chest, triceps, biceps and abs.
+KETTLEBELL_CIRCUITS = {
+    "A": ("kb_woodchop_sec", "kb_around_world_sec", "kb_around_world_rev_sec",
+          "kb_goblet_squat_sec", "kb_upright_row_sec", "kb_curl_sec"),
+    "B": ("kb_floor_press_sec", "kb_russian_twist_sec", "kb_triceps_ext_sec",
+          "kb_pullover_sec", "kb_hammer_curl_sec", "kb_situp_press_sec"),
+}
+KETTLEBELL_MOVES = KETTLEBELL_CIRCUITS["A"]
+
+
+def kettlebell_circuit(date: Optional[str]) -> str:
+    """``"A"`` or ``"B"``: alternates every calendar day, A without a
+    date (tests, a level edit stay deterministic)."""
+    if not date:
+        return "A"
+    return "AB"[dt.date.fromisoformat(date).toordinal() % 2]
 KETTLEBELL_REST_SEC = 10
 KETTLEBELL_WARMUP_MIN = 3
 # Level bands -> tours of the six moves. Inside a band the work time
@@ -1490,21 +1504,24 @@ def kettlebell_values(
 ) -> dict:
     """Level -> the 20/10 kettlebell interval session.
 
-    Six standing moves with one kettlebell (woodchop, around the waist
-    both ways, goblet squat, upright row, curl), each ``work_sec`` on and
-    10 s off, repeated ``tours`` times. Tours drop if they would not fit
-    in ``cap_min``.
+    Six moves with one kettlebell -- circuit A (woodchop, around the
+    waist both ways, goblet squat, upright row, curl) or circuit B
+    (floor press, Russian twist, overhead triceps extension, pull-over,
+    hammer curl, sit-up press), alternating by date -- each
+    ``work_sec`` on and 10 s off, repeated ``tours`` times. Tours drop
+    if they would not fit in ``cap_min``.
     """
+    moves = KETTLEBELL_CIRCUITS[kettlebell_circuit(date)]
     level = max(LEVEL_MIN, min(LEVEL_MAX, level))
     band, tours = next(
         (band, tours) for band, tours in KETTLEBELL_TOURS if level in band
     )
     position = (level - band.start) / max(1, len(band) - 1)
     work = 20 + round(10 * position)
-    per_tour_min = len(KETTLEBELL_MOVES) * (work + KETTLEBELL_REST_SEC) / 60
+    per_tour_min = len(moves) * (work + KETTLEBELL_REST_SEC) / 60
     while tours > 1 and KETTLEBELL_WARMUP_MIN + tours * per_tour_min > cap_min:
         tours -= 1
-    values = {move: work for move in KETTLEBELL_MOVES}
+    values = {move: work for move in moves}
     values.update({
         "rest_sec": KETTLEBELL_REST_SEC, "tours": tours, "rounds": tours,
         "duration_min": round(KETTLEBELL_WARMUP_MIN + tours * per_tour_min),
@@ -2836,5 +2853,20 @@ if __name__ == "__main__":
     assert tier_event_title(
         TIER_RECOVERY, "Kettlebell", {"duration_min": 20},
     ) == "Marche de récupération 20 min (Kettlebell annulé)"
+
+    # Kettlebell circuits alternate day by day: Friday and Saturday
+    # never get the same one, and B works chest, arms and abs.
+    friday = kettlebell_values(3, date="2026-10-16")
+    saturday = kettlebell_values(3, date="2026-10-17")
+    assert set(KETTLEBELL_CIRCUITS[kettlebell_circuit("2026-10-16")]) <= set(friday)
+    assert kettlebell_circuit("2026-10-16") != kettlebell_circuit("2026-10-17")
+    circuit_b = friday if "kb_floor_press_sec" in friday else saturday
+    worked = {m for slot in KETTLEBELL_CIRCUITS["B"]
+              for m, w in exercise_library.LADDERS[slot]["muscles"].items()
+              if w >= 0.8}
+    assert {"chest", "triceps", "biceps", "abs"} <= worked, worked
+    assert circuit_b["tours"] == friday["tours"] == saturday["tours"]
+    b_text = format_description_fr("kettlebell", 3, circuit_b, "green")
+    assert "developpe couche au sol" in b_text and "rotation russe" in b_text, b_text
 
     print("training.py: all checks passed")
