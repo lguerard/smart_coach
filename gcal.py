@@ -363,6 +363,7 @@ def find_matching_event(
 def upsert_session_event(
     service, calendar_id: str, day: dt.date, template: dict,
     description: str, duration_min: Optional[int] = None,
+    title: Optional[str] = None,
 ) -> str:
     """Update tonight's event description, or create it if missing.
 
@@ -377,6 +378,10 @@ def upsert_session_event(
             when set, the event's end time is moved to start +
             duration so a longer prescription shows as a longer
             calendar block. ``None`` keeps the event's own times.
+        title (str | None): Event title for the day when it differs
+            from the plan -- a rest day or a recovery walk must not
+            still read "Kettlebell" in the calendar. ``None`` keeps the
+            existing title (or the template's on creation).
 
     Returns:
         str: The event id that was updated or created.
@@ -384,6 +389,8 @@ def upsert_session_event(
     existing = find_matching_event(service, calendar_id, day, template)
     if existing:
         body: dict = {"description": description}
+        if title:
+            body["summary"] = title
         event_start = existing.get("start", {}).get("dateTime")
         if duration_min and event_start:
             end = dt.datetime.fromisoformat(event_start) + dt.timedelta(
@@ -405,7 +412,7 @@ def upsert_session_event(
     created = service.events().insert(
         calendarId=calendar_id,
         body={
-            "summary": template["title"], "description": description,
+            "summary": title or template["title"], "description": description,
             "start": {"dateTime": start.isoformat()},
             "end": {"dateTime": end.isoformat()},
         },
@@ -416,6 +423,7 @@ def upsert_session_event(
 def push_description(
     username: str, calendar_name: str, day: dt.date, template: dict,
     description: str, duration_min: Optional[int] = None,
+    title: Optional[str] = None,
 ) -> str:
     """Authenticate, resolve (or create) the calendar, and upsert the
     day's event.
@@ -432,6 +440,8 @@ def push_description(
         day (date): Day of the session.
         template (dict): The user's weekday template.
         description (str): New event description.
+        duration_min (int | None): See ``upsert_session_event``.
+        title (str | None): See ``upsert_session_event``.
 
     Returns:
         str: The event id that was updated or created.
@@ -440,10 +450,58 @@ def push_description(
     calendar_id = get_or_create_calendar_id(service, calendar_name)
     return upsert_session_event(
         service, calendar_id, day, template, description, duration_min,
+        title,
     )
 
 
 if __name__ == "__main__":
+    # upsert_session_event: the day's title replaces the planned one
+    # only when given (rest / recovery), on update and on creation.
+    class _FakeEvents:
+        def __init__(self, items):
+            self.items, self.patched, self.inserted = items, [], []
+            self._call = None
+
+        def list(self, **_):
+            self._call = ("list", None)
+            return self
+
+        def patch(self, body, **_):
+            self._call = ("patch", body)
+            return self
+
+        def insert(self, body, **_):
+            self._call = ("insert", body)
+            return self
+
+        def execute(self):
+            kind, body = self._call
+            if kind == "list":
+                return {"items": self.items}
+            (self.patched if kind == "patch" else self.inserted).append(body)
+            return {"id": "new"}
+
+    class _FakeCalendar:
+        def __init__(self, items):
+            self.events_api = _FakeEvents(items)
+
+        def events(self):
+            return self.events_api
+
+    plan = {"title": "Kettlebell a la maison", "start": "20:00",
+            "duration_min": 30}
+    existing = _FakeCalendar([{"id": "e1", "start": {
+        "dateTime": "2026-10-16T20:00:00+02:00"}}])
+    upsert_session_event(existing, "cal", dt.date(2026, 10, 16), plan,
+                         "RECUPERATION", 20, title="Marche de récupération")
+    assert existing.events_api.patched[0]["summary"] == "Marche de récupération"
+    upsert_session_event(existing, "cal", dt.date(2026, 10, 16), plan, "x")
+    assert "summary" not in existing.events_api.patched[1]  # train day
+    empty = _FakeCalendar([])
+    upsert_session_event(empty, "cal", dt.date(2026, 10, 16), plan, "REPOS",
+                         title="Repos")
+    assert empty.events_api.inserted[0]["summary"] == "Repos"
+
     window = _search_window(
         dt.date(2026, 7, 13), {"start": "20:00", "duration_min": 30},
     )

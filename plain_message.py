@@ -63,12 +63,19 @@ def _session_line(session: dict, fr: bool) -> str:
             "Water, sleep, and an easy walk if you feel like it."
         )
     if kind == "recovery":
+        replaces = session.get("replaces")
+        instead = (
+            (f" {replaces} est annule ce soir : c'est la seule chose a "
+             "faire aujourd'hui." if fr else
+             f" {replaces} is cancelled tonight: it is the only thing to "
+             "do today.") if replaces else ""
+        )
         return (
             f"Aujourd'hui, marche tranquille : {values.get('speed_kmh')} "
-            f"km/h, a plat, {values.get('duration_min')} min."
+            f"km/h, a plat, {values.get('duration_min')} min.{instead}"
             if fr else
             f"Today, an easy walk: {values.get('speed_kmh')} km/h, flat, "
-            f"{values.get('duration_min')} min."
+            f"{values.get('duration_min')} min.{instead}"
         )
     if kind == "treadmill":
         return (
@@ -246,4 +253,9 @@ if __name__ == "__main__":
     # Nothing in the brief still gives a greeting, never an exception.
     assert render({}) == "Bonjour !"
     assert render_or_none({"session": "broken"}) is None
+    walk = render({"language": "fr", "angle": "recovery", "session": {
+        "type": "recovery", "replaces": "Kettlebell a la maison",
+        "values": {"speed_kmh": 4.5, "duration_min": 20}}})
+    assert "Kettlebell a la maison est annule ce soir" in walk, walk
+    assert "seule chose" in walk, walk
     print("plain_message.py: all checks passed")

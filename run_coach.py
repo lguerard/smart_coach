@@ -124,6 +124,9 @@ def run_for_user(conn, user: dict) -> None:
                     dt.date.fromisoformat(today), push_template,
                     calendar_description,
                     duration_min=values.get("duration_min"),
+                    title=training.tier_event_title(
+                        tier, template["title"], values,
+                    ),
                 )
             except Exception as error:
                 calendar_note = f"(Calendrier non mis a jour: {error})"

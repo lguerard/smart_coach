@@ -447,6 +447,31 @@ def describe_tier_fr(
     )
 
 
+def tier_event_title(
+    tier: str, scheduled_title: str, values: Optional[dict] = None,
+) -> Optional[str]:
+    """Calendar title for a day the morning run changed, else ``None``.
+
+    The event keeps the plan's title on a training day. On a rest or
+    recovery day it says what actually happens, so the calendar never
+    reads "Kettlebell" above a description that cancels it.
+
+    Parameters:
+        tier (str): ``TIER_TRAIN`` / ``TIER_RECOVERY`` / ``TIER_REST``.
+        scheduled_title (str): The week plan's title for the day.
+        values (dict | None): Today's values (recovery duration).
+
+    Returns:
+        str | None: The new title, or ``None`` to keep the planned one.
+    """
+    if tier == TIER_REST:
+        return f"Repos ({scheduled_title} annulé)"
+    if tier == TIER_RECOVERY:
+        minutes = (values or RECOVERY_VALUES).get("duration_min")
+        return f"Marche de récupération {minutes} min ({scheduled_title} annulé)"
+    return None
+
+
 # Illness/overreaching watch: independent physiological signals
 # agreeing on the same day, sustained across days, rather than any
 # single vote -- a hard training day alone can spike RHR or dent
@@ -2717,5 +2742,11 @@ if __name__ == "__main__":
     )
     fb_conn.commit()
     assert pending_feedback(fb_conn, fb, "2026-10-13", morning)["date"] == "2026-10-13"
+
+    assert tier_event_title(TIER_TRAIN, "Kettlebell") is None
+    assert tier_event_title(TIER_REST, "Kettlebell") == "Repos (Kettlebell annulé)"
+    assert tier_event_title(
+        TIER_RECOVERY, "Kettlebell", {"duration_min": 20},
+    ) == "Marche de récupération 20 min (Kettlebell annulé)"
 
     print("training.py: all checks passed")

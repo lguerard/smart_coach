@@ -31,7 +31,7 @@ calls: dict = {}
 
 def _reset() -> None:
     calls.clear()
-    calls.update(pushed=[], retired=[], calendar=[], payloads=[], sent=[],
+    calls.update(pushed=[], retired=[], calendar=[], titles=[], payloads=[], sent=[],
                  week=[])
 
 
@@ -47,7 +47,7 @@ def _install(wellness: dict) -> None:
 
     gcal.get_calendar_service = _service
     gcal.push_description = lambda username, name, day, template, desc, **kw: (
-        calls["calendar"].append(desc)
+        calls["calendar"].append(desc), calls["titles"].append(kw.get("title"))
     )
     garmin_api.get_client = lambda username: object()
 
@@ -100,6 +100,9 @@ if __name__ == "__main__":
     assert calls["retired"] == [], calls
     assert calls["week"], "the week ahead is planned every morning"
     assert calls["calendar"][0].startswith("RECUPERATION"), calls
+    # The event title says it too: never "Tapis" above a walk.
+    assert calls["titles"][0].startswith("Marche de récupération"), calls
+    assert "annulé" in calls["titles"][0], calls
     session = calls["payloads"][0]["today_session"]
     assert session["type"] == "recovery", session
     assert session["scheduled_type"] == "treadmill", session
@@ -124,6 +127,7 @@ if __name__ == "__main__":
     run_coach.run_for_user(conn, user)
     assert calls["pushed"] == [] and calls["retired"] == [True], calls
     assert calls["calendar"][0].startswith("REPOS"), calls
+    assert calls["titles"][0].startswith("Repos ("), calls
     assert calls["payloads"][0]["today_session"]["type"] == "rest"
     row = _logged(conn, user["id"])
     assert row["tier"] == training.TIER_REST, dict(row)
