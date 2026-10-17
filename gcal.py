@@ -337,10 +337,37 @@ def _search_window(day: dt.date, template: dict) -> tuple[str, str]:
     return window_start.isoformat(), window_end.isoformat()
 
 
+# Marks the events smart_coach creates, so the morning run only ever
+# rewrites its own: anything else in the same calendar and time window
+# (a swim, a class the person added) is left alone.
+EVENT_TAG = {"smart_coach": "session"}
+# Titles the coach itself gives a changed day (training.tier_event_title),
+# for events created before the tag existed.
+_COACH_TITLE_PREFIXES = ("Repos (", "Marche de récupération", "Marche active")
+
+
+def is_coach_event(event: dict, template: dict) -> bool:
+    """Whether ``event`` is the session event smart_coach manages.
+
+    Tagged events always are; an untagged one only when it carries the
+    plan's title or a title the coach gives a rest/recovery day (events
+    from before the tag). Everything else belongs to the person.
+    """
+    private = (event.get("extendedProperties") or {}).get("private") or {}
+    if private.get("smart_coach") == EVENT_TAG["smart_coach"]:
+        return True
+    summary = event.get("summary") or ""
+    return summary == template.get("title") or summary.startswith(
+        _COACH_TITLE_PREFIXES,
+    )
+
+
 def find_matching_event(
     service, calendar_id: str, day: dt.date, template: dict,
 ):
-    """Find tonight's session event by time window, not title.
+    """Find tonight's session event: in the slot's time window, and one
+    smart_coach manages (``is_coach_event``) -- never an event the
+    person added there themselves.
 
     Parameters:
         service: Authenticated Calendar API service.
@@ -349,15 +376,17 @@ def find_matching_event(
         template (dict): Weekday template.
 
     Returns:
-        dict | None: The first matching event, or ``None``.
+        dict | None: The coach's event, or ``None``.
     """
     time_min, time_max = _search_window(day, template)
     result = service.events().list(
         calendarId=calendar_id, timeMin=time_min, timeMax=time_max,
         singleEvents=True, orderBy="startTime",
     ).execute()
-    items = result.get("items", [])
-    return items[0] if items else None
+    for event in result.get("items", []):
+        if is_coach_event(event, template):
+            return event
+    return None
 
 
 def upsert_session_event(
@@ -388,7 +417,11 @@ def upsert_session_event(
     """
     existing = find_matching_event(service, calendar_id, day, template)
     if existing:
-        body: dict = {"description": description}
+        body: dict = {
+            "description": description,
+            # Tags an event from before the tag existed, too.
+            "extendedProperties": {"private": dict(EVENT_TAG)},
+        }
         if title:
             body["summary"] = title
         event_start = existing.get("start", {}).get("dateTime")
@@ -413,6 +446,7 @@ def upsert_session_event(
         calendarId=calendar_id,
         body={
             "summary": title or template["title"], "description": description,
+            "extendedProperties": {"private": dict(EVENT_TAG)},
             "start": {"dateTime": start.isoformat()},
             "end": {"dateTime": end.isoformat()},
         },
@@ -490,13 +524,29 @@ if __name__ == "__main__":
 
     plan = {"title": "Kettlebell a la maison", "start": "20:00",
             "duration_min": 30}
-    existing = _FakeCalendar([{"id": "e1", "start": {
+    existing = _FakeCalendar([{"id": "e1", "summary": plan["title"], "start": {
         "dateTime": "2026-10-16T20:00:00+02:00"}}])
     upsert_session_event(existing, "cal", dt.date(2026, 10, 16), plan,
                          "RECUPERATION", 20, title="Marche de récupération")
     assert existing.events_api.patched[0]["summary"] == "Marche de récupération"
     upsert_session_event(existing, "cal", dt.date(2026, 10, 16), plan, "x")
     assert "summary" not in existing.events_api.patched[1]  # train day
+    assert existing.events_api.patched[0]["extendedProperties"] == {
+        "private": EVENT_TAG}  # legacy event tagged on first touch
+    # An event the person added in the same slot is never rewritten:
+    # the coach creates its own next to it.
+    theirs = _FakeCalendar([{"id": "mine", "summary": "Natation", "start": {
+        "dateTime": "2026-10-16T20:00:00+02:00"}}])
+    upsert_session_event(theirs, "cal", dt.date(2026, 10, 16), plan, "x")
+    assert theirs.events_api.patched == [], theirs.events_api.patched
+    assert theirs.events_api.inserted[0]["extendedProperties"] == {
+        "private": EVENT_TAG}
+    # A tagged event is the coach's whatever its title became.
+    tagged = {"id": "t", "summary": "Kettlebell renomme",
+              "extendedProperties": {"private": dict(EVENT_TAG)}}
+    assert is_coach_event(tagged, plan)
+    assert is_coach_event({"summary": "Repos (Tapis annulé)"}, plan)
+    assert not is_coach_event({"summary": "Natation"}, plan)
     empty = _FakeCalendar([])
     upsert_session_event(empty, "cal", dt.date(2026, 10, 16), plan, "REPOS",
                          title="Repos")
