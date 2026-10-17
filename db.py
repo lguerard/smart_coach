@@ -603,6 +603,32 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- Replaces garmin-coach's append-only history.log.
+-- The person's own changes to their circuits (custom_moves.py): moves
+-- of their own, and library moves taken out. circuit '' = every
+-- circuit of the type; 'A'/'B' = one kettlebell circuit.
+CREATE TABLE IF NOT EXISTS custom_moves (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    session_type TEXT NOT NULL,
+    circuit TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    cue TEXT NOT NULL DEFAULT '',
+    unit TEXT NOT NULL CHECK (unit IN ('reps', 'sec')),
+    amount INTEGER NOT NULL,
+    placement TEXT NOT NULL CHECK (placement IN ('round', 'end')),
+    garmin_key TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_custom_moves_user
+    ON custom_moves(user_id, session_type);
+CREATE TABLE IF NOT EXISTS removed_moves (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    session_type TEXT NOT NULL,
+    circuit TEXT NOT NULL DEFAULT '',
+    slot TEXT NOT NULL,
+    PRIMARY KEY (user_id, session_type, circuit, slot)
+);
+
 CREATE TABLE IF NOT EXISTS coach_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),

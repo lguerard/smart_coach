@@ -102,7 +102,8 @@ _EXERCISE_LABEL_FR = {
     "mountain_climbers": "mountain climbers",
     "jumping_jacks": "jumping jacks",
 }
-_NON_STEP_KEYS = {"rounds", "duration_min", "variants", "rest_sec", "tours"}
+_NON_STEP_KEYS = {"rounds", "duration_min", "variants", "rest_sec", "tours",
+                  "finisher"}
 
 # training.session_values() key -> (Garmin exercise category, exercise
 # name), from garminconnect's own exercises.py catalog -- this is what
@@ -137,8 +138,8 @@ CHECKED_NAMES_FILE = (
 
 def exercise_names_used() -> list[tuple[str, str]]:
     """Every (category, exercise name) a pushed workout can carry: the
-    ladder variants (bodyweight and kettlebell), the slot fallbacks and
-    the bonus crunch.
+    ladder variants (bodyweight and kettlebell), the slot fallbacks, the
+    bonus crunch and the exercises offered for the person's own moves.
     Checked against Garmin's catalog by scripts/build_garmin_names.py.
     """
     import exercise_library
@@ -152,8 +153,10 @@ def exercise_names_used() -> list[tuple[str, str]]:
     }
     pairs |= set(_EXERCISE_CATALOG.values())
     import bonus
+    import custom_moves
 
     pairs.add(bonus.CRUNCH_GARMIN)
+    pairs |= {pair for _, pair in custom_moves.GARMIN_PICKER.values() if pair}
     return sorted(pairs)
 
 
@@ -1294,7 +1297,7 @@ def _treadmill_workout(
     )
 
 
-def _circuit_steps(values: dict) -> list[ExecutableStep]:
+def _circuit_steps(values: dict, start_order: int = 1) -> list[ExecutableStep]:
     """One step per exercise in ``values`` (reps- or time-based).
 
     Parameters:
@@ -1310,7 +1313,7 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
     for key, value in (
         (k, v) for k, v in values.items() if k not in _NON_STEP_KEYS
     ):
-        order = len(steps)
+        order = start_order - 1 + len(steps)
         is_time = key.endswith("_sec")
         # Garmin's end-condition type IDs (2 = time, 10 = reps) -- hardcoded
         # rather than read off garminconnect.workout.ConditionType, since
@@ -1358,7 +1361,7 @@ def _circuit_steps(values: dict) -> list[ExecutableStep]:
             # Interval sessions (20 s on / 10 s off): a timed rest step
             # after each move, so the watch runs the whole timer.
             steps.append(ExecutableStep(
-                stepOrder=len(steps) + 1,
+                stepOrder=start_order + len(steps),
                 stepType={
                     "stepTypeId": StepType.REST,
                     "stepTypeKey": "rest", "displayOrder": 5,
@@ -1395,6 +1398,13 @@ def _circuit_workout(
     group = create_repeat_group(
         values["rounds"], _circuit_steps(values), step_order=1,
     )
+    # The person's moves "once, at the end" (custom_moves): after the
+    # repeated tours, one step each -- a stretch, say.
+    finisher = values.get("finisher") or []
+    after = _circuit_steps({
+        **{item["slot"]: item["amount"] for item in finisher},
+        "variants": {item["slot"]: item for item in finisher},
+    }, start_order=2) if finisher else []
     segment = WorkoutSegment(
         segmentOrder=1,
         # 5/strength_training, not 6/cardio_training -- Garmin only
@@ -1404,7 +1414,7 @@ def _circuit_workout(
             "sportTypeId": 5, "sportTypeKey": "strength_training",
             "displayOrder": 5,
         },
-        workoutSteps=[group],
+        workoutSteps=[group, *after],
     )
     label = training.SESSION_LABEL_FR.get(session_type, session_type)
     variants = values.get("variants") or {}
@@ -1413,6 +1423,10 @@ def _circuit_workout(
         f"{'s' if key.endswith('_sec') else ''}"
         for key, value in values.items() if key not in _NON_STEP_KEYS
     )
+    if finisher:
+        import custom_moves
+
+        description += " ; " + custom_moves.finisher_text(values)
     return FitnessEquipmentWorkout(
         workoutName=name or f"Smart Coach - {label} niveau {level}",
         estimatedDurationInSecs=values["duration_min"] * 60,
@@ -1580,7 +1594,6 @@ def plan_week_ahead(
         dict: ``created`` (dates newly pushed) and ``removed`` (past
         dates cleaned up).
     """
-    import exercise_library
     import training
 
     start = dt.date.fromisoformat(today)
@@ -1618,8 +1631,6 @@ def plan_week_ahead(
     conn.commit()
 
     schedule = training.schedule_for_user(conn, user_id)
-    cap = training.session_cap_min(conn, user_id)
-    equipment = exercise_library.equipment_for(conn, user_id)
     created = []
     for offset in range(1, days):
         day = start + dt.timedelta(days=offset)
@@ -1633,8 +1644,8 @@ def plan_week_ahead(
         ).fetchone():
             continue
         level = training.get_level(conn, user_id, session_type)
-        values = training.session_values(
-            session_type, level, cap, date, equipment,
+        values = training.user_session_values(
+            conn, user_id, session_type, level, date,
         )
         if sync_planned_workout(
             conn, user_id, client, date, session_type, level, values,
@@ -2164,6 +2175,25 @@ if __name__ == "__main__":
     assert kb_steps[1]["stepType"]["stepTypeKey"] == "rest"
     assert kb_steps[1]["endConditionValue"] == 10
     assert [s["stepOrder"] for s in kb_steps] == list(range(1, 13))
+    # The person's own moves: one in every tour, one stretch at the end.
+    custom = dict(kb_values)
+    custom["custom_1"] = 8
+    custom["variants"] = {**kb_values["variants"], "custom_1": {
+        "name": "Pompes diamant", "garmin": ["PUSH_UP", "PUSH_UP"]}}
+    custom["finisher"] = [{"slot": "custom_2_sec", "name": "Etirement triceps",
+                           "amount": 30, "unit": "sec",
+                           "garmin": ["WARM_UP", "TRICEPS_STRETCH"]}]
+    custom_steps = build_workout("kettlebell", 3, custom).to_dict()[
+        "workoutSegments"][0]["workoutSteps"]
+    assert len(custom_steps) == 2, custom_steps  # the tours, then the stretch
+    assert len(custom_steps[0]["workoutSteps"]) == 14  # 7 moves + 7 rests
+    pushups = custom_steps[0]["workoutSteps"][12]
+    assert pushups["endCondition"]["conditionTypeKey"] == "reps", pushups
+    stretch = custom_steps[1]
+    assert stretch["stepOrder"] == 2 and stretch["endConditionValue"] == 30
+    assert (stretch["category"], stretch["exerciseName"]) == (
+        "WARM_UP", "TRICEPS_STRETCH"), stretch
+    assert stretch["stepType"]["stepTypeKey"] == "interval"  # no rest after
 
     class _FakeWorkoutGarmin:
         """Records upload/schedule/delete calls -- no live push made."""

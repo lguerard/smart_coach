@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import sqlite3
+from urllib.parse import urlencode
 import time
 import urllib.parse
 from pathlib import Path
@@ -43,6 +44,7 @@ from webauthn.helpers.structs import (
 import achievements
 import body
 import bonus
+import custom_moves
 import bodymap
 import coach_payload
 import db
@@ -815,9 +817,8 @@ async def edit_today_level(request: Request):
     )
     conn.commit()
 
-    values = training.session_values(
-        session_type, level, training.session_cap_min(conn, user_id), date,
-        exercise_library.equipment_for(conn, user_id),
+    values = training.user_session_values(
+        conn, user_id, session_type, level, date,
     )
     description = training.format_description_fr(
         session_type, level, values, entry["status"],
@@ -1324,6 +1325,122 @@ def achievements_history(request: Request) -> HTMLResponse:
 
 
 # --- Settings ---
+
+# --- Programme: the person's own changes to their circuits ---
+
+def _circuit_date(date: str, circuit: str) -> str:
+    """Today, or tomorrow when today is the other kettlebell circuit."""
+    if not circuit or training.kettlebell_circuit(date) == circuit:
+        return date
+    return (dt.date.fromisoformat(date) + dt.timedelta(days=1)).isoformat()
+
+
+def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
+    """One block per editable session (each kettlebell circuit apart):
+    the library moves at today's level with their in/out state, the
+    person's own moves, and the session as it will actually be."""
+    date = today_str(conn, user_id)
+    used = training.scheduled_types(conn, user_id)
+    blocks = []
+    for session_type in custom_moves.EDITABLE_TYPES:
+        if session_type not in used:
+            continue
+        circuits = ("A", "B") if session_type == "kettlebell" else ("",)
+        level = training.get_level(conn, user_id, session_type)
+        for circuit in circuits:
+            day = _circuit_date(date, circuit)
+            base = training.session_values(
+                session_type, level, training.session_cap_min(conn, user_id),
+                day, exercise_library.equipment_for(conn, user_id),
+            )
+            removed = custom_moves.removed_for(conn, user_id, session_type, circuit)
+            variants = base.get("variants") or {}
+            library = [
+                {"slot": slot, "name": variants.get(slot, {}).get("name", slot),
+                 "amount": f"{value}{' s' if slot.endswith('_sec') else ''}",
+                 "removed": slot in removed}
+                for slot, value in base.items()
+                if slot in exercise_library.LADDERS
+            ]
+            own = [
+                {**dict(row), "garmin_label":
+                 custom_moves.GARMIN_PICKER.get(row["garmin_key"], ("", None))[0]}
+                for row in custom_moves.moves_for(conn, user_id, session_type, circuit)
+            ]
+            final = training.user_session_values(
+                conn, user_id, session_type, level, day,
+            )
+            blocks.append({
+                "type": session_type, "circuit": circuit,
+                "label": training.SESSION_LABEL_FR[session_type]
+                + (f" - circuit {circuit}" if circuit else ""),
+                "level": level, "library": library, "own": own,
+                "summary": training.format_description_fr(
+                    session_type, level, final, "yellow",
+                ).split(": ", 1)[1].split(" (statut")[0],
+            })
+    return blocks
+
+
+@app.get("/programme", response_class=HTMLResponse)
+def programme_page(request: Request) -> HTMLResponse:
+    """Edit the circuits: own moves in, library moves out."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    return templates.TemplateResponse(
+        request, "programme.html", {
+            "blocks": _programme_blocks(conn, user_id),
+            "picker": custom_moves.GARMIN_PICKER,
+            "error": request.query_params.get("error"),
+            "saved": request.query_params.get("saved") is not None,
+            "max_amount": custom_moves.MAX_AMOUNT,
+        },
+    )
+
+
+@app.post("/programme/move")
+async def programme_add_move(request: Request):
+    """Add one of the person's own moves."""
+    conn = get_conn()
+    form = await request.form()
+    try:
+        custom_moves.add_move(
+            conn, current_user_id(request), str(form.get("session_type", "")),
+            str(form.get("circuit", "")), str(form.get("name", "")),
+            str(form.get("cue", "")), str(form.get("unit", "")),
+            form.get("amount"), str(form.get("placement", "")),
+            str(form.get("garmin_key", "")),
+        )
+    except ValueError as error:
+        return RedirectResponse(
+            "/programme?" + urlencode({"error": str(error)}), status_code=303,
+        )
+    return RedirectResponse("/programme?saved", status_code=303)
+
+
+@app.post("/programme/move/{move_id}/delete")
+def programme_delete_move(move_id: int, request: Request):
+    """Delete one of the person's own moves (theirs only)."""
+    custom_moves.delete_move(get_conn(), current_user_id(request), move_id)
+    return RedirectResponse("/programme?saved", status_code=303)
+
+
+@app.post("/programme/slot")
+async def programme_toggle_slot(request: Request):
+    """Take a library move out of a circuit, or put it back."""
+    form = await request.form()
+    try:
+        custom_moves.set_removed(
+            get_conn(), current_user_id(request),
+            str(form.get("session_type", "")), str(form.get("circuit", "")),
+            str(form.get("slot", "")), form.get("removed") == "1",
+        )
+    except ValueError as error:
+        return RedirectResponse(
+            "/programme?" + urlencode({"error": str(error)}), status_code=303,
+        )
+    return RedirectResponse("/programme?saved", status_code=303)
+
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request) -> HTMLResponse:

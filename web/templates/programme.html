@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Programme - Smart Coach{% endblock %}
+{% block content %}
+
+<div class="card p-4">
+  <h1 class="card-title text-base">{{ icon('kettlebell', 18) }} Mon programme</h1>
+  <p class="text-xs mt-1" style="color: var(--text-secondary);">
+    Tes changements sont gardés et appliqués chaque matin : sur la montre,
+    dans l'agenda, sur l'accueil et dans le message. Les mouvements du
+    programme suivent ton niveau ; ceux que tu ajoutes gardent la quantité
+    que tu choisis.
+  </p>
+</div>
+
+{% if error %}
+<div class="card p-3 text-sm" style="border-color: var(--critical); color: var(--critical);">{{ error }}</div>
+{% elif saved %}
+<div class="card p-3 text-sm" style="border-color: var(--good); color: var(--good);">Enregistré.</div>
+{% endif %}
+
+{% if not blocks %}
+<div class="card p-5 text-sm text-center" style="color: var(--muted);">
+  Aucune séance modifiable dans ton planning (circuits et kettlebell).
+  Le planning se règle dans <a href="/settings" class="link">Réglages</a>.
+</div>
+{% endif %}
+
+<div class="grid gap-4 lg:grid-cols-2 items-start">
+{% for b in blocks %}
+<section class="card p-4">
+  <div class="flex items-center justify-between gap-2">
+    <h2 class="card-title">{{ session_badge(b.type, b.label) }}</h2>
+    <span class="text-xs" style="color: var(--muted);">niveau {{ b.level }}</span>
+  </div>
+  <p class="text-xs mt-2 p-2.5 rounded-lg" style="background: var(--surface-2); color: var(--text-secondary);">{{ b.summary }}</p>
+
+  <p class="caption mt-4 mb-1.5">Mouvements du programme</p>
+  <ul class="divide-y" style="border-color: var(--border);">
+    {% for m in b.library %}
+    <li class="py-1.5 flex items-center justify-between gap-2" style="border-color: var(--border);">
+      <span class="text-sm {{ 'line-through' if m.removed }}" style="{{ 'color: var(--muted);' if m.removed }}">
+        {{ m.name }} <span class="text-xs" style="color: var(--muted);">{{ m.amount }}</span>
+      </span>
+      <form method="post" action="/programme/slot">
+        <input type="hidden" name="session_type" value="{{ b.type }}">
+        <input type="hidden" name="circuit" value="{{ b.circuit }}">
+        <input type="hidden" name="slot" value="{{ m.slot }}">
+        <input type="hidden" name="removed" value="{{ '0' if m.removed else '1' }}">
+        <button class="btn btn-sm">{{ 'Remettre' if m.removed else 'Retirer' }}</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <p class="caption mt-4 mb-1.5">Mes mouvements</p>
+  {% if b.own %}
+  <ul class="divide-y" style="border-color: var(--border);">
+    {% for m in b.own %}
+    <li class="py-1.5 flex items-start justify-between gap-2" style="border-color: var(--border);">
+      <div class="min-w-0">
+        <p class="text-sm">{{ m.name }}
+          <span class="text-xs" style="color: var(--muted);">{{ m.amount }}{{ ' s' if m.unit == 'sec' else ' reps' }} ·
+            {{ 'à chaque tour' if m.placement == 'round' else 'une fois à la fin' }}
+            {% if b.type == 'kettlebell' and not m.circuit %}· circuits A et B{% endif %}</span></p>
+        {% if m.cue %}<p class="text-xs" style="color: var(--text-secondary);">{{ m.cue }}</p>{% endif %}
+        {% if m.garmin_key %}<p class="text-xs" style="color: var(--muted);">Montre : {{ m.garmin_label }}</p>{% endif %}
+      </div>
+      <form method="post" action="/programme/move/{{ m.id }}/delete">
+        <button class="btn btn-sm" style="color: var(--critical);">Supprimer</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-xs" style="color: var(--muted);">Aucun pour l'instant.</p>
+  {% endif %}
+
+  <details class="mt-3">
+    <summary class="cursor-pointer text-sm font-medium link">+ Ajouter un mouvement</summary>
+    <form method="post" action="/programme/move" class="grid gap-2 mt-3 text-sm">
+      <input type="hidden" name="session_type" value="{{ b.type }}">
+      <label>Nom
+        <input name="name" required maxlength="60" placeholder="Étirement triceps kettlebell"
+          class="mt-1 w-full rounded-lg border px-3 py-2" style="border-color: var(--border);">
+      </label>
+      <label>Comment le faire (facultatif)
+        <input name="cue" maxlength="300" placeholder="Kettlebell derrière la tête, coudes vers le plafond, laisse descendre doucement."
+          class="mt-1 w-full rounded-lg border px-3 py-2" style="border-color: var(--border);">
+      </label>
+      <div class="grid grid-cols-2 gap-2">
+        <label>Quantité
+          <input name="amount" type="number" min="1" max="{{ max_amount }}" value="30" required
+            class="mt-1 w-full rounded-lg border px-3 py-2" style="border-color: var(--border);">
+        </label>
+        <label>Unité
+          <select name="unit" class="mt-1 w-full rounded-lg border px-3 py-2" style="border-color: var(--border);">
+            <option value="sec">secondes</option>
+            <option value="reps">répétitions</option>
+          </select>
+        </label>
+      </div>
+      <label>Quand
+        <select name="placement" class="mt-1 w-full rounded-lg border px-3 py-2" style="border-color: var(--border);">
+          <option value="end">une fois, à la fin (étirement)</option>
+          <option value="round">à chaque tour</option>
+        </select>
+      </label>
+      {% if b.type == 'kettlebell' %}
+      <label>Circuit
+        <select name="circuit" class="mt-1 w-full rounded-lg border px-3 py-2" style="border-color: var(--border);">
+          <option value="">A et B</option>
+          <option value="{{ b.circuit }}">seulement le circuit {{ b.circuit }}</option>
+        </select>
+      </label>
+      {% else %}
+      <input type="hidden" name="circuit" value="">
+      {% endif %}
+      <label>Exercice affiché sur la montre
+        <select name="garmin_key" class="mt-1 w-full rounded-lg border px-3 py-2" style="border-color: var(--border);">
+          {% for key, (label, _) in picker.items() %}
+          <option value="{{ key }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="btn btn-primary mt-1">Ajouter</button>
+    </form>
+  </details>
+</section>
+{% endfor %}
+</div>
+{% endblock %}

@@ -1540,6 +1540,26 @@ SESSION_VALUE_FUNCS = {
 }
 
 
+def user_session_values(
+    conn: sqlite3.Connection, user_id: int, session_type: str, level: int,
+    date: Optional[str] = None,
+) -> dict:
+    """``session_values`` for this person: their session cap, their
+    equipment, and their own changes (``custom_moves``). What every
+    place that builds a real session uses -- the morning run, the
+    dashboard, the watch's week ahead -- so an edit made on the website
+    shows up everywhere and survives every morning.
+    """
+    import custom_moves
+
+    values = session_values(
+        session_type, level, session_cap_min(conn, user_id), date,
+        exercise_library.equipment_for(conn, user_id),
+    )
+    circuit = kettlebell_circuit(date) if session_type == "kettlebell" else ""
+    return custom_moves.apply(conn, user_id, session_type, values, circuit)
+
+
 def session_values(
     session_type: str, level: int,
     cap_min: int = DEFAULT_SESSION_CAP_MIN, date: Optional[str] = None,
@@ -1573,7 +1593,7 @@ def format_description_fr(
         parts = []
         for slot, value in values.items():
             if slot in ("rounds", "duration_min", "variants", "rest_sec",
-                        "tours"):
+                        "tours", "finisher"):
                 continue
             name = variants.get(slot, {}).get("name", slot)
             unit = "s" if slot.endswith("_sec") else ""
@@ -1592,6 +1612,10 @@ def format_description_fr(
             f"{values['rounds']} tours{effort} (~{values['duration_min']} "
             f"min) - " + ", ".join(parts)
         )
+        if values.get("finisher"):
+            import custom_moves
+
+            body += " ; " + custom_moves.finisher_text(values)
 
     return (
         f"Niveau {level} - {label}: {body}. "
@@ -1638,10 +1662,7 @@ def _render_session(
         return values, describe_tier_fr(TIER_RECOVERY, title, reasons, values)
     if session_type is None:
         return {}, None
-    values = session_values(
-        session_type, level, session_cap_min(conn, user_id), date,
-        exercise_library.equipment_for(conn, user_id),
-    )
+    values = user_session_values(conn, user_id, session_type, level, date)
     return values, format_description_fr(session_type, level, values, status)
 
 

@@ -151,6 +151,11 @@
           </li>
           {% endfor %}
         </ul>
+        {% if values.finisher %}
+        <p class="text-xs mt-1" style="color: var(--text-secondary);"><span class="caption">À la fin</span> ·
+          {% for f in values.finisher %}{{ f.name }} {{ f.amount }}{{ ' s' if f.unit == 'sec' else '' }}{{ ', ' if not loop.last }}{% endfor %}</p>
+        {% endif %}
+        <a href="/programme" class="text-xs link inline-block mt-2">Modifier mon programme</a>
       </details>
       {% endif %}
     </div>

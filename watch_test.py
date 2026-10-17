@@ -31,7 +31,6 @@ from pathlib import Path
 
 import bonus
 import db
-import exercise_library
 import metrics
 import training
 from ingest import garmin_api
@@ -43,16 +42,14 @@ PREFIX = "Smart Coach TEST - "
 def test_workouts(conn, user_id: int, date: str) -> list[tuple[str, object, bool]]:
     """``(name, workout, scheduled)`` for every TEST workout."""
     level = training.get_level(conn, user_id, "kettlebell")
-    equipment = exercise_library.equipment_for(conn, user_id)
     out = []
     next_day = (dt.date.fromisoformat(date) + dt.timedelta(days=1)).isoformat()
     for circuit in ("A", "B"):
         # Circuits alternate by date: whichever of the day and the next
         # has this one gives its values (both go on ``date``).
         day = date if training.kettlebell_circuit(date) == circuit else next_day
-        values = training.session_values(
-            "kettlebell", level, training.session_cap_min(conn, user_id),
-            day, equipment,
+        values = training.user_session_values(
+            conn, user_id, "kettlebell", level, day,
         )
         name = f"{PREFIX}Kettlebell {circuit}"
         out.append((name, garmin_api._circuit_workout(

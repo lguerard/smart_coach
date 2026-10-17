@@ -265,6 +265,10 @@ def session_brief(payload: dict) -> dict:
             f"{'/jambe' if slot.endswith('_per_leg') else ''}"
             for slot, info in variants.items() if slot in values
         ]
+        if values.get("finisher"):
+            import custom_moves
+
+            brief["moves"].append(custom_moves.finisher_text(values))
         nexts = [info["next"] for info in variants.values()
                  if info.get("next")]
         if nexts:

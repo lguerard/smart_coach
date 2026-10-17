@@ -178,6 +178,16 @@ self-check refuses any name not in it. `watch_test.py` previews, sends
 and removes "Smart Coach TEST" workouts (both kettlebell circuits, the
 bonus workouts) without touching the planned week.
 
+Programme (`/programme`, `custom_moves.py`): the person edits their
+circuits on the website -- takes library moves out, adds moves of their
+own (reps or seconds, in every tour or once at the end, with an optional
+Garmin exercise from a checked list), per kettlebell circuit or both.
+Stored in `custom_moves` / `removed_moves` and applied by
+`training.user_session_values`, which every real session goes through
+(morning run, dashboard, level edit, week ahead on the watch), so an edit
+is never undone by the next morning. Own moves keep a fixed count; a
+change that would empty a session is ignored.
+
 ## Architecture
 
 ```text
