@@ -171,6 +171,67 @@ def removed_for(
     }
 
 
+def set_override(
+    conn: sqlite3.Connection, user_id: int, session_type: str, circuit: str,
+    slot: str, amount: int,
+) -> None:
+    """Fix a library move's count (or ``rounds``) for this session."""
+    if session_type not in EDITABLE_TYPES or circuit not in CIRCUITS:
+        raise ValueError("Séance inconnue.")
+    if slot != "rounds" and slot not in exercise_library.LADDERS:
+        raise ValueError("Mouvement inconnu.")
+    amount = int(amount)
+    if not 1 <= amount <= MAX_AMOUNT:
+        raise ValueError(f"La quantité doit être entre 1 et {MAX_AMOUNT}.")
+    conn.execute(
+        "INSERT INTO slot_overrides VALUES (?, ?, ?, ?, ?) ON CONFLICT"
+        "(user_id, session_type, circuit, slot) DO UPDATE SET "
+        "amount = excluded.amount",
+        (user_id, session_type, circuit, slot, amount),
+    )
+    conn.commit()
+
+
+def clear_override(
+    conn: sqlite3.Connection, user_id: int, session_type: str, circuit: str,
+    slot: str,
+) -> None:
+    """Give a count back to the level."""
+    conn.execute(
+        "DELETE FROM slot_overrides WHERE user_id = ? AND session_type = ? "
+        "AND circuit = ? AND slot = ?", (user_id, session_type, circuit, slot),
+    )
+    conn.commit()
+
+
+def overrides_for(
+    conn: sqlite3.Connection, user_id: int, session_type: str,
+    circuit: str = "",
+) -> dict:
+    """Fixed counts for this type and circuit; a circuit's own wins over
+    one set for every circuit."""
+    rows = conn.execute(
+        "SELECT slot, amount, circuit FROM slot_overrides WHERE user_id = ? "
+        "AND session_type = ? AND circuit IN ('', ?) ORDER BY circuit",
+        (user_id, session_type, circuit),
+    ).fetchall()
+    return {row["slot"]: row["amount"] for row in rows}
+
+
+def set_move_amount(
+    conn: sqlite3.Connection, user_id: int, move_id: int, amount: int,
+) -> None:
+    """Change one of the person's own moves' count (theirs only)."""
+    amount = int(amount)
+    if not 1 <= amount <= MAX_AMOUNT:
+        raise ValueError(f"La quantité doit être entre 1 et {MAX_AMOUNT}.")
+    conn.execute(
+        "UPDATE custom_moves SET amount = ? WHERE id = ? AND user_id = ?",
+        (amount, move_id, user_id),
+    )
+    conn.commit()
+
+
 def _move_seconds(unit: str, amount: int) -> int:
     return amount if unit == "sec" else amount * REP_SECONDS
 
@@ -206,7 +267,8 @@ def apply(
         return values
     removed = removed_for(conn, user_id, session_type, circuit)
     own = moves_for(conn, user_id, session_type, circuit)
-    if not removed and not own:
+    overrides = overrides_for(conn, user_id, session_type, circuit)
+    if not removed and not own and not overrides:
         return values
     out = {k: v for k, v in values.items() if k not in removed}
     variants = {k: v for k, v in (values.get("variants") or {}).items()
@@ -230,6 +292,22 @@ def apply(
             seconds += _move_seconds(row["unit"], row["amount"])
     if not any(k not in _NON_STEP for k in out) and not finisher:
         return values  # everything taken out: keep the session as built
+    # Counts fixed in Garmin Connect (watch_sync): a move's amount, and
+    # the number of tours.
+    for slot, amount in overrides.items():
+        if slot != "rounds" and slot in out and slot not in _NON_STEP:
+            unit = "sec" if slot.endswith("_sec") else "reps"
+            seconds += rounds * (_move_seconds(unit, amount) - _move_seconds(unit, out[slot]))
+            out[slot] = amount
+    if "rounds" in overrides and overrides["rounds"] != rounds:
+        per_round = sum(
+            _move_seconds("sec" if k.endswith("_sec") else "reps", v) + rest
+            for k, v in out.items() if k not in _NON_STEP
+        )
+        seconds += (overrides["rounds"] - rounds) * per_round
+        out["rounds"] = overrides["rounds"]
+        if "tours" in out:
+            out["tours"] = overrides["rounds"]
     if "variants" in values or variants:
         out["variants"] = variants
     if finisher:
@@ -333,6 +411,24 @@ if __name__ == "__main__":
         raise AssertionError(bad)
     try:
         set_removed(conn, uid, "kettlebell", "", "not_a_slot", True)
+        raise AssertionError("unknown slot accepted")
+    except ValueError:
+        pass
+    # Counts fixed from Garmin: a move's amount and the tours.
+    plain = training.session_values("upper_body", 2, date=friday)
+    set_override(conn, other, "upper_body", "", "pushups", 25)
+    set_override(conn, other, "upper_body", "", "rounds", 5)
+    fixed = apply(conn, other, "upper_body", plain)
+    assert fixed["pushups"] == 25 and fixed["rounds"] == 5, fixed
+    assert fixed["duration_min"] > plain["duration_min"], fixed
+    clear_override(conn, other, "upper_body", "", "rounds")
+    assert apply(conn, other, "upper_body", plain)["rounds"] == plain["rounds"]
+    # A circuit's own override wins over the all-circuits one.
+    set_override(conn, other, "kettlebell", "", "rounds", 6)
+    set_override(conn, other, "kettlebell", circuit, "rounds", 7)
+    assert apply(conn, other, "kettlebell", base, circuit)["tours"] == 7
+    try:
+        set_override(conn, other, "upper_body", "", "nope", 3)
         raise AssertionError("unknown slot accepted")
     except ValueError:
         pass

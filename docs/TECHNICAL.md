@@ -193,6 +193,19 @@ day already on the watch rebuilt at its type's current level with the
 person's own moves -- only the changed ones re-uploaded, no new decision,
 no level change. The web container mounts `data/garmin-tokens` for it.
 
+Two-way watch sync (`watch_sync.py`): each workout put on the watch is
+stored with its shape (steps, the slot each came from, counts). Before
+the morning run builds today's session and before "Envoyer sur la
+montre", the planned workouts are read back from Garmin
+(`get_workout_by_id`) and what the person changed in Garmin Connect is
+taken into the programme instead of overwritten: a move added (own
+move, in every tour or at the end), removed (taken out), a count
+changed (fixed: `slot_overrides`, or their own move's amount), the
+number of tours (fixed), the workout deleted (that day stays empty).
+Kettlebell changes apply to that day's circuit. Every change is logged
+in `watch_edits` and shown on the Programme page, with "Rétablir" for
+fixed counts. Treadmill and recovery walks are not compared.
+
 Sessions done other than planned (`done_sessions.py`): what was done
 on a day is what the person declared on the Sessions page ("Ce n'est
 pas ce que j'ai fait", or a day not listed), else what the recorded

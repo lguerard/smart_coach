@@ -17,6 +17,7 @@ workout, and checks/announces achievement unlocks. One user's failure
 """
 
 import datetime as dt
+import sys
 
 import achievements
 import coach_payload
@@ -27,6 +28,7 @@ import metrics
 import notify
 import progress
 import training
+import watch_sync
 import training_load
 import weather
 from ingest import garmin_api
@@ -43,6 +45,17 @@ def run_for_user(conn, user: dict) -> None:
     wellness = metrics.daily_wellness(conn, user_id, today)
     nutrition = metrics.nutrition_for_date(conn, user_id, today)
     weekly = progress.weekly_progress(conn, user_id, today)
+
+    # Two-way watch sync: edits made in Garmin Connect to the planned
+    # workouts go into the programme BEFORE today's session is built,
+    # so this morning sends them back instead of overwriting them.
+    # Best-effort: no Garmin, no import, the morning still runs.
+    watch_client = None
+    try:
+        watch_client = garmin_api.get_client(username)
+        watch_sync.import_watch_edits(conn, user_id, watch_client, today)
+    except Exception as error:  # noqa: BLE001
+        print(f"watch_sync: import skipped: {error}", file=sys.stderr)
 
     # The whole training decision (illness, level, deload, rest or
     # recovery instead of a session) lives in training.plan_day: this
@@ -138,7 +151,7 @@ def run_for_user(conn, user: dict) -> None:
     # pushed once, at their planned level, and wait for their own
     # morning.
     try:
-        watch_client = garmin_api.get_client(username)
+        watch_client = watch_client or garmin_api.get_client(username)
         kind = (
             None if session_type is None or tier == training.TIER_REST
             else "recovery" if tier == training.TIER_RECOVERY

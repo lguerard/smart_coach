@@ -46,6 +46,7 @@ import body
 import bonus
 import custom_moves
 import done_sessions
+import watch_sync
 import bodymap
 import coach_payload
 import db
@@ -1443,10 +1444,12 @@ def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
                 day, exercise_library.equipment_for(conn, user_id),
             )
             removed = custom_moves.removed_for(conn, user_id, session_type, circuit)
+            fixed = custom_moves.overrides_for(conn, user_id, session_type, circuit)
             variants = base.get("variants") or {}
             library = [
                 {"slot": slot, "name": variants.get(slot, {}).get("name", slot),
-                 "amount": f"{value}{' s' if slot.endswith('_sec') else ''}",
+                 "amount": f"{fixed.get(slot, value)}{' s' if slot.endswith('_sec') else ''}",
+                 "fixed": slot in fixed,
                  "removed": slot in removed}
                 for slot, value in base.items()
                 if slot in exercise_library.LADDERS
@@ -1464,6 +1467,7 @@ def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
                 "label": training.SESSION_LABEL_FR[session_type]
                 + (f" - circuit {circuit}" if circuit else ""),
                 "level": level, "library": library, "own": own,
+                "fixed_rounds": fixed.get("rounds"),
                 "summary": training.format_description_fr(
                     session_type, level, final, "yellow",
                 ).split(": ", 1)[1].split(" (statut")[0],
@@ -1480,10 +1484,12 @@ def programme_page(request: Request) -> HTMLResponse:
         request, "programme.html", {
             "blocks": _programme_blocks(conn, user_id),
             "picker": custom_moves.GARMIN_PICKER,
+            "session_label_fr": training.SESSION_LABEL_FR,
             "error": request.query_params.get("error"),
             "saved": request.query_params.get("saved") is not None,
             "pushed": request.query_params.get("pushed"),
             "max_amount": custom_moves.MAX_AMOUNT,
+            "watch_edits": watch_sync.recent_edits(conn, user_id),
         },
     )
 
@@ -1551,6 +1557,17 @@ async def programme_add_move(request: Request):
 def programme_delete_move(move_id: int, request: Request):
     """Delete one of the person's own moves (theirs only)."""
     custom_moves.delete_move(get_conn(), current_user_id(request), move_id)
+    return RedirectResponse("/programme?saved", status_code=303)
+
+
+@app.post("/programme/override/clear")
+async def programme_clear_override(request: Request):
+    """Give a count fixed in Garmin Connect back to the level."""
+    form = await request.form()
+    custom_moves.clear_override(
+        get_conn(), current_user_id(request), str(form.get("session_type", "")),
+        str(form.get("circuit", "")), str(form.get("slot", "")),
+    )
     return RedirectResponse("/programme?saved", status_code=303)
 
 

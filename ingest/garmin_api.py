@@ -1528,13 +1528,18 @@ def sync_planned_workout(
 
     Returns:
         str: ``unchanged`` (already on the watch, no Garmin call),
-        ``created``, ``updated`` (old one replaced), ``removed`` or
-        ``none``.
+        ``created``, ``updated`` (old one replaced), ``removed``,
+        ``none``, or ``user_deleted`` (the person deleted that day's
+        workout in Garmin Connect: it is not put back).
     """
+    import watch_sync
+
     existing = conn.execute(
         "SELECT workout_id, signature FROM garmin_planned_workouts WHERE "
         "user_id = ? AND local_date = ?", (user_id, date),
     ).fetchone()
+    if existing and existing["signature"] == watch_sync.USER_DELETED:
+        return "user_deleted" if kind is not None else "none"
     if kind is None:
         if not existing:
             return "none"
@@ -1560,12 +1565,16 @@ def sync_planned_workout(
         # Uploaded first, deleted second: a failed upload never leaves
         # the day with nothing on the watch.
         _delete_quietly(client, existing["workout_id"])
+    # The shape sent, step by step with its slot: what watch_sync
+    # compares Garmin's copy with to see an edit made in Garmin Connect.
+    shape = json.dumps(watch_sync.sent_shape(values or {}, workout.to_dict()))
     conn.execute(
         "INSERT INTO garmin_planned_workouts (user_id, local_date, "
-        "workout_id, signature) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, "
-        "local_date) DO UPDATE SET workout_id = excluded.workout_id, "
-        "signature = excluded.signature",
-        (user_id, date, str(workout_id), signature),
+        "workout_id, signature, kind, shape) VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(user_id, local_date) DO UPDATE SET "
+        "workout_id = excluded.workout_id, signature = excluded.signature, "
+        "kind = excluded.kind, shape = excluded.shape",
+        (user_id, date, str(workout_id), signature, kind, shape),
     )
     conn.commit()
     return "updated" if existing else "created"
@@ -1613,12 +1622,20 @@ def push_programme(
     Only days whose workout actually changed are re-uploaded. No
     decision is re-made and no level moves.
 
+    Edits made in Garmin Connect are taken into the programme first
+    (``watch_sync.import_watch_edits``), never overwritten.
+
     Returns:
         dict: ISO date -> outcome (``unchanged`` / ``created`` /
-        ``updated`` / ``removed`` / ``none`` / ``no_log``).
+        ``updated`` / ``removed`` / ``none`` / ``no_log`` /
+        ``user_deleted``).
     """
     import training
+    import watch_sync
 
+    # Edits made in Garmin Connect first: they go into the programme,
+    # so this push sends them back instead of overwriting them.
+    watch_sync.import_watch_edits(conn, user_id, client, today)
     results = {today: refresh_today(conn, user_id, client, today)}
     schedule = training.schedule_for_user(conn, user_id)
     for row in conn.execute(

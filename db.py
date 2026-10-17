@@ -326,7 +326,36 @@ CREATE TABLE IF NOT EXISTS garmin_planned_workouts (
     local_date TEXT NOT NULL,
     workout_id TEXT NOT NULL,
     signature TEXT NOT NULL,
+    -- What was sent, to tell an edit made in Garmin Connect from our
+    -- own workout (watch_sync.py): the session type and the step list
+    -- with the slot each step came from. NULL on rows from before.
+    kind TEXT,
+    shape TEXT,
     PRIMARY KEY (user_id, local_date)
+);
+
+-- Counts changed in Garmin Connect and imported (watch_sync.py): a
+-- library move's fixed amount, or 'rounds' for the number of tours,
+-- per session type and kettlebell circuit ('' = all). Applied by
+-- custom_moves.apply; the level no longer moves an overridden count.
+CREATE TABLE IF NOT EXISTS slot_overrides (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    session_type TEXT NOT NULL,
+    circuit TEXT NOT NULL DEFAULT '',
+    slot TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    PRIMARY KEY (user_id, session_type, circuit, slot)
+);
+
+-- What was imported from Garmin Connect, in words, for the Programme
+-- page ("tu as ajoute ... sur Garmin : repris dans ton programme").
+CREATE TABLE IF NOT EXISTS watch_edits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    session_type TEXT,
+    change TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 -- Earned Garmin Connect badges, surfaced as achievements (see
@@ -844,6 +873,16 @@ def init_db(conn: sqlite3.Connection) -> None:
     for column in ("tier", "tier_reason", "level_reason", "recovery_kind"):
         if column not in coach_cols:
             conn.execute(f"ALTER TABLE coach_log ADD COLUMN {column} TEXT")
+    planned_cols = {
+        row["name"] for row in conn.execute(
+            "PRAGMA table_info(garmin_planned_workouts)"
+        )
+    }
+    for column in ("kind", "shape"):
+        if column not in planned_cols:
+            conn.execute(
+                f"ALTER TABLE garmin_planned_workouts ADD COLUMN {column} TEXT"
+            )
     conn.commit()
 
 

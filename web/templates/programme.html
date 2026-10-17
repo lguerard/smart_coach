@@ -26,6 +26,23 @@
 </div>
 {% endif %}
 
+{% if watch_edits %}
+<div class="card p-4">
+  <h2 class="card-title mb-1">{{ icon('refresh', 16) }} Repris de Garmin</h2>
+  <p class="text-xs mb-2" style="color: var(--muted);">
+    Ce que tu as changé dans Garmin Connect sur une séance du coach est
+    repris ici plutôt qu'écrasé. Pour revenir en arrière, modifie le
+    programme ci-dessous.
+  </p>
+  <ul class="space-y-1 text-sm">
+    {% for e in watch_edits %}
+    <li><span class="text-xs num" style="color: var(--muted);">{{ e.local_date[8:10] }}/{{ e.local_date[5:7] }}</span>
+      {{ session_label_fr.get(e.session_type, '') }} : {{ e.change }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if not blocks %}
 <div class="card p-5 text-sm text-center" style="color: var(--muted);">
   Aucune séance modifiable dans ton planning (circuits et kettlebell).
@@ -42,13 +59,30 @@
   </div>
   <p class="text-xs mt-2 p-2.5 rounded-lg" style="background: var(--surface-2); color: var(--text-secondary);">{{ b.summary }}</p>
 
+  {% if b.fixed_rounds %}
+  <form method="post" action="/programme/override/clear" class="flex items-center justify-between gap-2 mt-3 text-sm">
+    <span>{{ b.fixed_rounds }} tours <span class="text-xs" style="color: var(--muted);">· fixé depuis Garmin</span></span>
+    <input type="hidden" name="session_type" value="{{ b.type }}">
+    <input type="hidden" name="circuit" value="{{ b.circuit }}">
+    <input type="hidden" name="slot" value="rounds">
+    <button class="btn btn-sm">Rétablir</button>
+  </form>
+  {% endif %}
   <p class="caption mt-4 mb-1.5">Mouvements du programme</p>
   <ul class="divide-y" style="border-color: var(--border);">
     {% for m in b.library %}
     <li class="py-1.5 flex items-center justify-between gap-2" style="border-color: var(--border);">
       <span class="text-sm {{ 'line-through' if m.removed }}" style="{{ 'color: var(--muted);' if m.removed }}">
-        {{ m.name }} <span class="text-xs" style="color: var(--muted);">{{ m.amount }}</span>
+        {{ m.name }} <span class="text-xs" style="color: var(--muted);">{{ m.amount }}{% if m.fixed %} · fixé depuis Garmin{% endif %}</span>
       </span>
+      {% if m.fixed %}
+      <form method="post" action="/programme/override/clear">
+        <input type="hidden" name="session_type" value="{{ b.type }}">
+        <input type="hidden" name="circuit" value="{{ b.circuit }}">
+        <input type="hidden" name="slot" value="{{ m.slot }}">
+        <button class="btn btn-sm" title="La quantité suit à nouveau ton niveau">Rétablir</button>
+      </form>
+      {% endif %}
       <form method="post" action="/programme/slot">
         <input type="hidden" name="session_type" value="{{ b.type }}">
         <input type="hidden" name="circuit" value="{{ b.circuit }}">
