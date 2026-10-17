@@ -771,6 +771,10 @@ DEFAULT_SETTINGS = {
     "rclone_remote": "",  # this user's Drive folder (multi-user: one export per person)
     "calendar_name": "",  # this user's target Google Calendar display name
     "ntfy_topic": "",  # this user's own ntfy topic (falls back to env NTFY_TOPIC)
+    # Address the phone reaches the dashboard at (e.g. https://coach.mondomaine.fr
+    # or http://192.168.1.20:8080), for the one-tap buttons in notifications.
+    # Falls back to env PUBLIC_URL.
+    "public_url": "",
     "schedule": json.dumps(DEFAULT_SCHEDULE),
     # Max session duration: sessions stay dense and short by default;
     # raise this to let high levels extend the session instead.

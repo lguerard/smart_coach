@@ -29,7 +29,7 @@ from typing import Optional
 import webauthn
 from fastapi import FastAPI, Request
 from fastapi.responses import (
-    HTMLResponse, JSONResponse, RedirectResponse, Response,
+    HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -46,6 +46,7 @@ import body
 import bonus
 import custom_moves
 import done_sessions
+import quick_links
 import watch_sync
 import bodymap
 import coach_payload
@@ -91,7 +92,9 @@ templates = Jinja2Templates(
 )
 templates.env.globals.update(icon=icon, session_badge=session_badge)
 
-_PUBLIC_PREFIXES = ("/login", "/static", "/signup", "/passkey/login")
+# /quick/: one-tap links from phone notifications, signed (quick_links)
+# instead of logged in.
+_PUBLIC_PREFIXES = ("/login", "/static", "/signup", "/passkey/login", "/quick/")
 
 
 @app.middleware("http")
@@ -752,6 +755,35 @@ def _rated_type(conn: sqlite3.Connection, user_id: int, date: str):
         conn, user_id, date, plan["session_type"] if plan else None,
         plan["tier"] if plan else None,
     )
+
+
+@app.post("/quick/rate/{user_id}/{date}/{rating}/{signature}")
+def quick_rate(user_id: int, date: str, rating: str, signature: str):
+    """A notification button: rate that day's session, no login needed.
+
+    The signature (quick_links) only allows exactly this rating for
+    this user and day, for a few days; anything else is refused. Same
+    storage as the dashboard's rating (/feedback).
+    """
+    conn = get_conn()
+    if not quick_links.verify(
+        conn, user_id, date, rating, signature, today=today_str(conn, user_id),
+    ):
+        return PlainTextResponse("Lien invalide ou expire.", status_code=403)
+    session_type = _rated_type(conn, user_id, date)
+    if not session_type:
+        return PlainTextResponse("Pas de seance a noter ce jour-la.", status_code=404)
+    conn.execute(
+        "INSERT INTO session_feedback (user_id, local_date, session_type, "
+        "rating, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, "
+        "local_date) DO UPDATE SET rating = excluded.rating, "
+        "session_type = excluded.session_type, created_at = excluded.created_at",
+        (user_id, date, session_type, rating,
+         dt.datetime.now(dt.timezone.utc).isoformat()),
+    )
+    conn.commit()
+    label = {"easy": "trop facile", "right": "au bon niveau", "hard": "trop dure"}[rating]
+    return PlainTextResponse(f"Note : {label}. Merci !")
 
 
 @app.post("/sessions/done")

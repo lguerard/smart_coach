@@ -212,6 +212,7 @@ def evening_checkin(
     today = date or dt.datetime.now(
         metrics.local_tz(conn, user_id)
     ).date().isoformat()
+    rating_prompt(conn, user, today)
     avg_sleep = _recent_avg_sleep_hours(conn, user_id, today)
     if (
         avg_sleep is None
@@ -228,6 +229,60 @@ def evening_checkin(
         "days -- get to bed early tonight."
     )
     notify.notify(message, title="Smart Coach", topic=ntfy_topic)
+
+
+RATING_LABELS = (("easy", "Trop facile"), ("right", "Bien"), ("hard", "Trop dure"))
+
+
+def public_url(conn: sqlite3.Connection, user_id: int) -> str:
+    """The address the phone reaches the dashboard at ('' if unknown)."""
+    import os
+
+    return (db.get_setting(conn, user_id, "public_url")
+            or os.environ.get("PUBLIC_URL", "")).strip()
+
+
+def rating_prompt(conn: sqlite3.Connection, user: dict, today: str) -> bool:
+    """Evening question about tonight's session, with one-tap buttons.
+
+    Sent once tonight's session can have happened (the evening check-in
+    runs after the usual slot) and only when it is not rated yet. The
+    three buttons are signed links (quick_links) to the dashboard, so
+    rating needs no login and no app; without a known dashboard address
+    the question still goes out, pointing to the Sessions page.
+
+    Returns:
+        bool: Whether a notification was sent.
+    """
+    import quick_links
+    import training
+
+    user_id = user["id"]
+    row = next((
+        r for r in training.rateable_sessions(conn, user_id, today, days=1)
+        if r["date"] == today and r["rating"] is None
+    ), None)
+    if row is None:
+        return False
+    ntfy_topic = db.get_setting(conn, user_id, "ntfy_topic") or None
+    label = training.SESSION_LABEL_FR.get(row["session_type"], row["session_type"])
+    base = public_url(conn, user_id)
+    text = (f"Comment etait ta seance {label.lower()} ce soir ? "
+            "Ta note regle les prochaines : 'trop facile' la fait monter.")
+    if not base:
+        notify.notify(text + " (Note-la dans Seances sur le site.)",
+                      title="Smart Coach", topic=ntfy_topic)
+        return True
+    actions = [
+        {"action": "http", "label": label_fr, "method": "POST", "clear": True,
+         "url": quick_links.rate_url(conn, user_id, base, today, rating)}
+        for rating, label_fr in RATING_LABELS
+    ]
+    notify.notify_with_actions(
+        text, actions, title="Smart Coach", topic=ntfy_topic,
+        click=f"{base.rstrip('/')}/sessions#notes",
+    )
+    return True
 
 
 CHECKINS = {"afternoon": afternoon_checkin, "evening": evening_checkin}
@@ -262,6 +317,38 @@ if __name__ == "__main__":
     notify.notify = lambda text, title="Smart Coach", topic=None: sent.append(
         (text, topic),
     )
+    buttons = []
+    notify.notify_with_actions = (
+        lambda text, actions, title="Smart Coach", topic=None, click=None:
+        buttons.append((text, actions, click))
+    )
+
+    # Evening rating question: tonight's planned session, not rated yet.
+    conn.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, 'x', '2026-07-13', "
+        "'green', 'kettlebell', 2, 'm', 'train')", (uid,),
+    )
+    conn.commit()
+    assert rating_prompt(conn, user, "2026-07-13")  # no address: plain text
+    assert "Seances" in sent[-1][0] and buttons == [], sent
+    db.set_setting(conn, uid, "public_url", "https://coach.example")
+    assert rating_prompt(conn, user, "2026-07-13")
+    text, actions, click = buttons[-1]
+    assert [a["label"] for a in actions] == ["Trop facile", "Bien", "Trop dure"]
+    assert all(a["method"] == "POST" and "/quick/rate/" in a["url"] for a in actions)
+    assert click == "https://coach.example/sessions#notes", click
+    # Rated already: nothing.
+    conn.execute(
+        "INSERT INTO session_feedback VALUES (?, '2026-07-13', 'kettlebell', "
+        "'right', '')", (uid,),
+    )
+    conn.commit()
+    assert not rating_prompt(conn, user, "2026-07-13")
+    conn.execute("DELETE FROM coach_log WHERE user_id = ?", (uid,))
+    conn.execute("DELETE FROM session_feedback WHERE user_id = ?", (uid,))
+    conn.commit()
+    sent.clear()
 
     # Afternoon: no data at all -- both targets unmet by definition,
     # but no crash, and a real gap message is sent.

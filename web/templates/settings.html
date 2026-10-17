@@ -122,6 +122,13 @@
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
     <label class="block text-sm">
+      Adresse du site vue du téléphone (pour noter ta séance en un tap
+      depuis la notification de 21 h -- ex. https://coach.mondomaine.fr
+      ou http://192.168.1.20:8080 ; vide = la notification renvoie vers le site)
+      <input name="public_url" value="{{ settings.public_url }}" placeholder="https://..."
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
       Ville (meteo du jour -- optionnel, ex. "Lyon,FR")
       <input name="city" value="{{ settings.city }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
