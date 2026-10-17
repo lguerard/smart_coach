@@ -1802,9 +1802,12 @@ def meals_page(request: Request) -> HTMLResponse:
     conn = get_conn()
     user_id = current_user_id(request)
     date = today_str(conn, user_id)
+    # MyFitnessPal may have sent the meal since: counted once.
+    meals.match_logged(conn, user_id, date)
     return templates.TemplateResponse(
         request, "meals.html", {
             "meals": meals.recent(conn, user_id),
+            "mfp_text": meals.mfp_text,
             "remaining": progress.remaining_today(conn, user_id, date),
             "today": date, "note": request.query_params.get("note"),
         },

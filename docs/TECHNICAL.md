@@ -252,6 +252,15 @@ stored; only the estimate is (`meal_estimates`). "Ajouter à ma journée"
 writes the total into the day's nutrition under uuid
 `smartcoach-meal-<id>`; the Health Connect reconciliation leaves
 `smartcoach-` rows alone, so the import does not delete it.
+MyFitnessPal has no API to write into and reads no food from Health
+Connect, so each estimate shows a "Copier pour MyFitnessPal" line for
+its quick add. When the meal comes back from the diary through Health
+Connect (`meals.match_logged`, after each ingest, on the Repas page and
+on "Ajouter"), an added estimate whose meal type (from the photo's
+local time) and calories (within 25 % or 120 kcal, one entry or the
+sum of that meal's entries) match loses its own row: the meal counts
+once. Each diary meal matches one estimate (`diary_uuids`); "Pas le
+même repas" undoes a wrong match and keeps it from matching again.
 
 History per session (`session_history.py`, Progrès page): the morning
 run keeps what each session asked for (`coach_log.values_json`: tours,

@@ -42,6 +42,7 @@ ICONS = {
     "kettlebell": '<path d="M8.5 10.5V7a3.5 3.5 0 0 1 7 0v3.5"/><circle cx="12" cy="15" r="6"/>',
     "check": '<path d="M20 6 9 17l-5-5"/>',
     "calendar": '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    "copy": '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
 }
 
 # Session type -> (icon, colour token). Effort-type colours, so the

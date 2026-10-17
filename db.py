@@ -641,7 +641,11 @@ CREATE TABLE IF NOT EXISTS meal_estimates (
     kind TEXT NOT NULL,
     analysis TEXT NOT NULL,
     added INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- The food diary's nutrition uuids (JSON list) this estimate was
+    -- matched to (added = 2), so one diary meal matches one estimate;
+    -- otherwise the ones the person said were another meal.
+    diary_uuids TEXT
 );
 
 -- What was actually done on a day, as the person declared it on the
@@ -894,6 +898,11 @@ def init_db(conn: sqlite3.Connection) -> None:
                    "values_json"):
         if column not in coach_cols:
             conn.execute(f"ALTER TABLE coach_log ADD COLUMN {column} TEXT")
+    meal_cols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(meal_estimates)")
+    }
+    if "diary_uuids" not in meal_cols:
+        conn.execute("ALTER TABLE meal_estimates ADD COLUMN diary_uuids TEXT")
     planned_cols = {
         row["name"] for row in conn.execute(
             "PRAGMA table_info(garmin_planned_workouts)"

@@ -9,10 +9,13 @@ person has their own rclone remote, staging subdirectory and Garmin
 tokens, so one user's failure doesn't block another's).
 """
 
+import datetime as dt
 import os
 from pathlib import Path
 
 import db
+import meals
+import metrics
 from ingest import garmin_api, parse_health_connect, sync_drive
 
 STAGING_ROOT = Path(os.environ.get("INGEST_STAGING_DIR", "data/inbox"))
@@ -60,6 +63,14 @@ def main() -> None:
             )
             for table, count in sorted(counts.items()):
                 print(f"  {table}: {count}")
+            # Meal photos added to a day that the food diary
+            # (MyFitnessPal) now has too: counted once.
+            matched = meals.match_logged(
+                conn, user["id"],
+                dt.datetime.now(metrics.local_tz(conn, user["id"])).date().isoformat(),
+            )
+            if matched:
+                print(f"  meals found in the food diary: {len(matched)}")
         except Exception as exc:
             print(f"  health connect: FAILED: {exc}")
 
