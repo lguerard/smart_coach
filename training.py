@@ -1493,9 +1493,11 @@ KETTLEBELL_REST_SEC = 10
 KETTLEBELL_WARMUP_MIN = 3
 # Level bands -> tours of the six moves. Inside a band the work time
 # climbs 20 -> 30 s; the next band adds a tour and goes back to 20 s
-# (the same double progression as the circuits, with time).
-KETTLEBELL_TOURS = ((range(0, 3), 2), (range(3, 6), 3), (range(6, 9), 4),
-                    (range(9, 11), 5))
+# (the same double progression as the circuits, with time). Five tours
+# from the start: two (6 min of work) did nothing, the person said so.
+# 5 tours at 20 s is ~18 min with the warm-up; 7 at 30 s would be 31,
+# so the session cap trims the top levels to 6.
+KETTLEBELL_TOURS = ((range(0, 4), 5), (range(4, 7), 6), (range(7, 11), 7))
 
 
 def kettlebell_values(
@@ -2036,14 +2038,17 @@ if __name__ == "__main__":
     # The kettlebell intervals: 2 tours of 20 s at level 0, the work
     # time rises inside a band, then a tour is added and it resets.
     kb0 = kettlebell_values(0)
-    assert kb0["tours"] == 2 and kb0["kb_curl_sec"] == 20, kb0
+    assert kb0["tours"] == 5 and kb0["kb_curl_sec"] == 20, kb0
+    assert kb0["duration_min"] == 18, kb0  # 3 warm-up + 5 x 6 x 30 s
     assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 6, kb0
-    assert kettlebell_values(2)["kb_curl_sec"] == 30
-    assert kettlebell_values(3)["tours"] == 3
-    assert kettlebell_values(3)["kb_curl_sec"] == 20
+    assert all(kettlebell_values(lv)["tours"] >= 5 for lv in range(11))
+    assert kettlebell_values(3)["kb_curl_sec"] == 30
+    assert kettlebell_values(4)["tours"] == 6
+    assert kettlebell_values(4)["kb_curl_sec"] == 20
+    assert kettlebell_values(10)["duration_min"] <= DEFAULT_SESSION_CAP_MIN
     assert kettlebell_values(10, cap_min=15)["tours"] < 5  # cap holds
     kb_text = format_description_fr("kettlebell", 0, kb0, "green")
-    assert "2 tours, 20 s d'effort / 10 s de repos" in kb_text, kb_text
+    assert "5 tours, 20 s d'effort / 10 s de repos" in kb_text, kb_text
     assert "goblet squat 20s" in kb_text and "rest_sec" not in kb_text
     assert calisthenics_values(10)["squats"] == 20
     assert calisthenics_values(10)["variants"]["squats"]["name"] in (
