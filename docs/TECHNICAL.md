@@ -197,6 +197,18 @@ the level of the type actually done), the progression gate, "session
 skipped yesterday" and the dashboard all read it; the morning message
 gets `yesterday_session` when yesterday's session was not the plan.
 
+Daily status (`training.compute_status`): red on a strong red signal
+(resting-HR spike, low HRV, two "too hard" in a row) or any two reds;
+green when nothing is red, a core signal is green, still-tired muscles
+do not block it, and the yellows weigh at most 40 % of the signals
+(battery and stress count half). The vote bands are gentler than the
+"good night" marks (sleep 70+, readiness 55+ is green). Even on a
+yellow day a level goes up after `STEADY_SESSIONS` (2) sessions done at
+that level without "too hard", or after one rated "too easy"
+(`training.steady_progress`); the morning message gets `progress_hint`
+with what will make the session go up. Green used to need every one of
+up to nine signals green, which held levels still for weeks.
+
 ## Architecture
 
 ```text

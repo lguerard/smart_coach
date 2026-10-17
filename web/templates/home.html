@@ -362,8 +362,11 @@
       </div>
       {% endfor %}
       <p class="text-xs mt-3" style="color: var(--muted);">
-        Vert seulement si tous ces signaux le sont ; un seul rouge suffit
-        à passer la journée en rouge.
+        Vert quand rien n'est rouge et que peu de signaux sont moyens
+        (batterie et stress comptent pour moitié) ; rouge sur une FC de
+        repos ou une VFC alarmante, deux « trop dure », ou deux signaux
+        rouges. Même un jour jaune, la séance monte après {{ steady_sessions }}
+        séances faites sans difficulté, ou une notée « trop facile ».
         {% if status_signals | length < 4 %}
         Calculé sur {{ status_signals | length }} signal{{ "s" if status_signals | length > 1 }}
         seulement — les autres n'ont pas de donnée aujourd'hui.

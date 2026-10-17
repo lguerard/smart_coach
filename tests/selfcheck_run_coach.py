@@ -93,7 +93,7 @@ if __name__ == "__main__":
     # A red morning at level 0, no illness: an active uphill walk,
     # everywhere (watch, calendar, message, log).
     _reset()
-    _install({"sleep_score": 40})
+    _install({"sleep_score": 40, "training_readiness_score": 20})
     conn, user = _user()
     run_coach.run_for_user(conn, user)
     stype, level, values = calls["pushed"][0]
@@ -122,7 +122,7 @@ if __name__ == "__main__":
     # Declared illness: rest. Nothing pushed, yesterday's workout taken
     # off the watch, the calendar says rest, the log says rest.
     _reset()
-    _install({"sleep_score": 40})
+    _install({"sleep_score": 40, "training_readiness_score": 20})
     conn, user = _user()
     today = dt.datetime.now(metrics.local_tz(conn, user["id"])).date()
     training.set_sick(conn, user["id"], today.isoformat(), 3)

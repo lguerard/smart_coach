@@ -676,6 +676,7 @@ def home(request: Request) -> HTMLResponse:
             "off_title": off_title, "tier": tier,
             "movement": movement, "desk_break": desk_break,
             "period": period, "bonus_workouts": bonus_workouts,
+            "steady_sessions": training.STEADY_SESSIONS,
             "yesterday_session": yesterday_session,
             "recovery_fig": recovery_fig, "tired": tired,
             "level_reason": (

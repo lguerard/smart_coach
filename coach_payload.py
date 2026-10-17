@@ -49,6 +49,20 @@ def build_payload(
     weekly = weekly if weekly is not None else progress.weekly_progress(
         conn, user_id, today,
     )
+    # What would make tonight's session go up next -- so a session that
+    # stays the same comes with a way forward, not just "maintained".
+    scheduled = today_session.get("scheduled_type") or today_session.get("type")
+    if (
+        today_session.get("tier", "train") == "train"
+        and scheduled in training.SESSION_LABEL_FR
+        and today_session.get("level") is not None
+        and "progress_hint" not in today_session
+    ):
+        hint = training.progress_hint(
+            conn, user_id, scheduled, today, today_session["level"],
+        )
+        if hint:
+            today_session = {**today_session, "progress_hint": hint}
     desk_break = desk.break_for_day(
         conn, user_id, today, today_session.get("tier", "train"),
         today_session.get("status"), language,

@@ -101,10 +101,17 @@ def _session_line(session: dict, fr: bool) -> str:
     if session.get("moves"):
         moves = ", ".join(session["moves"][:4])
         rounds = values.get("rounds")
-        return (
-            f"Ce soir, {rounds} tours : {moves}." if fr else
-            f"Tonight, {rounds} rounds: {moves}."
+        minutes = values.get("duration_min")
+        length = (f" (environ {minutes} min)" if fr else
+                  f" (about {minutes} min)") if minutes else ""
+        line = (
+            f"Ce soir, {rounds} tours{length} : {moves}." if fr else
+            f"Tonight, {rounds} rounds{length}: {moves}."
         )
+        if session.get("progress_hint"):
+            line += (f" Pour monter : {session['progress_hint']}." if fr
+                     else f" To step up: {session['progress_hint']}.")
+        return line
     if session.get("note"):
         return session["note"] + "."
     return ""

@@ -57,6 +57,27 @@ RHR_BASELINE_DAYS = 14
 ACTIVITY_LOAD_SPIKE_RATIO = 1.5  # recent-7d vs previous-7d minutes
 ACTIVITY_LOAD_HIGH_RPE = 7.0
 TRAINING_READINESS_GOOD, TRAINING_READINESS_POOR = 75, 50  # 0-100 scale
+# The day's VOTES use gentler bands than the "good night" / "poor
+# readiness" marks above (achievements, illness watch): Garmin's own
+# readiness bands call 50-74 "moderate -- ready for moderate training",
+# and a fair night (60-79) is not a reason to stop progressing. With 75
+# as the green line, someone who sleeps averagely was yellow every day
+# and their levels never moved.
+SLEEP_VOTE_GREEN, SLEEP_VOTE_RED = 70, 50
+READINESS_VOTE_GREEN, READINESS_VOTE_RED = 55, 30
+# Supporting signals (the watch's blend of the same heart data) weigh
+# half a yellow; core ones a full one.
+HALF_WEIGHT_LABELS = {"Batterie", "Stress (veille)"}
+# Signals strong enough to turn the day red alone; any other red only
+# makes it yellow, two reds make it red.
+STRONG_RED_LABELS = {"FC de repos", "Ressenti", "VFC"}
+# A yellow that holds the day back by itself: tonight's main muscles
+# still tired (muscles.session_vote) -- pushing them up a level is
+# exactly what not to do.
+BLOCKING_YELLOW_LABELS = {"Fatigue musculaire"}
+# Steady progression: a level held this many done sessions in a row,
+# none of them too hard, goes up on a non-red day.
+STEADY_SESSIONS = 2
 # TSB (yesterday's CTL - ATL): very negative means fatigue has been
 # accumulating for a while -- unlike a single red day, TSB is already
 # a smoothed signal (42d/7d windows), so one critical reading is
@@ -834,9 +855,9 @@ def _sleep_vote(wellness: dict) -> Optional[str]:
     score = wellness.get("sleep_score")
     if score is None:
         return None
-    if score >= SLEEP_SCORE_GOOD:
+    if score >= SLEEP_VOTE_GREEN:
         return "green"
-    if score < SLEEP_SCORE_POOR:
+    if score < SLEEP_VOTE_RED:
         return "red"
     return "yellow"
 
@@ -876,9 +897,9 @@ def _training_readiness_vote(wellness: dict) -> Optional[str]:
     score = wellness.get("training_readiness_score")
     if score is None:
         return None
-    if score >= TRAINING_READINESS_GOOD:
+    if score >= READINESS_VOTE_GREEN:
         return "green"
-    if score < TRAINING_READINESS_POOR:
+    if score < READINESS_VOTE_RED:
         return "red"
     return "yellow"
 
@@ -1173,30 +1194,117 @@ def compute_status(
 ) -> str:
     """Combine wellness signals into a green/yellow/red daily status.
 
+    Green used to need EVERY signal green -- up to nine of them -- so an
+    average night or a slightly low battery held the level forever. Now:
+
+    - red: a strong signal is red (resting HR spike, HRV low, two "too
+      hard" in a row), or two signals are;
+    - green: nothing red, at least one core signal green, and the
+      yellows weigh at most 40 % of the signals (battery and stress
+      count half);
+    - yellow otherwise -- always when tonight's muscles are still tired
+      -- and with no data at all (maintain level).
+
     Parameters:
-        wellness (dict): Today's wellness metrics (as produced by
-            ``metrics.daily_wellness``).
-        baseline_rhr (float | None): Rolling personal resting-HR
-            baseline (``training.rhr_baseline``).
+        wellness (dict): ``metrics.daily_wellness`` output.
+        baseline_rhr (float | None): ``training.rhr_baseline``.
 
     Returns:
-        str: ``"green"``, ``"yellow"``, or ``"red"``. No data at all
-        falls back to ``"yellow"`` (maintain level). Any red signal
-        wins over green/yellow; green requires all available votes
-        to be green.
+        str: ``"green"``, ``"yellow"`` or ``"red"``.
     """
-    votes = [
-        vote for _, vote, _ in _all_votes(
-            wellness, baseline_rhr, feedback, extra_votes,
-        )
-    ]
+    votes = _all_votes(wellness, baseline_rhr, feedback, extra_votes)
     if not votes:
         return "yellow"
-    if "red" in votes:
+    reds = [label for label, vote, _ in votes if vote == "red"]
+    if len(reds) >= 2 or any(label in STRONG_RED_LABELS for label in reds):
         return "red"
-    if all(v == "green" for v in votes):
+    if reds or any(
+        vote == "yellow" and label in BLOCKING_YELLOW_LABELS
+        for label, vote, _ in votes
+    ):
+        return "yellow"
+    yellow_weight = sum(
+        0.5 if label in HALF_WEIGHT_LABELS else 1.0
+        for label, vote, _ in votes if vote == "yellow"
+    )
+    core_green = any(
+        vote == "green" and label not in HALF_WEIGHT_LABELS
+        for label, vote, _ in votes
+    )
+    if core_green and yellow_weight <= max(1.0, 0.4 * len(votes)):
         return "green"
     return "yellow"
+
+
+def steady_progress(
+    conn: sqlite3.Connection, user_id: int, session_type: str, date: str,
+    level: int,
+) -> Optional[str]:
+    """Why a yellow day should still raise the level, if it should.
+
+    Levels are meant to move: a level that has simply been done, again
+    and again, without trouble, is too easy. Two ways up on a day that
+    is not red:
+
+    - the last session of this type was rated "too easy";
+    - the last ``STEADY_SESSIONS`` sessions of this type were done at
+      this very level (recorded, declared or rated), none rated "too
+      hard" and none on a red day.
+
+    Returns:
+        str | None: The reason, in French, or None.
+    """
+    import done_sessions
+
+    last = recent_feedback(conn, user_id, session_type, limit=1)
+    if last and last[0] == "easy":
+        return "ta derniere seance de ce type etait trop facile"
+    rows = conn.execute(
+        "SELECT c.local_date, c.level, c.status, c.tier FROM coach_log c "
+        "WHERE c.user_id = ? AND c.local_date < ? AND c.session_type = ? "
+        "AND c.id = (SELECT MAX(id) FROM coach_log WHERE user_id = c.user_id "
+        "AND local_date = c.local_date) "
+        "AND COALESCE(c.tier, 'train') = 'train' "
+        "ORDER BY c.local_date DESC LIMIT ?",
+        (user_id, date, session_type, STEADY_SESSIONS),
+    ).fetchall()
+    if len(rows) < STEADY_SESSIONS:
+        return None
+    for row in rows:
+        if row["level"] != level or row["status"] == "red":
+            return None
+        rating = conn.execute(
+            "SELECT rating FROM session_feedback WHERE user_id = ? AND "
+            "local_date = ?", (user_id, row["local_date"]),
+        ).fetchone()
+        if rating and rating["rating"] == "hard":
+            return None
+        done = done_sessions.done_on(conn, user_id, row["local_date"])
+        did_this = (
+            done_sessions.actual_type(
+                conn, user_id, row["local_date"], session_type, row["tier"],
+            ) == session_type
+        )
+        if not did_this or (done is None and rating is None):
+            return None
+    return f"{STEADY_SESSIONS} seances faites a ce niveau sans difficulte"
+
+
+def progress_hint(
+    conn: sqlite3.Connection, user_id: int, session_type: str, date: str,
+    level: int,
+) -> Optional[str]:
+    """What would make this type's level go up next, in French -- for
+    the message, so a held level comes with a way forward."""
+    if level >= LEVEL_MAX:
+        return None
+    if steady_progress(conn, user_id, session_type, date, level):
+        return "la prochaine seance de ce type montera d'un cran"
+    return (
+        "fais la seance et note-la : 'trop facile' la fait monter "
+        f"des la prochaine fois, sinon elle monte apres {STEADY_SESSIONS} "
+        "seances faites a ce niveau"
+    )
 
 
 CALIBRATION_MIN_DAYS = 30
@@ -1787,6 +1895,7 @@ _STATUS_FR = {"green": "vert", "yellow": "jaune", "red": "rouge"}
 def level_reason(
     before: int, after: int, status: str, gate: Optional[str],
     deload: dict, signals: list[tuple[str, str, str]],
+    steady: Optional[str] = None,
 ) -> str:
     """One sentence on why tonight's level is what it is.
 
@@ -1821,6 +1930,10 @@ def level_reason(
         if after == before:
             return f"jour vert, niveau maximum ({after}) atteint"
         return f"jour vert{_named('green')} : niveau {before} -> {after}"
+    if steady and gate:
+        return f"{steady}, mais {gate} : niveau maintenu a {after}"
+    if steady and after > before:
+        return f"{steady} : niveau {before} -> {after}"
     return f"jour jaune{_named('yellow')} : niveau maintenu a {after}"
 
 
@@ -1878,21 +1991,29 @@ def plan_day(
         status = compute_status(wellness, baseline, feedback, extra)
         if tier_info is None:
             before = get_level(conn, user_id, session_type)
+            # A yellow day still moves the level up when the level has
+            # clearly been mastered (steady_progress); the day itself
+            # stays yellow.
+            steady = (
+                steady_progress(conn, user_id, session_type, date, before)
+                if status == "yellow" else None
+            )
+            effective = "green" if steady else status
             gate = (
                 progression_gate(conn, user_id, session_type, date)
-                if status == "green" else None
+                if effective == "green" else None
             )
             # A held green day moves the level like a yellow one; the
             # day itself stays green (the body is fine, the level is
             # waiting on the work).
             deload = apply_deload_guardrail(
                 conn, user_id, session_type,
-                "yellow" if gate else status, date, tsb=tsb,
+                "yellow" if gate else effective, date, tsb=tsb,
             )
             level = deload["level"]
             reason = level_reason(
                 before, level, status, gate, deload,
-                _all_votes(wellness, baseline, feedback, extra),
+                _all_votes(wellness, baseline, feedback, extra), steady,
             )
             tier_info = tier_after_guardrail(
                 status, level, active_recoveries_recent(conn, user_id, date),
@@ -2034,19 +2155,24 @@ if __name__ == "__main__":
     assert adjust_level(3, "red") == 2
 
     assert compute_status({}, None) == "yellow"
-    # Battery and stress hold a day back, never turn it red alone: they
-    # are the watch's blend of signals the other votes already read.
+    # Battery and stress are supporting signals: half a yellow each, so
+    # one alone next to a good night does not hold the day back...
     well = {"sleep_score": 90}
     assert compute_status({**well, "body_battery_highest": 80}, None) == "green"
-    assert compute_status({**well, "body_battery_highest": 30}, None) == "yellow"
-    assert compute_status({**well, "body_battery_highest": 3}, None) == "yellow"
+    assert compute_status({**well, "body_battery_highest": 30}, None) == "green"
     assert compute_status({**well, "stress_avg_yesterday": 30}, None) == "green"
-    assert compute_status({**well, "stress_avg_yesterday": 70}, None) == "yellow"
     assert compute_status({"stress_avg_yesterday": 99}, None) == "yellow"
-    # ...but a real red signal still wins over them.
+    # ...but both low, with nothing else to say it went well, do.
     assert compute_status(
-        {"sleep_score": 40, "body_battery_highest": 80}, None,
-    ) == "red"
+        {**well, "body_battery_highest": 30, "stress_avg_yesterday": 70}, None,
+    ) == "green"  # 1.0 yellow-weight of 3 signals: still green
+    assert compute_status(
+        {"body_battery_highest": 30, "stress_avg_yesterday": 70}, None,
+    ) == "yellow"  # no core signal says it went well
+    assert compute_status(
+        {"sleep_score": 65, "body_battery_highest": 30,
+         "stress_avg_yesterday": 70}, None,
+    ) == "yellow"  # 2.0 > 1
     labels = {
         row["label"]: row for row in explain_status(
             {**well, "body_battery_highest": 30, "stress_avg_yesterday": 70},
@@ -2056,35 +2182,54 @@ if __name__ == "__main__":
     assert labels["Batterie"]["vote"] == "yellow", labels
     assert "30" in labels["Batterie"]["detail"], labels
     assert "70" in labels["Stress (veille)"]["detail"], labels
-    assert compute_status({"sleep_score": 40}, None) == "red"
+
+    # THE REPORTED CASE: an average night and a moderate readiness used
+    # to be yellow every single morning -- the level never moved. A fair
+    # night (70+) and a moderate readiness (55+) are green now...
+    typical = {"sleep_score": 72, "training_readiness_score": 58,
+               "hrv_status": "BALANCED", "body_battery_highest": 35,
+               "stress_avg_yesterday": 55}
+    assert compute_status(typical, None) == "green"
+    # ...one middling signal among several still is...
+    assert compute_status({**typical, "sleep_score": 65}, None) == "green"
+    # ...two are not.
+    assert compute_status(
+        {**typical, "sleep_score": 65, "training_readiness_score": 45}, None,
+    ) == "yellow"
+
+    # Red: a strong signal alone, or any two reds; one ordinary red is
+    # only yellow (a single short night does not cut the level).
+    assert compute_status({"sleep_score": 40}, None) == "yellow"
+    assert compute_status(
+        {"sleep_score": 40, "training_readiness_score": 20}, None,
+    ) == "red"
+    assert compute_status({"resting_hr": 65}, 58) == "red"
+    assert compute_status({"resting_hr": 59}, 58) == "green"
+    assert compute_status({"hrv_status": "LOW"}, None) == "red"
+    assert compute_status({"sleep_score": 90, "hrv_status": "LOW"}, None) == "red"
     assert compute_status(
         {"sleep_score": 80, "recent_minutes": 100, "previous_minutes": 100},
         None,
     ) == "green"
-    assert compute_status({"resting_hr": 65}, 58) == "red"
-    assert compute_status({"resting_hr": 59}, 58) == "green"
     assert compute_status(
         {"recent_minutes": 200, "previous_minutes": 100,
          "recent_avg_rpe": 8.5}, None,
-    ) == "red"
+    ) == "yellow"  # a load spike alone: hold, not cut
     assert compute_status(
         {"recent_minutes": 200, "previous_minutes": 100,
          "recent_avg_rpe": 4.0}, None,
     ) == "yellow"
+    # Two "too hard" in a row is strong: red on its own.
+    assert compute_status({"sleep_score": 90}, None, ["hard", "hard"]) == "red"
 
     # HRV / training readiness: Garmin-API-only votes, no HC equivalent.
     assert compute_status({"hrv_status": "BALANCED"}, None) == "green"
     assert compute_status({"hrv_status": "UNBALANCED"}, None) == "yellow"
-    assert compute_status({"hrv_status": "LOW"}, None) == "red"
     # Unrecognized status casts no vote -> falls back to yellow (no data).
     assert compute_status({"hrv_status": "UNKNOWN_ENUM"}, None) == "yellow"
-    assert compute_status({"training_readiness_score": 80}, None) == "green"
-    assert compute_status({"training_readiness_score": 60}, None) == "yellow"
-    assert compute_status({"training_readiness_score": 30}, None) == "red"
-    # A red HRV outvotes an otherwise-green sleep score.
-    assert compute_status(
-        {"sleep_score": 90, "hrv_status": "LOW"}, None,
-    ) == "red"
+    assert compute_status({"training_readiness_score": 60}, None) == "green"
+    assert compute_status({"training_readiness_score": 40}, None) == "yellow"
+    assert compute_status({"training_readiness_score": 25}, None) == "yellow"
 
     assert treadmill_values(0)["speed_kmh"] == 5.5
     assert treadmill_values(20)["speed_kmh"] == 7.0
@@ -2275,7 +2420,7 @@ if __name__ == "__main__":
     def _template(conn_, uid_, weekday):
         return schedule_for_user(conn_, uid_)[weekday]
 
-    RED = {"sleep_score": 40}
+    RED = {"sleep_score": 40, "training_readiness_score": 20}  # two reds
     GREEN = {"sleep_score": 90, "hrv_status": "BALANCED"}
     HEALTHY = {"suspected": False, "distressed_days": 0, "signals": []}
     D = "2026-10-05"  # a Monday: treadmill
@@ -2968,5 +3113,49 @@ if __name__ == "__main__":
     assert gate and "pas ete faite" in gate, gate
     done_sessions.declare(fb_conn, fb, "2026-10-12", "lower_body", today="2026-10-13")
     assert progression_gate(fb_conn, fb, "lower_body", "2026-10-19") is None
+
+    # Steady progression: a level done twice without trouble goes up on
+    # a yellow day; a "too easy" rating does it after one session.
+    sp_conn = db_module.connect(Path(tempfile.mkdtemp()) / "steady.db")
+    db_module.init_db(sp_conn)
+    sp = db_module.create_user(sp_conn, "s", "pw-123456")
+    set_level(sp_conn, sp, "kettlebell", 2)
+    assert steady_progress(sp_conn, sp, "kettlebell", "2026-10-17", 2) is None
+    for day in ("2026-10-10", "2026-10-11"):
+        sp_conn.execute(
+            "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+            "session_type, level, message, tier) VALUES (?, '', ?, 'yellow', "
+            "'kettlebell', 2, '', 'train')", (sp, day),
+        )
+        sp_conn.execute(
+            "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+            "local_date, title) VALUES (?, ?, ?, ?, ?, 'Musculation')",
+            (f"s{day}", sp, f"{day}T18:00:00+00:00", f"{day}T18:25:00+00:00", day),
+        )
+    sp_conn.commit()
+    assert steady_progress(sp_conn, sp, "kettlebell", "2026-10-17", 2), "two done"
+    assert steady_progress(sp_conn, sp, "kettlebell", "2026-10-17", 3) is None
+    assert "montera" in progress_hint(sp_conn, sp, "kettlebell", "2026-10-17", 2)
+    # One of them "too hard": no.
+    sp_conn.execute(
+        "INSERT INTO session_feedback VALUES (?, '2026-10-11', 'kettlebell', "
+        "'hard', '')", (sp,),
+    )
+    sp_conn.commit()
+    assert steady_progress(sp_conn, sp, "kettlebell", "2026-10-17", 2) is None
+    assert "trop facile" in progress_hint(sp_conn, sp, "kettlebell", "2026-10-17", 2)
+    # Rated "too easy" last time: up right away.
+    sp_conn.execute("UPDATE session_feedback SET rating = 'easy'")
+    sp_conn.commit()
+    assert "trop facile" in steady_progress(sp_conn, sp, "kettlebell", "2026-10-17", 2)
+    # Through plan_day: a yellow morning still steps the level up.
+    template = {"session_type": "kettlebell", "title": "Kettlebell",
+                "start": "20:00", "duration_min": 30}
+    yellow = {"sleep_score": 62, "training_readiness_score": 45,
+              "hrv_status": "BALANCED"}
+    plan = plan_day(sp_conn, sp, "2026-10-17", template, yellow,
+                    {"suspected": False, "distressed_days": 0, "signals": []})
+    assert plan["status"] == "yellow" and plan["level"] == 3, plan
+    assert "trop facile" in plan["level_reason"] and "2 -> 3" in plan["level_reason"], plan
 
     print("training.py: all checks passed")

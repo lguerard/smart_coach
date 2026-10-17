@@ -277,6 +277,8 @@ def session_brief(payload: dict) -> dict:
         "rest", "recovery",
     ):
         brief["level_reason"] = session["level_reason"]
+        if session.get("progress_hint"):
+            brief["progress_hint"] = session["progress_hint"]
     if session.get("type") in ("rest", "recovery"):
         brief["replaces"] = session.get("scheduled_title")
         brief["why"] = session.get("tier_reasons") or []
