@@ -703,7 +703,11 @@ CREATE TABLE IF NOT EXISTS coach_log (
     -- On a recovery day: gentle (flat walk, back from a rest day) or
     -- active (uphill walk on a red day at the floor level). NULL on
     -- older rows = gentle.
-    recovery_kind TEXT
+    recovery_kind TEXT,
+    -- What the session asked for (session_history.snapshot): tours,
+    -- moves and counts, own moves included. NULL on rest days and on
+    -- rows logged before it existed (the history rebuilds those).
+    values_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_coach_log_user_date ON coach_log(user_id, local_date);
 """
@@ -886,7 +890,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     coach_cols = {
         row["name"] for row in conn.execute("PRAGMA table_info(coach_log)")
     }
-    for column in ("tier", "tier_reason", "level_reason", "recovery_kind"):
+    for column in ("tier", "tier_reason", "level_reason", "recovery_kind",
+                   "values_json"):
         if column not in coach_cols:
             conn.execute(f"ALTER TABLE coach_log ADD COLUMN {column} TEXT")
     planned_cols = {

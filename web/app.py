@@ -47,6 +47,7 @@ import bonus
 import custom_moves
 import done_sessions
 import meals
+import session_history
 import quick_links
 import watch_sync
 import bodymap
@@ -988,10 +989,25 @@ def progress_page(request: Request) -> HTMLResponse:
         (user_id,),
     ).fetchall()
 
+    # History per session type: what each session asked for, and the
+    # latest against about four weeks before.
+    history_types = session_history.types_with_history(conn, user_id, date)
+    history_type = request.query_params.get("seance")
+    if history_type not in history_types:
+        history_type = history_types[0] if history_types else None
+    history_rows = (
+        session_history.history(conn, user_id, history_type, date)
+        if history_type else []
+    )
+
     return templates.TemplateResponse(
         request, "progress.html", {
             "bundle": bundle,
             "level_history": level_history,
+            "history_types": history_types,
+            "history_type": history_type,
+            "history_rows": history_rows,
+            "history_compare": session_history.compare(history_rows),
             "session_label_fr": training.SESSION_LABEL_FR,
             "weight_labels": [r["local_date"] for r in weight_series],
             "weight_values": [round(r["kg"], 1) for r in weight_series],

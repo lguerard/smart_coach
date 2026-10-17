@@ -206,14 +206,14 @@ h1, h2, h3 { letter-spacing: -0.015em; }
 
 /* Segmented control (week / month). */
 .seg {
-  display: inline-flex; padding: 2px; border-radius: 8px;
+  display: inline-flex; flex-wrap: wrap; padding: 2px; border-radius: 8px;
   background: var(--surface-2); border: 1px solid var(--border);
 }
-.seg button {
+.seg button, .seg a {
   font-size: 0.72rem; font-weight: 550; padding: 0.22rem 0.7rem;
   border-radius: 6px; color: var(--muted);
 }
-.seg button[aria-pressed="true"] {
+.seg button[aria-pressed="true"], .seg a[aria-current="true"] {
   background: var(--surface-1); color: var(--text-primary);
   box-shadow: 0 1px 2px rgba(0,0,0,0.18);
 }

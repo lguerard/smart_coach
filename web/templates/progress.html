@@ -249,6 +249,84 @@
 </div>
 {% endif %}
 
+{# What each session asked for, per type: the latest against about four
+   weeks before, then every session. #}
+{% macro history_item(r) %}
+{% set snap = r.snapshot %}
+    <li class="py-2" style="border-color: var(--border);">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <span class="num text-xs w-12 shrink-0" style="color: var(--muted);">{{ r.date[8:10] }}/{{ r.date[5:7] }}</span>
+        <span class="font-medium">niveau {{ r.level }}</span>
+        {% if r.rating %}<span class="badge" style="--badge: var({{ '--accent' if r.rating == 'bien' else ('--orange' if r.rating == 'trop dur' else '--blue') }});">{{ r.rating }}</span>{% endif %}
+        {% if not r.planned %}<span class="badge" style="--badge: var(--muted);">hors plan</span>{% endif %}
+        {% if r.done == 'unknown' %}<span class="text-xs" style="color: var(--muted);">aucune activité enregistrée</span>{% endif %}
+      </div>
+      <p class="text-xs mt-0.5 ml-14" style="color: var(--text-secondary);">
+        {% if snap.moves is defined %}
+        {{ snap.rounds }} tour{{ 's' if snap.rounds != 1 }}{% if snap.duration_min %} · {{ snap.duration_min }} min prévues{% endif %}{% if r.minutes %} · {{ r.minutes }} min faites{% endif %}
+        {% if r.totals.reps %} · {{ r.totals.reps }} reps{% endif %}{% if r.totals.work_sec %} · {{ r.totals.work_sec }} s d'effort{% endif %}
+        <br><span style="color: var(--muted);">{% for m in snap.moves %}{{ m.name }} {{ m.amount }}{{ ' s' if m.unit == 's' }}{{ '/jambe' if m.per_leg }}{{ ' · ' if not loop.last }}{% endfor %}{% for m in snap.after %}{{ ' · ' if loop.first }}à la fin : {{ m.name }} {{ m.amount }}{{ ' s' if m.unit == 's' }}{% endfor %}</span>
+        {% else %}
+        {{ '%g' % snap.speed_kmh }} km/h · pente {{ '%g' % snap.incline_pct }} % · {{ snap.duration_min }} min{% if r.minutes %} · {{ r.minutes }} min faites{% endif %}
+        {% endif %}
+        {% if r.approx %}<span style="color: var(--muted);"> · reconstruit*</span>{% endif %}
+      </p>
+    </li>
+{% endmacro %}
+{% if history_types %}
+<div class="card p-4" id="historique">
+  <h2 class="font-semibold text-sm mb-2">Historique par séance</h2>
+  <nav class="seg mb-3" aria-label="Type de séance">
+    {% for t in history_types %}
+    <a href="/progress?seance={{ t }}#historique" aria-current="{{ 'true' if t == history_type else 'false' }}">{{ session_label_fr.get(t, t) }}</a>
+    {% endfor %}
+  </nav>
+
+  {% if history_compare %}
+  {% set c = history_compare %}
+  <p class="caption mb-1.5">Il y a {{ c.days }} jours ({{ c.then_date[8:10] }}/{{ c.then_date[5:7] }}) → dernière ({{ c.now_date[8:10] }}/{{ c.now_date[5:7] }})</p>
+  <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+    {% for label, f in c.fields.items() %}
+    <div class="metric" style="--metric-color: var({{ '--good' if f.delta > 0 else '--muted' }});">
+      <p class="caption">{{ label }}</p>
+      <p class="metric-value" style="font-size: 1.05rem;">{{ '%g' % f.then }} → {{ '%g' % f.now }}</p>
+      <p class="text-xs num" style="color: {{ 'var(--good)' if f.delta > 0 else ('var(--muted)' if f.delta == 0 else 'var(--text-secondary)') }};">{{ '%+g' % f.delta if f.delta else 'pareil' }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  {% if c.moves %}
+  <ul class="text-xs mt-2 space-y-0.5" style="color: var(--text-secondary);">
+    {% for m in c.moves %}
+    <li>{% if m.new %}<span style="color: var(--good);">nouveau</span> · {{ m.name }} {{ m.now }}{{ ' s' if m.unit == 's' }}
+      {% elif m.then_name %}{{ m.then_name }} {{ m.then }}{{ ' s' if m.unit == 's' }} → <span style="color: var(--good);">{{ m.name }}</span> {{ m.now }}{{ ' s' if m.unit == 's' }}
+      {% else %}{{ m.name }} {{ m.then }} → {{ m.now }}{{ ' s' if m.unit == 's' }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if c.harder %}
+  <p class="text-xs mt-1.5" style="color: var(--muted);">En vert : passé à une version plus dure du mouvement. Moins de répétitions peut donc rester un progrès.</p>
+  {% endif %}
+  {% elif history_rows %}
+  <p class="text-xs mb-1" style="color: var(--muted);">Une seule séance pour l'instant -- la comparaison viendra avec la suivante.</p>
+  {% endif %}
+
+  <ul class="divide-y mt-3" style="border-color: var(--border);">
+    {% for r in history_rows[:8] %}{{ history_item(r) }}{% endfor %}
+  </ul>
+  {% if history_rows | length > 8 %}
+  <details class="mt-1">
+    <summary class="cursor-pointer text-sm font-medium link">Séances plus anciennes ({{ history_rows[8:30] | length }})</summary>
+    <ul class="divide-y" style="border-color: var(--border);">
+      {% for r in history_rows[8:30] %}{{ history_item(r) }}{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  {% if history_rows[:30] | selectattr('approx') | list %}
+  <p class="text-xs mt-2" style="color: var(--muted);">* Séance d'avant l'historique, ou faite hors plan : reconstruite d'après le niveau, sans tes mouvements perso de l'époque.</p>
+  {% endif %}
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}

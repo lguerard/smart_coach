@@ -9,6 +9,7 @@ treadmill session on the calendar, the watch and the message every day.
 """
 
 import datetime as dt
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -114,6 +115,9 @@ if __name__ == "__main__":
     row = _logged(conn, user["id"])
     assert row["tier"] == training.TIER_RECOVERY and row["tier_reason"], dict(row)
     assert row["recovery_kind"] == training.RECOVERY_ACTIVE, dict(row)
+    # The walk is kept as asked, for the history per session.
+    assert json.loads(row["values_json"])["speed_kmh"] == (
+        training.ACTIVE_RECOVERY_VALUES["speed_kmh"]), dict(row)
     # The payload carries the same blocks a regenerated message gets.
     for key in ("activity_yesterday", "illness_watch", "today_remaining",
                 "movement_yesterday"):
@@ -133,6 +137,7 @@ if __name__ == "__main__":
     assert calls["payloads"][0]["today_session"]["type"] == "rest"
     row = _logged(conn, user["id"])
     assert row["tier"] == training.TIER_REST, dict(row)
+    assert row["values_json"] is None, dict(row)
 
     # A rest day is not a skipped session, and asks no feedback.
     snapshot = metrics.history_snapshot(conn, user["id"], today.isoformat())

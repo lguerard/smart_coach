@@ -17,6 +17,7 @@ workout, and checks/announces achievement unlocks. One user's failure
 """
 
 import datetime as dt
+import json
 import sys
 
 import achievements
@@ -27,6 +28,7 @@ import llm
 import metrics
 import notify
 import progress
+import session_history
 import training
 import watch_sync
 import training_load
@@ -189,12 +191,14 @@ def run_for_user(conn, user: dict) -> None:
     conn.execute(
         "INSERT INTO coach_log (user_id, created_at, local_date, status, "
         "session_type, level, message, tier, tier_reason, level_reason, "
-        "recovery_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "recovery_kind, values_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             user_id, dt.datetime.now(dt.timezone.utc).isoformat(), today,
             status, session_type, level, message, tier,
             "; ".join(plan["tier_reasons"]) or None, plan["level_reason"],
             plan.get("recovery_kind"),
+            json.dumps(session_history.snapshot(values), ensure_ascii=False)
+            if values and tier != training.TIER_REST else None,
         ),
     )
     conn.commit()

@@ -253,6 +253,17 @@ writes the total into the day's nutrition under uuid
 `smartcoach-meal-<id>`; the Health Connect reconciliation leaves
 `smartcoach-` rows alone, so the import does not delete it.
 
+History per session (`session_history.py`, Progrès page): the morning
+run keeps what each session asked for (`coach_log.values_json`: tours,
+moves with their counts, own moves and Garmin edits included). Per
+session type, the page lists every session (level, tours, moves, reps
+and seconds of effort, planned and recorded minutes, rating, done or
+not) and compares the latest with the one about four weeks before --
+the same kettlebell circuit when there is one, moves matched by their
+slot so a harder variant shows as a step up, not as fewer reps. Days
+logged before the column existed, and sessions done instead of the
+plan, are rebuilt from the library at their level (marked).
+
 ## Architecture
 
 ```text
