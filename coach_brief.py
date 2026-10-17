@@ -448,6 +448,10 @@ def build_brief(payload: dict) -> dict:
     skipped = payload.get("session_skipped_yesterday")
     if skipped:
         brief["skipped"] = skipped
+    bell = payload.get("heavier_bell")
+    if bell:
+        brief["heavier_bell"] = {"current_kg": bell["current"],
+                                 "next_kg": bell["next"]}
     changed = payload.get("session_changed_yesterday")
     if changed:
         import training

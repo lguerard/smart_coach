@@ -95,6 +95,9 @@ def build_payload(
         # Silent exercises for a shared office, picked from the same
         # movement flags; absent on weekends or with desk_job off.
         **({"desk_break": desk_break} if desk_break else {}),
+        # The kettlebell has become too light (training.heavier_bell_hint).
+        **({"heavier_bell": hint} if (hint := training.heavier_bell_hint(
+            conn, user_id)) else {}),
         **({"weather_today": weather_today} if weather_today else {}),
         **metrics.history_snapshot(conn, user_id, today),
     }

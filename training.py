@@ -1937,6 +1937,71 @@ def level_reason(
     return f"jour jaune{_named('yellow')} : niveau maintenu a {after}"
 
 
+# Session types whose moves carry the kettlebell's weight.
+LOADED_TYPES = ("kettlebell", "lower_body", "upper_body")
+# On a heavier bell, levels go back down this much, so the first
+# sessions with it are doable (kettlebell: 7 tours back to 5).
+HEAVIER_BELL_LEVEL_DROP = {"kettlebell": 5, "lower_body": 3, "upper_body": 3}
+
+
+def next_bell_kg(kg: float) -> float:
+    """The usual next kettlebell up: +4 kg (12 -> 16), +8 from 24."""
+    return kg + (4 if kg < 24 else 8)
+
+
+def heavier_bell_hint(conn: sqlite3.Connection, user_id: int) -> Optional[dict]:
+    """Whether the kettlebell has become too light, and the next one.
+
+    Levels top out: past the last level a session cannot get harder with
+    the same bell. Too light means a loaded session the person does is
+    at level 9-10 and not rated "too hard" last time, or rated "too
+    easy" twice in a row from level 7.
+
+    Returns:
+        dict | None: ``{current, next, types}`` (French type labels), or
+        None (no kettlebell set, or no loaded session at its ceiling).
+    """
+    kg = exercise_library.equipment_for(conn, user_id).get("kettlebell_kg")
+    if not kg:
+        return None
+    used = scheduled_types(conn, user_id)
+    plateau = []
+    for session_type in LOADED_TYPES:
+        if session_type not in used:
+            continue
+        level = get_level(conn, user_id, session_type)
+        ratings = recent_feedback(conn, user_id, session_type, limit=2)
+        at_top = level >= LEVEL_MAX - 1 and (not ratings or ratings[0] != "hard")
+        too_easy = level >= 7 and len(ratings) == 2 and set(ratings) == {"easy"}
+        if at_top or too_easy:
+            plateau.append(SESSION_LABEL_FR[session_type])
+    if not plateau:
+        return None
+    return {"current": kg, "next": next_bell_kg(kg), "types": plateau}
+
+
+def lower_levels_for_heavier_bell(
+    conn: sqlite3.Connection, user_id: int, old_kg: float, new_kg: float,
+) -> dict:
+    """On a heavier kettlebell, bring the loaded sessions' levels down
+    (``HEAVIER_BELL_LEVEL_DROP``) so the new weight starts gently; a
+    lighter one, or the same, changes nothing.
+
+    Returns:
+        dict: session type -> (old level, new level), for those changed.
+    """
+    if not old_kg or not new_kg or new_kg <= old_kg:
+        return {}
+    changed = {}
+    for session_type, drop in HEAVIER_BELL_LEVEL_DROP.items():
+        before = get_level(conn, user_id, session_type)
+        after = max(LEVEL_MIN, before - drop)
+        if after != before:
+            set_level(conn, user_id, session_type, after)
+            changed[session_type] = (before, after)
+    return changed
+
+
 def plan_day(
     conn: sqlite3.Connection, user_id: int, date: str, template: dict,
     wellness: dict, illness: dict, tsb: Optional[float] = None,
@@ -3157,5 +3222,32 @@ if __name__ == "__main__":
                     {"suspected": False, "distressed_days": 0, "signals": []})
     assert plan["status"] == "yellow" and plan["level"] == 3, plan
     assert "trop facile" in plan["level_reason"] and "2 -> 3" in plan["level_reason"], plan
+
+    # Heavier bell: suggested at the ceiling, levels brought down on a
+    # heavier weight.
+    hb = db_module.connect(Path(tempfile.mkdtemp()) / "bell.db")
+    db_module.init_db(hb)
+    hu = db_module.create_user(hb, "h", "pw-123456")
+    sched = {str(k): dict(v) for k, v in schedule_for_user(hb, hu).items()}
+    sched["4"].update(session_type="kettlebell", title="Kettlebell")
+    db_module.set_setting(hb, hu, "schedule", json.dumps(sched))
+    assert heavier_bell_hint(hb, hu) is None  # no kettlebell set
+    db_module.set_setting(hb, hu, "kettlebell_kg", "12")
+    set_level(hb, hu, "kettlebell", 6)
+    assert heavier_bell_hint(hb, hu) is None
+    set_level(hb, hu, "kettlebell", 9)
+    hint = heavier_bell_hint(hb, hu)
+    assert hint == {"current": 12.0, "next": 16.0,
+                    "types": ["Kettlebell a la maison"]}, hint
+    hb.execute("INSERT INTO session_feedback VALUES (?, '2026-10-16', "
+               "'kettlebell', 'hard', '')", (hu,))
+    hb.commit()
+    assert heavier_bell_hint(hb, hu) is None  # still hard at the top
+    assert next_bell_kg(24) == 32
+    assert lower_levels_for_heavier_bell(hb, hu, 12, 12) == {}
+    assert lower_levels_for_heavier_bell(hb, hu, 16, 12) == {}
+    changed = lower_levels_for_heavier_bell(hb, hu, 12, 16)
+    assert changed["kettlebell"] == (9, 4), changed
+    assert get_level(hb, hu, "kettlebell") == 4
 
     print("training.py: all checks passed")

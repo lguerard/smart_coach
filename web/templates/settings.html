@@ -4,7 +4,7 @@
 
 {% if saved %}
 <div class="card p-3 text-sm" style="border-color: var(--good); color: var(--good);">
-  Reglages enregistres.
+  Reglages enregistres.{% if note %} {{ note }}{% endif %}
 </div>
 {% endif %}
 

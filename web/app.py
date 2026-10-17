@@ -682,6 +682,7 @@ def home(request: Request) -> HTMLResponse:
             "movement": movement, "desk_break": desk_break,
             "period": period, "bonus_workouts": bonus_workouts,
             "steady_sessions": training.STEADY_SESSIONS,
+            "heavier_bell": training.heavier_bell_hint(conn, user_id),
             "yesterday_session": yesterday_session,
             "recovery_fig": recovery_fig, "tired": tired,
             "level_reason": (
@@ -1522,6 +1523,7 @@ def programme_page(request: Request) -> HTMLResponse:
             "pushed": request.query_params.get("pushed"),
             "max_amount": custom_moves.MAX_AMOUNT,
             "watch_edits": watch_sync.recent_edits(conn, user_id),
+            "heavier_bell": training.heavier_bell_hint(conn, user_id),
         },
     )
 
@@ -1645,6 +1647,7 @@ def settings_page(request: Request) -> HTMLResponse:
             "session_label_fr": training.SESSION_LABEL_FR,
             "ingest_status": last_ingest_status(conn, user_id),
             "saved": request.query_params.get("saved") is not None,
+            "note": request.query_params.get("note"),
             "username": request.session.get("username"),
         },
     )
@@ -1656,6 +1659,7 @@ async def save_settings(request: Request):
     conn = get_conn()
     user_id = current_user_id(request)
     form = await request.form()
+    old_kg = exercise_library.equipment_for(conn, user_id).get("kettlebell_kg")
     for key in db.DEFAULT_SETTINGS:
         if key in form:
             db.set_setting(conn, user_id, key, str(form[key]).strip())
@@ -1704,6 +1708,18 @@ async def save_settings(request: Request):
                 entry["duration_min"] = duration
             schedule[str(weekday)] = entry
         db.set_setting(conn, user_id, "schedule", json.dumps(schedule))
+    # A heavier kettlebell: the loaded sessions start again lower, after
+    # the level fields above (which hold the old levels) are applied.
+    new_kg = exercise_library.equipment_for(conn, user_id).get("kettlebell_kg")
+    lowered = training.lower_levels_for_heavier_bell(conn, user_id, old_kg, new_kg)
+    if lowered:
+        note = (f"Kettlebell passee a {new_kg:g} kg : niveaux ajustes ("
+                + ", ".join(f"{training.SESSION_LABEL_FR[t].lower()} {a} -> {b}"
+                            for t, (a, b) in lowered.items()) + ").")
+        return RedirectResponse(
+            url="/settings?" + urlencode({"saved": 1, "note": note}),
+            status_code=303,
+        )
     return RedirectResponse(url="/settings?saved=1", status_code=303)
 
 

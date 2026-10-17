@@ -26,6 +26,17 @@
 </div>
 {% endif %}
 
+{% if heavier_bell %}
+<div class="card p-4 text-sm" style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);">
+  <p class="card-title">{{ icon('kettlebell', 16) }} Tu plafonnes à {{ '%g' % heavier_bell.current }} kg</p>
+  <p class="text-xs mt-1" style="color: var(--text-secondary);">
+    {{ heavier_bell.types | join(', ') }} : tu es en haut de la progression avec ce poids.
+    Passe à une kettlebell de {{ '%g' % heavier_bell.next }} kg, puis indique-la dans
+    <a href="/settings" class="link">Réglages</a> : les niveaux repartiront plus bas pour démarrer en douceur.
+  </p>
+</div>
+{% endif %}
+
 {% if watch_edits %}
 <div class="card p-4">
   <h2 class="card-title mb-1">{{ icon('refresh', 16) }} Repris de Garmin</h2>
