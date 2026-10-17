@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Repas - Smart Coach{% endblock %}
+{% block content %}
+
+{% set left = remaining.remaining %}
+<div class="card p-4">
+  <h1 class="card-title text-base">{{ icon('flame', 18) }} Mon repas en photo</h1>
+  <p class="text-xs mt-1" style="color: var(--text-secondary);">
+    Photographie ton assiette pour estimer calories et protéines, ou le
+    menu / le tableau de la cantine pour savoir quoi choisir. La photo
+    n'est pas gardée, seulement l'estimation.
+    {% if left.get('protein_g') is not none %}
+    Il te reste aujourd'hui environ
+    {% if left.get('calories_kcal') is not none %}<strong>{{ left.calories_kcal | round | int }} kcal</strong> et{% endif %}
+    <strong>{{ left.protein_g | round | int }} g de protéines</strong>.
+    {% endif %}
+  </p>
+  <form method="post" action="/repas/upload" enctype="multipart/form-data" class="mt-3 grid gap-2"
+        onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Analyse en cours… (jusqu\'à une minute)';">
+    <div class="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Type de photo">
+      <label class="option btn justify-center cursor-pointer">
+        <input type="radio" name="kind" value="plate" class="sr-only" checked> {{ icon('target', 14) }} Mon assiette
+      </label>
+      <label class="option btn justify-center cursor-pointer">
+        <input type="radio" name="kind" value="menu" class="sr-only"> {{ icon('message', 14) }} Le menu
+      </label>
+    </div>
+    <input type="file" name="photo" accept="image/*" capture="environment" required
+      class="text-sm rounded-lg border px-3 py-2" style="border-color: var(--border);">
+    <button class="btn btn-primary">Analyser</button>
+  </form>
+  {% if note %}<p class="text-sm mt-2" style="color: var(--accent-text);">{{ note }}</p>{% endif %}
+</div>
+
+{% for m in meals %}
+{% set a = m.analysis %}
+<div class="card p-4">
+  <div class="flex items-center justify-between gap-2">
+    <p class="card-title">{{ 'Menu' if m.kind == 'menu' else 'Assiette' }}
+      <span class="text-xs font-normal" style="color: var(--muted);">· {{ m.local_date[8:10] }}/{{ m.local_date[5:7] }}{% if a.confidence %} · confiance {{ {'low': 'faible', 'medium': 'moyenne', 'high': 'bonne'}[a.confidence] }}{% endif %}</span></p>
+    {% if m.added %}<span class="badge" style="--badge: var(--green);">{{ icon('check', 12) }}dans ta journée</span>{% endif %}
+  </div>
+  {% if not a.usable %}
+  <p class="text-sm mt-2" style="color: var(--muted);">Pas de repas ni de menu reconnu sur cette photo.</p>
+  {% else %}
+  {% if a.best_choice %}<p class="text-sm mt-2"><span class="caption">À choisir</span> · {{ a.best_choice }}</p>{% endif %}
+  <div class="grid grid-cols-4 gap-2 mt-3">
+    {% for key, label, unit, color in [('kcal', 'Calories', '', 'orange'), ('protein_g', 'Protéines', 'g', 'accent'), ('carbs_g', 'Glucides', 'g', 'blue'), ('fat_g', 'Lipides', 'g', 'yellow')] %}
+    <div class="metric" style="--metric-color: var(--{{ color }});">
+      <p class="caption">{{ label }}</p>
+      <p class="metric-value" style="font-size: 1.15rem;">{{ a.total[key] }}<span class="metric-unit">{{ unit }}</span></p>
+    </div>
+    {% endfor %}
+  </div>
+  <ul class="mt-3 divide-y text-sm" style="border-color: var(--border);">
+    {% for item in a['items'] %}
+    <li class="py-1.5 flex justify-between gap-3" style="border-color: var(--border);">
+      <span>{{ item.name }} <span class="text-xs" style="color: var(--muted);">~{{ item.grams }} g</span></span>
+      <span class="num text-xs" style="color: var(--text-secondary);">{{ item.kcal }} kcal · {{ item.protein_g }} g prot.</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if a.advice %}<p class="text-xs mt-2" style="color: var(--text-secondary);">{{ a.advice }}</p>{% endif %}
+  {% endif %}
+  <div class="flex flex-wrap gap-2 mt-3">
+    {% if a.usable and m.kind == 'plate' %}
+      {% if m.added %}
+      <form method="post" action="/repas/{{ m.id }}/remove"><button class="btn btn-sm">Retirer de ma journée</button></form>
+      {% else %}
+      <form method="post" action="/repas/{{ m.id }}/add"><button class="btn btn-primary btn-sm">Ajouter à ma journée</button></form>
+      {% endif %}
+    {% endif %}
+    <form method="post" action="/repas/{{ m.id }}/delete"><button class="btn btn-sm" style="color: var(--critical);">Supprimer</button></form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

@@ -46,6 +46,7 @@ import body
 import bonus
 import custom_moves
 import done_sessions
+import meals
 import quick_links
 import watch_sync
 import bodymap
@@ -1754,6 +1755,76 @@ def _analyze_in_thread(user_id: int, photo_id: int) -> str | None:
         return f"Analyse impossible : {error}"
     finally:
         conn.close()
+
+
+# --- Meals: a photo of the plate or the menu -> calories and protein ---
+
+def _meal_in_thread(user_id: int, raw: bytes, kind: str) -> str | None:
+    """One meal analysis on its own connection; returns an error note."""
+    conn = db.connect()
+    try:
+        meals.analyze(conn, user_id, raw, kind, today_str(conn, user_id))
+        return None
+    except body.PhotoError as error:
+        return str(error)
+    except Exception as error:  # noqa: BLE001 -- shown, never a 500
+        return f"Analyse impossible : {error}"
+    finally:
+        conn.close()
+
+
+def _meals_redirect(note: str | None = None) -> RedirectResponse:
+    return RedirectResponse(
+        "/repas" + ("?" + urlencode({"note": note}) if note else ""),
+        status_code=303,
+    )
+
+
+@app.get("/repas", response_class=HTMLResponse)
+def meals_page(request: Request) -> HTMLResponse:
+    """Photograph a meal or a menu; the latest estimates."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    return templates.TemplateResponse(
+        request, "meals.html", {
+            "meals": meals.recent(conn, user_id),
+            "remaining": progress.remaining_today(conn, user_id, date),
+            "today": date, "note": request.query_params.get("note"),
+        },
+    )
+
+
+@app.post("/repas/upload")
+async def meals_upload(request: Request):
+    """Analyse one photo (never stored: only the estimate is kept)."""
+    user_id = current_user_id(request)
+    form = await request.form()
+    upload = form.get("photo")
+    if upload is None or not hasattr(upload, "read"):
+        return _meals_redirect("Aucune photo reçue.")
+    raw = await upload.read(body.MAX_UPLOAD_BYTES + 1)
+    note = await run_in_threadpool(
+        _meal_in_thread, user_id, raw, str(form.get("kind", "plate")),
+    )
+    return _meals_redirect(note)
+
+
+@app.post("/repas/{meal_id}/{action}")
+def meals_action(meal_id: int, action: str, request: Request):
+    """Add an estimate to the day, take it back out, or delete it."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    if action == "add":
+        if not meals.add_to_day(conn, user_id, meal_id):
+            return _meals_redirect("Rien à ajouter pour cette estimation.")
+        return _meals_redirect("Ajouté à ta journée.")
+    if action == "remove":
+        meals.remove_from_day(conn, user_id, meal_id)
+        return _meals_redirect("Retiré de ta journée.")
+    if action == "delete":
+        meals.delete(conn, user_id, meal_id)
+    return _meals_redirect()
 
 
 @app.get("/body", response_class=HTMLResponse)

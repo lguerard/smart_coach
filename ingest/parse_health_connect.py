@@ -314,6 +314,9 @@ def _upsert(
 # Reconciliation below speaks only for what Health Connect exported,
 # so it must never touch them.
 GARMIN_UUID_PREFIX = "garmin-"
+# Rows smart_coach writes itself (a meal estimated from a photo,
+# meals.py): not Health Connect's either, so never reconciled away.
+APP_UUID_PREFIX = "smartcoach-"
 
 
 def _reconcile(
@@ -379,6 +382,7 @@ def _reconcile(
         f"DELETE FROM {table} WHERE user_id = ? "
         f"AND local_date BETWEEN ? AND ? "
         f"AND uuid NOT LIKE '{GARMIN_UUID_PREFIX}%' "
+        f"AND uuid NOT LIKE '{APP_UUID_PREFIX}%' "
         f"AND uuid NOT IN (SELECT uuid FROM _exported_uuids)",
         (user_id, first, last),
     )
@@ -1101,8 +1105,18 @@ if __name__ == "__main__":
             "VALUES ('garmin-weight-1', ?, '2023-11-14T22:13:20+00:00', "
             "'2023-11-14', 88.7)", (regen_uid,),
         )
+        # A meal estimated from a photo, on a day the export covers.
+        regen_conn.execute(
+            "INSERT INTO nutrition (uuid, user_id, start_utc, end_utc, "
+            "local_date, calories) VALUES ('smartcoach-meal-1', ?, ?, ?, ?, 700)",
+            (regen_uid, f"{exported_day}T12:00:00+00:00",
+             f"{exported_day}T12:30:00+00:00", exported_day),
+        )
         regen_conn.commit()
         parse_and_upsert(second, regen_conn, regen_uid)
+        assert regen_conn.execute(
+            "SELECT COUNT(*) AS n FROM nutrition WHERE uuid = 'smartcoach-meal-1'",
+        ).fetchone()["n"] == 1
         assert regen_conn.execute(
             "SELECT COUNT(*) AS n FROM nutrition WHERE user_id = ? AND "
             "local_date = '2020-01-01'", (regen_uid,),

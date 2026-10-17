@@ -632,6 +632,18 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- Replaces garmin-coach's append-only history.log.
+-- Meals estimated from a photo (meals.py). The photo itself is never
+-- kept; ``added`` = written into nutrition as smartcoach-meal-<id>.
+CREATE TABLE IF NOT EXISTS meal_estimates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    analysis TEXT NOT NULL,
+    added INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
 -- What was actually done on a day, as the person declared it on the
 -- Sessions page (done_sessions.py): a session type, 'other' (another
 -- activity) or 'none'. Wins over what the recorded activity suggests.

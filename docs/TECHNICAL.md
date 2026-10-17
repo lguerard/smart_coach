@@ -227,6 +227,32 @@ that level without "too hard", or after one rated "too easy"
 with what will make the session go up. Green used to need every one of
 up to nine signals green, which held levels still for weeks.
 
+One-tap rating (`quick_links.py`): the 21:00 check-in, when a session
+was planned and is not rated yet, sends an ntfy notification with three
+buttons ("Trop facile", "Bien", "Trop dur"). Each button POSTs to
+`/quick/rate/<user>/<date>/<rating>/<signature>`, a public route: the
+signature is an HMAC of exactly that action under a random per-user
+secret (`link_secret` setting), so a link can rate that one session and
+nothing else, and stops working after 3 days. The buttons need the
+site's public address: `public_url` in Réglages, or `PUBLIC_URL`.
+
+Heavier kettlebell (`training.heavier_bell_hint`): once a loaded type
+(kettlebell, circuits) is at the top of its levels with the current
+bell, Today, the Programme page and the morning message suggest the
+next one (12 -> 16 -> 20 -> 24 kg). Saving a heavier bell in Réglages
+lowers those levels (kettlebell -5, circuits -3) so the new weight
+starts gently.
+
+Meals (`/repas`, `meals.py`): a photo of the plate gives an estimate
+per food and in total (calories, protein, carbs, fat); a photo of a
+menu or canteen board gives the best choice for what is left of today's
+targets. The image is cleaned (EXIF stripped), sent once to the model
+(`body.vision_json`, structured output, `MEAL_ANALYSIS_MODEL`) and never
+stored; only the estimate is (`meal_estimates`). "Ajouter à ma journée"
+writes the total into the day's nutrition under uuid
+`smartcoach-meal-<id>`; the Health Connect reconciliation leaves
+`smartcoach-` rows alone, so the import does not delete it.
+
 ## Architecture
 
 ```text

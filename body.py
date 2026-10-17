@@ -492,7 +492,10 @@ def _prompt(pose: str, context: dict, previous: Optional[dict]) -> str:
     )
 
 
-def _analyze_claude_cli(jpeg: bytes, prompt: str) -> dict:
+def _analyze_claude_cli(
+    jpeg: bytes, prompt: str, schema: dict | None = None,
+    model: str | None = None, effort: str = "high",
+) -> dict:
     """Ask Claude through the CLI: image in stream-json, JSON out.
 
     No tools at all (``--tools ""``): the model only looks at the image
@@ -509,8 +512,8 @@ def _analyze_claude_cli(jpeg: bytes, prompt: str) -> dict:
     result = subprocess.run(
         [claude, "-p", "--input-format", "stream-json",
          "--output-format", "stream-json", "--verbose", "--tools", "",
-         "--model", ANALYSIS_MODEL,
-         "--json-schema", json.dumps(ANALYSIS_SCHEMA)],
+         "--model", model or ANALYSIS_MODEL,
+         "--json-schema", json.dumps(schema or ANALYSIS_SCHEMA)],
         input=json.dumps(message) + "\n", capture_output=True, text=True,
         timeout=600,
     )
@@ -531,7 +534,10 @@ def _analyze_claude_cli(jpeg: bytes, prompt: str) -> dict:
     raise RuntimeError(f"claude CLI sans resultat: {result.stderr[-500:]}")
 
 
-def _analyze_anthropic_api(jpeg: bytes, prompt: str) -> dict:
+def _analyze_anthropic_api(
+    jpeg: bytes, prompt: str, schema: dict | None = None,
+    model: str | None = None, effort: str = "high",
+) -> dict:
     """Ask Claude through the API, schema-constrained JSON out.
 
     Server-side refusal fallbacks are on, so a safety decline on the main
@@ -541,13 +547,13 @@ def _analyze_anthropic_api(jpeg: bytes, prompt: str) -> dict:
 
     client = anthropic.Anthropic()
     response = client.beta.messages.create(
-        model=ANALYSIS_MODEL,
+        model=model or ANALYSIS_MODEL,
         max_tokens=16000,
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
         output_config={
-            "effort": "high",
-            "format": {"type": "json_schema", "schema": ANALYSIS_SCHEMA},
+            "effort": effort,
+            "format": {"type": "json_schema", "schema": schema or ANALYSIS_SCHEMA},
         },
         messages=[{"role": "user", "content": [
             {"type": "image", "source": {
@@ -569,6 +575,18 @@ PROVIDERS = {
     "claude_cli": _analyze_claude_cli,
     "anthropic_api": _analyze_anthropic_api,
 }
+
+
+def vision_json(
+    jpeg: bytes, prompt: str, schema: dict, model: str, effort: str = "medium",
+) -> dict:
+    """One image + instructions -> JSON matching ``schema``, through the
+    configured provider (LLM_PROVIDER). Shared with the meal analysis."""
+    provider = os.environ.get("LLM_PROVIDER", "claude_cli")
+    if provider not in PROVIDERS:
+        raise RuntimeError(f"LLM_PROVIDER inconnu: {provider}")
+    return PROVIDERS[provider](jpeg, prompt, schema=schema, model=model,
+                               effort=effort)
 
 
 def analyze_photo(
