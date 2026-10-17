@@ -4,6 +4,9 @@
 
 <div class="card p-4">
   <h1 class="card-title text-base">{{ icon('kettlebell', 18) }} Mon programme</h1>
+  <form method="post" action="/programme/push" class="float-right ml-3">
+    <button class="btn btn-primary btn-sm" title="Envoie la séance du jour et les prochaines séances déjà sur la montre, telles qu'elles sont maintenant">{{ icon('refresh', 13) }} Envoyer sur la montre</button>
+  </form>
   <p class="text-xs mt-1" style="color: var(--text-secondary);">
     Tes changements sont gardés et appliqués chaque matin : sur la montre,
     dans l'agenda, sur l'accueil et dans le message. Les mouvements du
@@ -14,8 +17,13 @@
 
 {% if error %}
 <div class="card p-3 text-sm" style="border-color: var(--critical); color: var(--critical);">{{ error }}</div>
+{% elif pushed %}
+<div class="card p-3 text-sm" style="border-color: var(--accent); color: var(--accent-text);">{{ pushed }}</div>
 {% elif saved %}
-<div class="card p-3 text-sm" style="border-color: var(--good); color: var(--good);">Enregistré.</div>
+<div class="card p-3 text-sm flex flex-wrap items-center justify-between gap-2" style="border-color: var(--good); color: var(--good);">
+  Enregistré. Les prochaines séances déjà sur la montre se mettent à jour d'elles-mêmes le matin même, ou tout de suite :
+  <form method="post" action="/programme/push"><button class="btn btn-primary btn-sm">{{ icon('refresh', 13) }} Envoyer sur la montre</button></form>
+</div>
 {% endif %}
 
 {% if not blocks %}

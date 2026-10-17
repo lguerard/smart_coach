@@ -186,7 +186,12 @@ Stored in `custom_moves` / `removed_moves` and applied by
 `training.user_session_values`, which every real session goes through
 (morning run, dashboard, level edit, week ahead on the watch), so an edit
 is never undone by the next morning. Own moves keep a fixed count; a
-change that would empty a session is ignored.
+change that would empty a session is ignored. "Envoyer sur la montre" (Programme page,
+and next to tonight's moves on Today) runs `garmin_api.push_programme`:
+today's workout rebuilt from this morning's decision, and every coming
+day already on the watch rebuilt at its type's current level with the
+person's own moves -- only the changed ones re-uploaded, no new decision,
+no level change. The web container mounts `data/garmin-tokens` for it.
 
 Sessions done other than planned (`done_sessions.py`): what was done
 on a day is what the person declared on the Sessions page ("Ce n'est

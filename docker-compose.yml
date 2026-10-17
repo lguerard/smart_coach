@@ -33,6 +33,9 @@ services:
       - ./data/db:/app/data/db
       - ./data/rclone:/root/.config/rclone
       - ./data/gcal-config:/root/.config/smart_coach
+      # Garmin tokens: the web app's "Envoyer sur la montre" button
+      # pushes workouts with the same login as the worker.
+      - ./data/garmin-tokens:/app/data/garmin-tokens
       # Private body photos (encrypted) and their key. Web only: the
       # worker never needs them. Exclude both from any cloud backup.
       - ./data/body-photos:/app/data/body-photos

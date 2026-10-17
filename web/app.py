@@ -58,6 +58,7 @@ import muscles
 import progress
 import training
 import training_load
+from ingest import garmin_api
 from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
 from web.icons import icon, session_badge
 
@@ -700,6 +701,7 @@ def home(request: Request) -> HTMLResponse:
             "coach_score": coach_score, "player_level": player_level,
             "new_achievements_today": new_today, "in_deload": in_deload,
             "cal_note": request.query_params.get("cal_note"),
+            "pushed": request.query_params.get("pushed"),
             "username": request.session.get("username"),
         },
     )
@@ -1480,8 +1482,48 @@ def programme_page(request: Request) -> HTMLResponse:
             "picker": custom_moves.GARMIN_PICKER,
             "error": request.query_params.get("error"),
             "saved": request.query_params.get("saved") is not None,
+            "pushed": request.query_params.get("pushed"),
             "max_amount": custom_moves.MAX_AMOUNT,
         },
+    )
+
+
+_PUSH_DONE = ("created", "updated", "removed")
+
+
+def push_summary(results: dict) -> str:
+    """One French line on what the watch push changed."""
+    changed = sorted(d for d, outcome in results.items() if outcome in _PUSH_DONE)
+    if not changed:
+        return "La montre était déjà à jour."
+    days = ", ".join(f"{d[8:10]}/{d[5:7]}" for d in changed)
+    count = len(changed)
+    return (f"Montre à jour : {count} séance{'s' if count > 1 else ''} "
+            f"envoyée{'s' if count > 1 else ''} ({days}). Synchronise la montre.")
+
+
+@app.post("/programme/push")
+async def programme_push(request: Request):
+    """Send the programme as it is now to the watch: today's workout and
+    the coming days already planned there (garmin_api.push_programme).
+    No new decision, no level change; unchanged days are not re-sent."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    back = "/" if form.get("next") == "home" else "/programme"
+    try:
+        client = garmin_api.get_client(request.session.get("username", ""))
+        results = garmin_api.push_programme(
+            conn, user_id, client, today_str(conn, user_id),
+        )
+    except Exception as error:  # noqa: BLE001 -- shown, never a 500
+        return RedirectResponse(
+            back + "?" + urlencode({"pushed": f"Envoi impossible : {error}"}),
+            status_code=303,
+        )
+    return RedirectResponse(
+        back + "?" + urlencode({"pushed": push_summary(results)}),
+        status_code=303,
     )
 
 

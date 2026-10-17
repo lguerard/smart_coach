@@ -41,30 +41,11 @@ TODAY_STATE = {
 
 
 def refresh_today_workout(conn, user_id: int, client, today: str) -> str:
-    """Today's workout rebuilt from this morning's coach_log row.
-
-    Returns:
-        str: What happened, in French; "pas encore de seance du matin"
-        when the morning run has not logged today yet.
-    """
-    entry = conn.execute(
-        "SELECT * FROM coach_log WHERE user_id = ? AND local_date = ? "
-        "ORDER BY id DESC LIMIT 1", (user_id, today),
-    ).fetchone()
-    if entry is None:
+    """Today's workout rebuilt from this morning's coach_log row
+    (``garmin_api.refresh_today``), in French."""
+    outcome = garmin_api.refresh_today(conn, user_id, client, today)
+    if outcome == "no_log":
         return "pas encore de seance du matin, rien change"
-    template = training.schedule_for_user(conn, user_id)[
-        dt.date.fromisoformat(today).weekday()
-    ]
-    plan = training.plan_from_log(conn, user_id, today, template, entry)
-    kind = (
-        None if plan["session_type"] is None or plan["tier"] == training.TIER_REST
-        else "recovery" if plan["tier"] == training.TIER_RECOVERY
-        else plan["session_type"]
-    )
-    outcome = garmin_api.sync_planned_workout(
-        conn, user_id, client, today, kind, plan["level"] or 0, plan["values"],
-    )
     return TODAY_STATE.get(outcome, outcome)
 
 

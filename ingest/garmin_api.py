@@ -1571,6 +1571,76 @@ def sync_planned_workout(
     return "updated" if existing else "created"
 
 
+def refresh_today(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, today: str,
+) -> str:
+    """Today's workout rebuilt from this morning's decision (coach_log:
+    same tier, same level) with the current code and the person's
+    current programme, replaced on the watch only if it differs.
+
+    Returns:
+        str: ``sync_planned_workout``'s outcome, or ``"no_log"`` when the
+        morning run has not logged today yet (nothing is changed).
+    """
+    import training
+
+    entry = conn.execute(
+        "SELECT * FROM coach_log WHERE user_id = ? AND local_date = ? "
+        "ORDER BY id DESC LIMIT 1", (user_id, today),
+    ).fetchone()
+    if entry is None:
+        return "no_log"
+    template = training.schedule_for_user(conn, user_id)[
+        dt.date.fromisoformat(today).weekday()
+    ]
+    plan = training.plan_from_log(conn, user_id, today, template, entry)
+    kind = (
+        None if plan["session_type"] is None or plan["tier"] == training.TIER_REST
+        else "recovery" if plan["tier"] == training.TIER_RECOVERY
+        else plan["session_type"]
+    )
+    return sync_planned_workout(
+        conn, user_id, client, today, kind, plan["level"] or 0, plan["values"],
+    )
+
+
+def push_programme(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, today: str,
+) -> dict:
+    """Send the programme as it is now to the watch: today's workout
+    (``refresh_today``) and every coming day already on the watch,
+    rebuilt at its type's current level with the person's own moves.
+    Only days whose workout actually changed are re-uploaded. No
+    decision is re-made and no level moves.
+
+    Returns:
+        dict: ISO date -> outcome (``unchanged`` / ``created`` /
+        ``updated`` / ``removed`` / ``none`` / ``no_log``).
+    """
+    import training
+
+    results = {today: refresh_today(conn, user_id, client, today)}
+    schedule = training.schedule_for_user(conn, user_id)
+    for row in conn.execute(
+        "SELECT local_date FROM garmin_planned_workouts WHERE user_id = ? "
+        "AND local_date > ? ORDER BY local_date", (user_id, today),
+    ).fetchall():
+        date = row["local_date"]
+        session_type = schedule[dt.date.fromisoformat(date).weekday()].get(
+            "session_type",
+        )
+        if not session_type:
+            continue
+        level = training.get_level(conn, user_id, session_type)
+        values = training.user_session_values(
+            conn, user_id, session_type, level, date,
+        )
+        results[date] = sync_planned_workout(
+            conn, user_id, client, date, session_type, level, values,
+        )
+    return results
+
+
 def plan_week_ahead(
     conn: sqlite3.Connection, user_id: int, client: Garmin, today: str,
     days: int = WEEK_AHEAD_DAYS,
@@ -2300,5 +2370,15 @@ if __name__ == "__main__":
         "SELECT local_date FROM garmin_planned_workouts WHERE user_id = ?",
         (uid,))]
     assert later["created"], later
+
+    # The website's "send to the watch": coming days already on the watch
+    # are rebuilt now (here, upper body moved back to level 3), only
+    # the changed ones re-uploaded; a second press changes nothing.
+    training.set_level(conn, uid, "upper_body", 3)
+    pushed = push_programme(conn, uid, fake_watch, "2026-07-20")
+    assert pushed["2026-07-20"] == "no_log", pushed  # no morning run logged
+    assert "updated" in pushed.values(), pushed
+    again = push_programme(conn, uid, fake_watch, "2026-07-20")
+    assert set(again.values()) <= {"unchanged", "no_log"}, again
 
     print("garmin_api.py: all checks passed (no live Garmin call made)")

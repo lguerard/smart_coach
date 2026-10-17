@@ -134,6 +134,9 @@
       {% if cal_note %}
       <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
       {% endif %}
+      {% if pushed %}
+      <p class="text-xs mt-2" style="color: var(--accent-text);">{{ pushed }}</p>
+      {% endif %}
       {% if tier == 'train' and values and values.variants %}
       <details class="mt-3 text-sm">
         <summary class="cursor-pointer text-xs font-medium link">Les mouvements de ce soir</summary>
@@ -155,7 +158,13 @@
         <p class="text-xs mt-1" style="color: var(--text-secondary);"><span class="caption">À la fin</span> ·
           {% for f in values.finisher %}{{ f.name }} {{ f.amount }}{{ ' s' if f.unit == 'sec' else '' }}{{ ', ' if not loop.last }}{% endfor %}</p>
         {% endif %}
-        <a href="/programme" class="text-xs link inline-block mt-2">Modifier mon programme</a>
+        <div class="flex flex-wrap items-center gap-3 mt-2">
+          <a href="/programme" class="text-xs link">Modifier mon programme</a>
+          <form method="post" action="/programme/push">
+            <input type="hidden" name="next" value="home">
+            <button class="btn btn-sm">{{ icon('refresh', 13) }} Envoyer sur la montre</button>
+          </form>
+        </div>
       </details>
       {% endif %}
     </div>
