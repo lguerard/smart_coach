@@ -45,6 +45,7 @@ import achievements
 import body
 import bonus
 import custom_moves
+import done_sessions
 import bodymap
 import coach_payload
 import db
@@ -630,6 +631,35 @@ def home(request: Request) -> HTMLResponse:
     desk_break = desk.break_for_day(
         conn, user_id, date, tier, entry["status"] if entry else None,
     )
+    # Yesterday's session as done, which may not be the plan.
+    yesterday = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+    y_plan = conn.execute(
+        "SELECT session_type, tier FROM coach_log WHERE user_id = ? AND "
+        "local_date = ? ORDER BY id DESC LIMIT 1", (user_id, yesterday),
+    ).fetchone()
+    y_done = done_sessions.done_on(conn, user_id, yesterday)
+    y_actual = done_sessions.actual_type(
+        conn, user_id, yesterday, y_plan["session_type"] if y_plan else None,
+        y_plan["tier"] if y_plan else None,
+    )
+    y_planned_label = (
+        None if not y_plan or not y_plan["session_type"]
+        else "repos" if y_plan["tier"] == "rest"
+        else "marche de récupération" if y_plan["tier"] == "recovery"
+        else training.SESSION_LABEL_FR.get(y_plan["session_type"])
+    )
+    yesterday_session = {
+        "done": training.SESSION_LABEL_FR.get(y_actual) if y_actual else None,
+        "planned": y_planned_label,
+        "changed": bool(y_actual and y_plan and (
+            y_actual != y_plan["session_type"]
+            or (y_plan["tier"] or "train") != "train")) or bool(y_actual and not y_plan),
+        "recorded": y_done is not None,
+        "missing": bool(
+            y_plan and y_plan["session_type"]
+            and (y_plan["tier"] or "train") == "train" and y_done is None
+        ),
+    }
     # Optional extra workouts, "just in case" -- never move a level.
     bonus_workouts = bonus.bonus_workouts(conn, user_id, date, tier, fatigue)
     # The left column's week/month switch: both windows rendered, the
@@ -646,6 +676,7 @@ def home(request: Request) -> HTMLResponse:
             "off_title": off_title, "tier": tier,
             "movement": movement, "desk_break": desk_break,
             "period": period, "bonus_workouts": bonus_workouts,
+            "yesterday_session": yesterday_session,
             "recovery_fig": recovery_fig, "tired": tired,
             "level_reason": (
                 entry["level_reason"] if entry and "level_reason" in entry.keys()
@@ -690,25 +721,69 @@ async def submit_feedback(request: Request):
     if rating not in ("easy", "right", "hard") or not date:
         return RedirectResponse(_feedback_return(form), status_code=303)
 
-    row = conn.execute(
-        "SELECT session_type FROM coach_log WHERE user_id = ? AND "
-        "local_date = ? AND session_type IS NOT NULL "
-        "AND COALESCE(tier, 'train') = 'train' "
-        "ORDER BY id DESC LIMIT 1", (user_id, date),
-    ).fetchone()
+    session_type = _rated_type(conn, user_id, date)
     # No session that day means nothing to rate -- a crafted form post
-    # should not be able to invent one.
-    if row:
+    # should not be able to invent one. The type rated is the one
+    # actually done when known (done_sessions), else the planned one.
+    if session_type:
         conn.execute(
             "INSERT INTO session_feedback (user_id, local_date, "
             "session_type, rating, created_at) VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT(user_id, local_date) DO UPDATE SET "
             "rating = excluded.rating, created_at = excluded.created_at",
-            (user_id, date, row["session_type"], rating,
+            (user_id, date, session_type, rating,
              dt.datetime.now(dt.timezone.utc).isoformat()),
         )
         conn.commit()
     return RedirectResponse(_feedback_return(form), status_code=303)
+
+
+def _rated_type(conn: sqlite3.Connection, user_id: int, date: str):
+    """The session type a rating for ``date`` belongs to, or None."""
+    plan = conn.execute(
+        "SELECT session_type, tier FROM coach_log WHERE user_id = ? AND "
+        "local_date = ? ORDER BY id DESC LIMIT 1", (user_id, date),
+    ).fetchone()
+    return done_sessions.actual_type(
+        conn, user_id, date, plan["session_type"] if plan else None,
+        plan["tier"] if plan else None,
+    )
+
+
+@app.post("/sessions/done")
+async def declare_done(request: Request):
+    """"J'ai fait : ..." -- the session actually done on a day. A rating
+    already given for that day follows the new type (or is dropped when
+    nothing countable was done)."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    date, choice = str(form.get("date", "")), str(form.get("session_type", ""))
+    try:
+        if choice == "planned":
+            done_sessions.clear(conn, user_id, date)
+        else:
+            done_sessions.declare(
+                conn, user_id, date, choice, today=today_str(conn, user_id),
+            )
+    except ValueError as error:
+        return RedirectResponse(
+            "/sessions?" + urlencode({"error": str(error)}) + "#notes",
+            status_code=303,
+        )
+    rated = _rated_type(conn, user_id, date)
+    if rated:
+        conn.execute(
+            "UPDATE session_feedback SET session_type = ? WHERE user_id = ? "
+            "AND local_date = ?", (rated, user_id, date),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM session_feedback WHERE user_id = ? AND local_date = ?",
+            (user_id, date),
+        )
+    conn.commit()
+    return RedirectResponse("/sessions#notes", status_code=303)
 
 
 def _feedback_return(form) -> str:
@@ -1139,6 +1214,17 @@ def sessions(request: Request) -> HTMLResponse:
             "rateable": training.rateable_sessions(
                 conn, user_id, today_str(conn, user_id),
             ),
+            "done_choices": [
+                ("planned", "Ce qui était prévu / l'activité enregistrée"),
+                *training.SESSION_LABEL_FR.items(),
+                (done_sessions.OTHER, "Une autre activité"),
+                (done_sessions.NOTHING, "Rien fait"),
+            ],
+            "min_declare": (
+                dt.date.fromisoformat(today_str(conn, user_id))
+                - dt.timedelta(days=done_sessions.DECLARE_DAYS)
+            ).isoformat(),
+            "error": request.query_params.get("error"),
             "today": today_str(conn, user_id),
             "session_label_fr": training.SESSION_LABEL_FR,
         },

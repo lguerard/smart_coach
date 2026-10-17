@@ -188,6 +188,15 @@ Stored in `custom_moves` / `removed_moves` and applied by
 is never undone by the next morning. Own moves keep a fixed count; a
 change that would empty a session is ignored.
 
+Sessions done other than planned (`done_sessions.py`): what was done
+on a day is what the person declared on the Sessions page ("Ce n'est
+pas ce que j'ai fait", or a day not listed), else what the recorded
+activity's name or corrected category says ("Smart Coach - Kettlebell
+...", "Calisthenie"...), else the plan. Muscle fatigue, ratings (and so
+the level of the type actually done), the progression gate, "session
+skipped yesterday" and the dashboard all read it; the morning message
+gets `yesterday_session` when yesterday's session was not the plan.
+
 ## Architecture
 
 ```text

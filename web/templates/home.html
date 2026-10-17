@@ -372,9 +372,18 @@
     </div>
     {% endif %}
 
-    {% if movement.flags or movement.steps or movement.stress_avg is defined %}
+    {% if movement.flags or movement.steps or movement.stress_avg is defined or yesterday_session.done or yesterday_session.missing %}
     <div class="card p-4">
       <h2 class="card-title mb-3">{{ icon('footprints', 16) }} Hier</h2>
+      {% if yesterday_session.done %}
+      <p class="text-sm mb-2">{{ icon('check', 14) }} {{ yesterday_session.done }}
+        {% if yesterday_session.changed and yesterday_session.planned %}<span class="text-xs" style="color: var(--muted);">au lieu de {{ yesterday_session.planned }}</span>{% endif %}
+        <a href="/sessions#notes" class="text-xs link ml-1">noter / corriger</a></p>
+      {% elif yesterday_session.missing %}
+      <p class="text-xs mb-2" style="color: var(--text-secondary);">
+        {{ yesterday_session.planned }} : rien d'enregistré. Tu l'as faite, ou autre chose ?
+        <a href="/sessions#notes" class="link">Dis-le dans Séances</a></p>
+      {% endif %}
       <div class="flex flex-wrap gap-1.5 text-xs">
         {% if movement.steps %}
         <span class="chip-{{ 'green' if movement.steps.verdict == 'reached' else 'yellow' if movement.steps.verdict == 'close' else 'red' }} px-2.5 py-1 rounded-full">

@@ -1138,20 +1138,30 @@ def history_snapshot(
             done_min.get(row["local_date"], 0)
             + session_duration_min(row)
         )
-    adherence = [
-        {
+    import done_sessions
+
+    adherence = []
+    for row in planned:
+        if row["session_type"] is None or row["local_date"] > yesterday:
+            continue
+        # What was actually done (declared on the Sessions page, or read
+        # from the activity's name): a declared session counts as done
+        # even without a recorded activity, a declared "nothing" never.
+        actual = done_sessions.done_on(conn, user_id, row["local_date"])
+        declared = actual and actual["source"] == "declared"
+        adherence.append({
             "date": row["local_date"],
             "planned": row["session_type"],
             # rest / recovery days were told NOT to do the scheduled
             # session -- not doing it is the plan, not a lapse.
             "tier": row["tier"] or "train",
-            "done": row["local_date"] in done_min,
+            "done": (
+                actual["session_type"] != done_sessions.NOTHING if declared
+                else row["local_date"] in done_min
+            ),
+            "done_type": actual["session_type"] if actual else None,
             "duration_min": done_min.get(row["local_date"], 0),
-        }
-        for row in planned
-        if row["session_type"] is not None
-        and row["local_date"] <= yesterday
-    ]
+        })
 
     load = training_load.latest_training_load(conn, user_id)
     # A skipped session sitting inside adherence_last_7_days is easy
@@ -1171,11 +1181,26 @@ def history_snapshot(
             and yesterday_row["tier"] == "train"
         ) else None
     )
+    # Yesterday done, but not what was planned (a kettlebell session on
+    # a recovery day, the arms instead of the legs): named so the
+    # message acknowledges it instead of talking about the plan.
+    labels = __import__("training").SESSION_LABEL_FR
+    session_changed_yesterday = None
+    if yesterday_row and yesterday_row["done_type"] in labels and (
+        yesterday_row["done_type"] != yesterday_row["planned"]
+        or yesterday_row["tier"] != "train"
+    ):
+        session_changed_yesterday = {
+            "date": yesterday, "done": yesterday_row["done_type"],
+            "planned": yesterday_row["planned"],
+            "planned_tier": yesterday_row["tier"],
+        }
     return {
         "activities_last_7_days": activities,
         "statuses_last_7_days": statuses,
         "adherence_last_7_days": adherence,
         "session_skipped_yesterday": session_skipped_yesterday,
+        "session_changed_yesterday": session_changed_yesterday,
         "training_load": {
             "date": load["local_date"], "ctl": round(load["ctl"], 1),
             "atl": round(load["atl"], 1), "tsb": round(load["tsb"], 1),
@@ -1485,9 +1510,9 @@ if __name__ == "__main__":
     adherence = snap["adherence_last_7_days"]
     assert adherence == [
         {"date": "2026-07-11", "planned": "treadmill", "tier": "train",
-         "done": False, "duration_min": 0},
+         "done": False, "done_type": None, "duration_min": 0},
         {"date": "2026-07-12", "planned": "upper_body", "tier": "train",
-         "done": True, "duration_min": 30},
+         "done": True, "done_type": None, "duration_min": 30},
     ], adherence
     assert snap["training_load"] == {
         "date": "2026-07-12", "ctl": 10.1, "atl": 20.5, "tsb": -10.3,
@@ -1517,6 +1542,24 @@ if __name__ == "__main__":
         row = [r for r in told["adherence_last_7_days"]
                if r["date"] == "2026-07-11"][0]
         assert row["tier"] == tier and row["done"] is False, row
+    # A recovery day where kettlebell was done anyway (declared): done,
+    # and named as a change for the message.
+    import done_sessions
+    done_sessions.declare(conn, uid, "2026-07-11", "kettlebell", today="2026-07-12")
+    changed = history_snapshot(conn, uid, "2026-07-12")
+    assert changed["session_changed_yesterday"] == {
+        "date": "2026-07-11", "done": "kettlebell", "planned": "treadmill",
+        "planned_tier": "recovery",
+    }, changed["session_changed_yesterday"]
+    assert [r for r in changed["adherence_last_7_days"]
+            if r["date"] == "2026-07-11"][0]["done"] is True
+    # Declared "nothing": a skip on a training day, whatever was logged.
+    conn.execute("UPDATE coach_log SET tier = 'train' WHERE user_id = ? AND "
+                 "local_date = '2026-07-11'", (uid,))
+    conn.commit()
+    done_sessions.declare(conn, uid, "2026-07-11", done_sessions.NOTHING, today="2026-07-12")
+    assert history_snapshot(conn, uid, "2026-07-12")["session_skipped_yesterday"]
+    done_sessions.clear(conn, uid, "2026-07-11")
     conn.execute(
         "UPDATE coach_log SET tier = NULL WHERE user_id = ? AND "
         "local_date = '2026-07-11'", (uid,),
@@ -1535,6 +1578,7 @@ if __name__ == "__main__":
     assert empty == {
         "activities_last_7_days": [], "statuses_last_7_days": [],
         "adherence_last_7_days": [], "session_skipped_yesterday": None,
+        "session_changed_yesterday": None,
         "training_load": {},
     }, empty
 

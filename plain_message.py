@@ -188,6 +188,15 @@ def render(brief: dict) -> str:
             "it, today's is enough."
         )
 
+    changed = brief.get("yesterday_session")
+    if changed:
+        paragraphs.append(
+            f"Hier, {changed['done']} a la place de {changed['instead_of']} : "
+            "c'est note, et compte comme fait." if fr else
+            f"Yesterday, {changed['done']} instead of {changed['instead_of']}: "
+            "noted, and counted as done."
+        )
+
     care = (brief.get("help") or {}).get("care")
     if care:
         paragraphs.append(
@@ -273,4 +282,7 @@ if __name__ == "__main__":
         "type": "recovery", "replaces": "Tapis",
         "values": {"speed_kmh": 5.0, "incline_pct": 5, "duration_min": 35}}})
     assert "marche active en pente : 5.0 km/h, 5 % de pente, 35 min" in uphill
+    swapped = render({"language": "fr", "angle": "train", "yesterday_session": {
+        "done": "Kettlebell a la maison", "instead_of": "marche de recuperation"}})
+    assert "Hier, Kettlebell a la maison a la place de marche de recuperation" in swapped
     print("plain_message.py: all checks passed")

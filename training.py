@@ -951,39 +951,64 @@ def rateable_sessions(
     conn: sqlite3.Connection, user_id: int, date: str,
     days: int = RATEABLE_DAYS,
 ) -> list[dict]:
-    """Planned training sessions that can still be rated, newest first.
+    """Sessions that can still be rated, newest first.
 
-    Only days the morning run kept as a real session (tier ``train``):
-    a rest day or a recovery walk has no level to move, so nothing to
-    rate. Already-rated days stay listed so a rating can be changed.
-
-    Parameters:
-        conn (sqlite3.Connection): smart_coach db connection.
-        user_id (int): Owning user.
-        date (str): Today's ISO local date (included).
-        days (int): How far back to list.
+    A day counts with the session actually done when that is known
+    (``done_sessions``: declared, or read from the activity's name) --
+    a kettlebell session on a recovery day is rated as kettlebell --
+    else with the planned session on a training day. Rest and recovery
+    days with nothing known done, or days declared "nothing" or
+    "another activity", have no level to move and are not listed.
+    Already-rated days stay listed so a rating can be changed.
 
     Returns:
-        list[dict]: ``{date, session_type, level, rating}``, ``rating``
-        ``None`` when not rated yet.
+        list[dict]: ``{date, session_type, planned, planned_tier, level,
+        rating, done}``; ``rating`` None when not rated yet, ``done``
+        the ``done_sessions.done_on`` result.
     """
+    import done_sessions
+
     start = (dt.date.fromisoformat(date) - dt.timedelta(days=days - 1)).isoformat()
-    rows = conn.execute(
-        "SELECT c.local_date, c.session_type, c.level, f.rating "
-        "FROM coach_log c LEFT JOIN session_feedback f "
-        "ON f.user_id = c.user_id AND f.local_date = c.local_date "
-        "WHERE c.user_id = ? AND c.local_date BETWEEN ? AND ? "
-        "AND c.id = (SELECT MAX(id) FROM coach_log WHERE user_id = c.user_id "
-        "AND local_date = c.local_date) "
-        "AND c.session_type IS NOT NULL AND COALESCE(c.tier, 'train') = 'train' "
-        "ORDER BY c.local_date DESC",
-        (user_id, start, date),
-    ).fetchall()
-    return [
-        {"date": r["local_date"], "session_type": r["session_type"],
-         "level": r["level"], "rating": r["rating"]}
-        for r in rows
-    ]
+    planned = {
+        r["local_date"]: r for r in conn.execute(
+            "SELECT c.local_date, c.session_type, c.level, c.tier "
+            "FROM coach_log c WHERE c.user_id = ? AND c.local_date BETWEEN ? AND ? "
+            "AND c.id = (SELECT MAX(id) FROM coach_log WHERE user_id = c.user_id "
+            "AND local_date = c.local_date)", (user_id, start, date),
+        )
+    }
+    other_days = {
+        r["local_date"] for r in conn.execute(
+            "SELECT local_date FROM exercise_sessions WHERE user_id = ? AND "
+            "local_date BETWEEN ? AND ? UNION SELECT local_date FROM "
+            "session_done WHERE user_id = ? AND local_date BETWEEN ? AND ?",
+            (user_id, start, date, user_id, start, date),
+        )
+    }
+    ratings = {
+        r["local_date"]: r["rating"] for r in conn.execute(
+            "SELECT local_date, rating FROM session_feedback WHERE user_id = ? "
+            "AND local_date BETWEEN ? AND ?", (user_id, start, date),
+        )
+    }
+    rows = []
+    for day in sorted(set(planned) | other_days, reverse=True):
+        plan = planned.get(day)
+        planned_type = plan["session_type"] if plan else None
+        tier = (plan["tier"] or TIER_TRAIN) if plan else None
+        actual = done_sessions.actual_type(conn, user_id, day, planned_type, tier)
+        if not actual:
+            continue
+        level = (
+            plan["level"] if plan and actual == planned_type and tier == TIER_TRAIN
+            else get_level(conn, user_id, actual)
+        )
+        rows.append({
+            "date": day, "session_type": actual, "planned": planned_type,
+            "planned_tier": tier, "level": level, "rating": ratings.get(day),
+            "done": done_sessions.done_on(conn, user_id, day),
+        })
+    return rows
 
 
 def pending_feedback(
@@ -1729,13 +1754,25 @@ def progression_gate(
         "local_date >= ? LIMIT 1", (user_id, since),
     ).fetchone()
     if last and tracks:
-        # Done = an activity logged that day, or a rating given for it.
+        import done_sessions
+
+        # Done = an activity logged that day, or a rating given for it
+        # -- unless what was done is known to be something else -- or
+        # this type done on another day since (declared or recorded).
         done = conn.execute(
             "SELECT 1 FROM exercise_sessions WHERE user_id = ? AND "
             "local_date = ? UNION SELECT 1 FROM session_feedback WHERE "
             "user_id = ? AND local_date = ? LIMIT 1",
             (user_id, last["local_date"], user_id, last["local_date"]),
         ).fetchone()
+        actual = done_sessions.done_on(conn, user_id, last["local_date"])
+        if actual and actual["session_type"] not in (None, session_type):
+            done = None
+        day = dt.date.fromisoformat(last["local_date"])
+        while not done and day < dt.date.fromisoformat(date) - dt.timedelta(days=1):
+            day += dt.timedelta(days=1)
+            later = done_sessions.done_on(conn, user_id, day.isoformat())
+            done = bool(later and later["session_type"] == session_type)
         if not done:
             return (
                 f"la derniere seance de ce type ({last['local_date']}) "
@@ -2894,5 +2931,42 @@ if __name__ == "__main__":
     assert circuit_b["tours"] == friday["tours"] == saturday["tours"]
     b_text = format_description_fr("kettlebell", 3, circuit_b, "green")
     assert "developpe couche au sol" in b_text and "rotation russe" in b_text, b_text
+
+    # A session other than the plan: kettlebell done on a recovery day
+    # is listed and rated as kettlebell, at the kettlebell level.
+    set_level(fb_conn, fb, "kettlebell", 2)
+    fb_conn.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, '', '2026-10-09', "
+        "'red', 'kettlebell', 0, '', 'recovery')", (fb,),
+    )
+    fb_conn.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date, title) VALUES ('k9', ?, '2026-10-09T18:00:00+00:00', "
+        "'2026-10-09T18:25:00+00:00', '2026-10-09', "
+        "'Smart Coach - Kettlebell a la maison niveau 2')", (fb,),
+    )
+    fb_conn.commit()
+    other = next(r for r in rateable_sessions(fb_conn, fb, "2026-10-13")
+                 if r["date"] == "2026-10-09")
+    assert other["session_type"] == "kettlebell" and other["level"] == 2, other
+    assert other["planned_tier"] == "recovery", other
+    # Declared upper body on the 12th instead of the planned lower body:
+    # the lower-body gate sees that day as not done.
+    import done_sessions
+    done_sessions.declare(fb_conn, fb, "2026-10-12", "upper_body", today="2026-10-13")
+    assert next(r for r in rateable_sessions(fb_conn, fb, "2026-10-13")
+                if r["date"] == "2026-10-12")["session_type"] == "upper_body"
+    fb_conn.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date) VALUES ('u12', ?, '2026-10-12T18:00:00+00:00', "
+        "'2026-10-12T18:25:00+00:00', '2026-10-12')", (fb,),
+    )
+    fb_conn.execute("DELETE FROM session_feedback WHERE user_id = ?", (fb,))
+    fb_conn.commit()
+    gate = progression_gate(fb_conn, fb, "lower_body", "2026-10-19")
+    assert gate and "pas ete faite" in gate, gate
+    done_sessions.declare(fb_conn, fb, "2026-10-12", "lower_body", today="2026-10-13")
+    assert progression_gate(fb_conn, fb, "lower_body", "2026-10-19") is None
 
     print("training.py: all checks passed")

@@ -446,6 +446,20 @@ def build_brief(payload: dict) -> dict:
     skipped = payload.get("session_skipped_yesterday")
     if skipped:
         brief["skipped"] = skipped
+    changed = payload.get("session_changed_yesterday")
+    if changed:
+        import training
+
+        labels = training.SESSION_LABEL_FR
+        planned = (
+            "repos" if changed["planned_tier"] == "rest"
+            else "marche de recuperation" if changed["planned_tier"] == "recovery"
+            else labels.get(changed["planned"], changed["planned"])
+        )
+        brief["yesterday_session"] = {
+            "done": labels.get(changed["done"], changed["done"]),
+            "instead_of": planned,
+        }
     if chosen == ANGLE_STREAK:
         brief["green_streak"] = _trailing_greens(
             payload.get("statuses_last_7_days") or []
@@ -694,4 +708,11 @@ if __name__ == "__main__":
     assert "pompes" in session["next_rung"], session
     assert circuit["body"]["tired_muscles"].startswith("pectoraux")
 
+    changed_brief = build_brief(_payload(session_changed_yesterday={
+        "date": "d", "done": "kettlebell", "planned": "kettlebell",
+        "planned_tier": "recovery"}))
+    assert changed_brief["yesterday_session"] == {
+        "done": "Kettlebell a la maison",
+        "instead_of": "marche de recuperation"}, changed_brief
+    assert "yesterday_session" not in build_brief(_payload())
     print("coach_brief.py: all checks passed")

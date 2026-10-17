@@ -8,39 +8,71 @@
 
 {% block content %}
 
-{% if rateable %}
 <div id="notes" class="card p-4" style="scroll-margin-top: 4.5rem;">
   <h2 class="card-title mb-1">{{ icon('target', 16) }} Noter mes séances</h2>
   <p class="text-xs mb-3" style="color: var(--muted);">
     Ta note pèse sur le niveau des prochaines séances du même type — c'est
-    le seul signal qui vienne de toi et pas d'un capteur. Tu peux la
-    changer tant que la séance date de moins de deux semaines.
+    le seul signal qui vienne de toi et pas d'un capteur. Si tu as fait une
+    autre séance que celle prévue, dis-le : elle compte alors pour la
+    fatigue des muscles, ta note et ton niveau de ce type-là.
   </p>
+  {% if error %}<p class="text-xs mb-2" style="color: var(--critical);">{{ error }}</p>{% endif %}
   <div class="divide-y" style="border-color: var(--border);">
     {% for r in rateable %}
-    <form method="post" action="/feedback" class="py-2.5 flex flex-wrap items-center justify-between gap-2" style="border-color: var(--border);">
-      <input type="hidden" name="date" value="{{ r.date }}">
-      <input type="hidden" name="next" value="sessions">
-      <div class="min-w-0">
-        <p class="text-sm font-medium">
-          {{ session_label_fr.get(r.session_type, r.session_type) }}
-          {% if r.level is not none %}<span class="text-xs font-normal" style="color: var(--muted);">· niveau {{ r.level }}</span>{% endif %}
-        </p>
-        <p class="text-xs" style="color: var(--muted);">
-          {{ "aujourd'hui" if r.date == today else r.date[8:10] ~ "/" ~ r.date[5:7] }}
-          {% if r.rating is none %}· <span style="color: var(--warning);">pas encore notée</span>{% endif %}
-        </p>
-      </div>
-      <div class="seg" role="group" aria-label="Note de la séance du {{ r.date }}">
-        {% for value, label in [("easy", "Trop facile"), ("right", "Au bon niveau"), ("hard", "Trop dure")] %}
-        <button name="rating" value="{{ value }}" aria-pressed="{{ 'true' if r.rating == value else 'false' }}">{{ label }}</button>
-        {% endfor %}
-      </div>
-    </form>
+    <div class="py-2.5" style="border-color: var(--border);">
+      <form method="post" action="/feedback" class="flex flex-wrap items-center justify-between gap-2">
+        <input type="hidden" name="date" value="{{ r.date }}">
+        <input type="hidden" name="next" value="sessions">
+        <div class="min-w-0">
+          <p class="text-sm font-medium">
+            {{ session_label_fr.get(r.session_type, r.session_type) }}
+            {% if r.level is not none %}<span class="text-xs font-normal" style="color: var(--muted);">· niveau {{ r.level }}</span>{% endif %}
+          </p>
+          <p class="text-xs" style="color: var(--muted);">
+            {{ "aujourd'hui" if r.date == today else r.date[8:10] ~ "/" ~ r.date[5:7] }}
+            {% if r.session_type != r.planned or r.planned_tier != 'train' %}
+            · au lieu de {{ 'repos' if r.planned_tier == 'rest' else 'la marche' if r.planned_tier == 'recovery' else session_label_fr.get(r.planned, 'rien de prévu') }}
+            {% endif %}
+            {% if r.done and r.done.source == 'detected' %}· reconnue sur la montre{% elif r.done and r.done.source == 'declared' %}· déclarée{% endif %}
+            {% if r.rating is none %}· <span style="color: var(--warning);">pas encore notée</span>{% endif %}
+          </p>
+        </div>
+        <div class="seg" role="group" aria-label="Note de la séance du {{ r.date }}">
+          {% for value, label in [("easy", "Trop facile"), ("right", "Au bon niveau"), ("hard", "Trop dure")] %}
+          <button name="rating" value="{{ value }}" aria-pressed="{{ 'true' if r.rating == value else 'false' }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </form>
+      <details class="mt-1">
+        <summary class="cursor-pointer text-xs link">Ce n'est pas ce que j'ai fait</summary>
+        <form method="post" action="/sessions/done" class="flex flex-wrap items-center gap-2 mt-2">
+          <input type="hidden" name="date" value="{{ r.date }}">
+          <select name="session_type" class="rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border);">
+            {% for value, label in done_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </select>
+          <button class="btn btn-sm">Enregistrer</button>
+        </form>
+      </details>
+    </div>
+    {% else %}
+    <p class="text-xs py-2" style="color: var(--muted);">Rien à noter ces deux dernières semaines.</p>
     {% endfor %}
   </div>
+
+  <form method="post" action="/sessions/done" class="mt-3 pt-3 flex flex-wrap items-end gap-2" style="border-top: 1px solid var(--border);">
+    <p class="caption w-full">J'ai fait une séance qui n'est pas listée</p>
+    <label class="text-xs" style="color: var(--text-secondary);">Le
+      <input type="date" name="date" required value="{{ today }}" min="{{ min_declare }}" max="{{ today }}"
+        class="block mt-1 rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border);">
+    </label>
+    <label class="text-xs" style="color: var(--text-secondary);">J'ai fait
+      <select name="session_type" class="block mt-1 rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border);">
+        {% for value, label in session_label_fr.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="btn btn-primary btn-sm">Ajouter</button>
+  </form>
 </div>
-{% endif %}
 
 <div class="card p-4">
   <h2 class="font-semibold text-sm mb-1">Tous les trajets -- toute activite</h2>

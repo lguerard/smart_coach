@@ -173,16 +173,25 @@ def session_muscle_weights(
 
 
 def _coach_day(conn: sqlite3.Connection, user_id: int, day: str):
-    """That day's coach session (type, level) when it was a training day."""
+    """The session (type, level) the day's workout counts as: the one
+    actually done when known (done_sessions -- a kettlebell session on a
+    recovery day loads what a kettlebell session loads), else the
+    planned training session."""
+    import done_sessions
+    import training
+
     row = conn.execute(
         "SELECT session_type, level, tier FROM coach_log WHERE user_id = ? "
         "AND local_date = ? ORDER BY id DESC LIMIT 1", (user_id, day),
     ).fetchone()
-    if not row or not row["session_type"]:
+    planned = row["session_type"] if row else None
+    tier = row["tier"] if row else None
+    actual = done_sessions.actual_type(conn, user_id, day, planned, tier)
+    if not actual:
         return None
-    if (row["tier"] or "train") != "train":
-        return None
-    return row["session_type"], row["level"] or 0
+    if actual == planned and (tier or "train") == "train":
+        return actual, row["level"] or 0
+    return actual, training.get_level(conn, user_id, actual)
 
 
 def _stimulus(conn, user_id, row, coach) -> tuple[float, dict, str]:

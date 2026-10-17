@@ -603,6 +603,17 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- Replaces garmin-coach's append-only history.log.
+-- What was actually done on a day, as the person declared it on the
+-- Sessions page (done_sessions.py): a session type, 'other' (another
+-- activity) or 'none'. Wins over what the recorded activity suggests.
+CREATE TABLE IF NOT EXISTS session_done (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    session_type TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
+);
+
 -- The person's own changes to their circuits (custom_moves.py): moves
 -- of their own, and library moves taken out. circuit '' = every
 -- circuit of the type; 'A'/'B' = one kettlebell circuit.
