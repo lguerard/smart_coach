@@ -162,9 +162,12 @@ the target weight when it is set below the current one
 (`progress.macro_weight_kg`).
 
 Kettlebell days alternate two 20/10 circuits by date
-(`training.KETTLEBELL_CIRCUITS`): A is the standing video workout, B
-works chest, triceps, biceps and abs (floor press, Russian twist,
-overhead extension, pull-over, hammer curl, sit-up press). Today also
+(`training.KETTLEBELL_CIRCUITS`): A is the standing video workout plus
+push-ups, B works chest, triceps, biceps and abs (floor press, Russian
+twist, overhead extension, pull-over, hammer curl, sit-up press). Both
+have a push, so a kettlebell day can replace the upper-body one. The
+session cap shortens the work time before it takes a tour away, so the
+top levels are not lighter than the ones below. Today also
 lists optional bonus workouts (`bonus.py`: abs & arms, chest &
 triceps, an active walk), sized from the person's levels, with tired
 muscles flagged; none on a rest day, only the walk on a recovery day,
@@ -239,9 +242,10 @@ site's public address: `public_url` in Réglages, or `PUBLIC_URL`.
 Heavier kettlebell (`training.heavier_bell_hint`): once a loaded type
 (kettlebell, circuits) is at the top of its levels with the current
 bell, Today, the Programme page and the morning message suggest the
-next one (12 -> 16 -> 20 -> 24 kg). Saving a heavier bell in Réglages
-lowers those levels (kettlebell -5, circuits -3) so the new weight
-starts gently.
+next one (+2 kg up to 16 kg: 6 -> 8 -> 10 ..., then 20, 24, 32).
+Saving a heavier bell in Réglages lowers those levels so the new weight
+starts gently: kettlebell -5 and circuits -3 for a third more weight
+(6 -> 8, 12 -> 16), proportionally less for a smaller step.
 
 Meals (`/repas`, `meals.py`): a photo of the plate gives an estimate
 per food and in total (calories, protein, carbs, fat); a photo of a

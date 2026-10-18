@@ -1605,11 +1605,13 @@ def calisthenics_values(
 
 
 # Two kettlebell circuits, alternating day by day (so the usual Friday
-# and Saturday get one each): A is the standing video workout, B works
-# chest, triceps, biceps and abs.
+# and Saturday get one each): A is the standing video workout plus
+# push-ups, B works chest, triceps, biceps and abs. Both have a push,
+# so a kettlebell day can stand in for the upper-body one.
 KETTLEBELL_CIRCUITS = {
     "A": ("kb_woodchop_sec", "kb_around_world_sec", "kb_around_world_rev_sec",
-          "kb_goblet_squat_sec", "kb_upright_row_sec", "kb_curl_sec"),
+          "kb_goblet_squat_sec", "kb_upright_row_sec", "kb_curl_sec",
+          "kb_pushup_sec"),
     "B": ("kb_floor_press_sec", "kb_russian_twist_sec", "kb_triceps_ext_sec",
           "kb_pullover_sec", "kb_hammer_curl_sec", "kb_situp_press_sec"),
 }
@@ -1623,8 +1625,9 @@ def kettlebell_circuit(date: Optional[str]) -> str:
         return "A"
     return "AB"[dt.date.fromisoformat(date).toordinal() % 2]
 KETTLEBELL_REST_SEC = 10
+KETTLEBELL_MIN_WORK_SEC = 20
 KETTLEBELL_WARMUP_MIN = 3
-# Level bands -> tours of the six moves. Inside a band the work time
+# Level bands -> tours of the circuit. Inside a band the work time
 # climbs 20 -> 30 s; the next band adds a tour and goes back to 20 s
 # (the same double progression as the circuits, with time). Five tours
 # from the start: two (6 min of work) did nothing, the person said so.
@@ -1639,8 +1642,9 @@ def kettlebell_values(
 ) -> dict:
     """Level -> the 20/10 kettlebell interval session.
 
-    Six moves with one kettlebell -- circuit A (woodchop, around the
-    waist both ways, goblet squat, upright row, curl) or circuit B
+    Six or seven moves with one kettlebell -- circuit A (woodchop,
+    around the waist both ways, goblet squat, upright row, curl,
+    push-ups) or circuit B
     (floor press, Russian twist, overhead triceps extension, pull-over,
     hammer curl, sit-up press), alternating by date -- each
     ``work_sec`` on and 10 s off, repeated ``tours`` times. Tours drop
@@ -1652,10 +1656,20 @@ def kettlebell_values(
         (band, tours) for band, tours in KETTLEBELL_TOURS if level in band
     )
     position = (level - band.start) / max(1, len(band) - 1)
-    work = 20 + round(10 * position)
-    per_tour_min = len(moves) * (work + KETTLEBELL_REST_SEC) / 60
-    while tours > 1 and KETTLEBELL_WARMUP_MIN + tours * per_tour_min > cap_min:
+    work = KETTLEBELL_MIN_WORK_SEC + round(10 * position)
+
+    def fitting_work(t: int) -> int:
+        """The longest work time that keeps ``t`` tours in the cap."""
+        return int((cap_min - KETTLEBELL_WARMUP_MIN) * 60
+                   / (t * len(moves))) - KETTLEBELL_REST_SEC
+
+    # The cap shortens the work time first, and only takes tours away
+    # once even the shortest work time no longer fits: dropping a tour
+    # made the top levels lighter than the ones below them.
+    while tours > 1 and fitting_work(tours) < KETTLEBELL_MIN_WORK_SEC:
         tours -= 1
+    work = max(10, min(work, fitting_work(tours)))
+    per_tour_min = len(moves) * (work + KETTLEBELL_REST_SEC) / 60
     values = {move: work for move in moves}
     values.update({
         "rest_sec": KETTLEBELL_REST_SEC, "tours": tours, "rounds": tours,
@@ -1939,14 +1953,17 @@ def level_reason(
 
 # Session types whose moves carry the kettlebell's weight.
 LOADED_TYPES = ("kettlebell", "lower_body", "upper_body")
-# On a heavier bell, levels go back down this much, so the first
+# On a heavier bell, levels go back down this much for a third more
+# weight (6 -> 8, 12 -> 16), less for a smaller step, so the first
 # sessions with it are doable (kettlebell: 7 tours back to 5).
 HEAVIER_BELL_LEVEL_DROP = {"kettlebell": 5, "lower_body": 3, "upper_body": 3}
+HEAVIER_BELL_REFERENCE_STEP = 1 / 3
 
 
 def next_bell_kg(kg: float) -> float:
-    """The usual next kettlebell up: +4 kg (12 -> 16), +8 from 24."""
-    return kg + (4 if kg < 24 else 8)
+    """The usual next kettlebell up: +2 kg below 16 (6 -> 8 -> 10),
+    +4 to 24 (16 -> 20), +8 from 24."""
+    return kg + (2 if kg < 16 else 4 if kg < 24 else 8)
 
 
 def heavier_bell_hint(conn: sqlite3.Connection, user_id: int) -> Optional[dict]:
@@ -1992,8 +2009,10 @@ def lower_levels_for_heavier_bell(
     """
     if not old_kg or not new_kg or new_kg <= old_kg:
         return {}
+    scale = min(1.0, (new_kg - old_kg) / old_kg / HEAVIER_BELL_REFERENCE_STEP)
     changed = {}
-    for session_type, drop in HEAVIER_BELL_LEVEL_DROP.items():
+    for session_type, base in HEAVIER_BELL_LEVEL_DROP.items():
+        drop = max(1, round(base * scale))
         before = get_level(conn, user_id, session_type)
         after = max(LEVEL_MIN, before - drop)
         if after != before:
@@ -2307,8 +2326,21 @@ if __name__ == "__main__":
     # time rises inside a band, then a tour is added and it resets.
     kb0 = kettlebell_values(0)
     assert kb0["tours"] == 5 and kb0["kb_curl_sec"] == 20, kb0
-    assert kb0["duration_min"] == 18, kb0  # 3 warm-up + 5 x 6 x 30 s
-    assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 6, kb0
+    assert kb0["duration_min"] == 20, kb0  # 3 warm-up + 5 x 7 x 30 s
+    assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 7, kb0
+    assert kb0["variants"]["kb_pushup_sec"]["name"] == "pompes sur les genoux"
+    # Circuit B has a push too (floor press, triceps): either circuit
+    # can stand in for the upper-body day.
+    for circuit in ("2026-10-16", "2026-10-17"):
+        worked = exercise_library.session_muscles(kettlebell_values(5, date=circuit))
+        assert worked.get("chest", 0) >= 1 and worked.get("triceps", 0) >= 0.7, worked
+    # The cap shortens the work time before it drops a tour, so inside
+    # the top band a level up is never less work (it used to fall from
+    # 7 tours to 5 at the top).
+    top = [kettlebell_values(lv) for lv in range(7, 11)]
+    assert all(v["tours"] == 7 for v in top), [v["tours"] for v in top]
+    work = [v["kb_curl_sec"] for v in top]
+    assert work == sorted(work), work
     assert all(kettlebell_values(lv)["tours"] >= 5 for lv in range(11))
     assert kettlebell_values(3)["kb_curl_sec"] == 30
     assert kettlebell_values(4)["tours"] == 6
@@ -3237,17 +3269,22 @@ if __name__ == "__main__":
     assert heavier_bell_hint(hb, hu) is None
     set_level(hb, hu, "kettlebell", 9)
     hint = heavier_bell_hint(hb, hu)
-    assert hint == {"current": 12.0, "next": 16.0,
+    assert hint == {"current": 12.0, "next": 14.0,
                     "types": ["Kettlebell a la maison"]}, hint
     hb.execute("INSERT INTO session_feedback VALUES (?, '2026-10-16', "
                "'kettlebell', 'hard', '')", (hu,))
     hb.commit()
     assert heavier_bell_hint(hb, hu) is None  # still hard at the top
-    assert next_bell_kg(24) == 32
+    assert [next_bell_kg(kg) for kg in (6, 8, 14, 16, 24)] == [8, 10, 16, 20, 32]
     assert lower_levels_for_heavier_bell(hb, hu, 12, 12) == {}
     assert lower_levels_for_heavier_bell(hb, hu, 16, 12) == {}
     changed = lower_levels_for_heavier_bell(hb, hu, 12, 16)
     assert changed["kettlebell"] == (9, 4), changed
     assert get_level(hb, hu, "kettlebell") == 4
+    # 6 -> 8 is the same third more: the same drop. 12 -> 14, about half.
+    set_level(hb, hu, "kettlebell", 9)
+    assert lower_levels_for_heavier_bell(hb, hu, 6, 8)["kettlebell"] == (9, 4)
+    set_level(hb, hu, "kettlebell", 9)
+    assert lower_levels_for_heavier_bell(hb, hu, 12, 14)["kettlebell"] == (9, 7)
 
     print("training.py: all checks passed")

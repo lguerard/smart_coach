@@ -290,9 +290,9 @@ LADDERS = {
         ],
     },
 }
-# The "kettlebell" session (training.kettlebell_values): six moves in
+# The "kettlebell" session (training.kettlebell_values), circuit A:
 # 20 s on / 10 s off intervals, one kettlebell, standing -- the home
-# workout the person chose. Each move is a time slot.
+# workout the person chose -- then push-ups. Each move is a time slot.
 # fmt: off
 KETTLEBELL_SESSION = {
     "kb_woodchop_sec": {
@@ -343,6 +343,28 @@ KETTLEBELL_SESSION = {
                       "corps, monte vers la poitrine et redescends "
                       "lentement.", ("CURL", "KETTLEBELL_BICEPS_CURL"),
                       loaded=True)]],
+    },
+    # Without it, circuit A had no chest or triceps at all: with the
+    # kettlebell standing in for the upper-body day, every other week
+    # went without a single push. Bodyweight, timed like the rest, and
+    # three rungs like the circuits' push-ups.
+    "kb_pushup_sec": {
+        "unit": "sec", "muscles": {"chest": 1.0, "triceps": 0.7,
+                                   "shoulders": 0.6, "abs": 0.3},
+        "rungs": [
+            [_v("kb_knee_pushup", "pompes sur les genoux",
+                "Genoux au sol, ligne droite genoux-epaules, poitrine au ras "
+                "du sol.", ("PUSH_UP", "KNEELING_PUSH_UP"), dataset="3211")],
+            [_v("kb_pushup", "pompes",
+                "Mains sous les epaules, corps en planche, poitrine au ras "
+                "du sol.", ("PUSH_UP", "PUSH_UP"), dataset="0662")],
+            [_v("kb_kettlebell_pushup", "pompes, une main sur la kettlebell",
+                "Une main sur la kettlebell couchee, l'autre au sol, corps "
+                "gaine ; change de main a mi-temps.",
+                ("PUSH_UP", "PUSH_UP"), dataset="0662",
+                muscles={"chest": 1.0, "triceps": 0.8, "shoulders": 0.7,
+                         "abs": 0.5})],
+        ],
     },
 }
 # The second kettlebell circuit (training.KETTLEBELL_CIRCUITS "B"),
