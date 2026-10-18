@@ -1604,14 +1604,17 @@ def calisthenics_values(
     }, level, date, equipment)
 
 
-# Two kettlebell circuits, alternating day by day (so the usual Friday
-# and Saturday get one each): A is the standing video workout plus a
-# squeeze press, B works chest, triceps, biceps and abs. Both work the
-# chest, so a kettlebell day can stand in for the upper-body one.
+# Two kettlebell circuits. A, the person's favourite and by default
+# the only one (Settings "kettlebell_circuits"), is the standing video
+# workout with a deadlift, a one-arm row, the overhead triceps
+# extension and a squeeze press added: everything B works (chest,
+# triceps, biceps, abs, back) plus the hinge -- standing moves first,
+# the floor one last. B (chest, triceps, biceps, abs) stays for "AB",
+# alternating day by day, and for the bonus workouts.
 KETTLEBELL_CIRCUITS = {
-    "A": ("kb_woodchop_sec", "kb_around_world_sec", "kb_around_world_rev_sec",
-          "kb_goblet_squat_sec", "kb_upright_row_sec", "kb_curl_sec",
-          "kb_squeeze_press_sec"),
+    "A": ("kb_woodchop_sec", "kb_around_world_sec", "kb_goblet_squat_sec",
+          "kb_deadlift_sec", "kb_row_sec", "kb_upright_row_sec",
+          "kb_curl_sec", "kb_triceps_ext_sec", "kb_squeeze_press_sec"),
     "B": ("kb_floor_press_sec", "kb_russian_twist_sec", "kb_triceps_ext_sec",
           "kb_pullover_sec", "kb_hammer_curl_sec", "kb_situp_press_sec"),
 }
@@ -1639,6 +1642,7 @@ KETTLEBELL_WARMUP_MIN = 3
 # 5 tours at 20 s is ~18 min with the warm-up; 7 at 30 s would be 31,
 # so the session cap trims the top levels to 6.
 KETTLEBELL_TOURS = ((range(0, 4), 5), (range(4, 7), 6), (range(7, 11), 7))
+KETTLEBELL_TOURS_MOVES = 6  # the circuit size the tours above are for
 
 
 def kettlebell_values(
@@ -1647,9 +1651,9 @@ def kettlebell_values(
 ) -> dict:
     """Level -> the 20/10 kettlebell interval session.
 
-    Six or seven moves with one kettlebell -- circuit A (woodchop,
-    around the waist both ways, goblet squat, upright row, curl,
-    squeeze press) or circuit B
+    Nine or six moves with one kettlebell -- circuit A (woodchop,
+    around the waist, goblet squat, deadlift, one-arm row, upright row,
+    curl, overhead triceps extension, squeeze press) or circuit B
     (floor press, Russian twist, overhead triceps extension, pull-over,
     hammer curl, sit-up press), alternating by date -- each
     ``work_sec`` on and 10 s off, repeated ``tours`` times. Tours drop
@@ -1660,6 +1664,10 @@ def kettlebell_values(
     band, tours = next(
         (band, tours) for band, tours in KETTLEBELL_TOURS if level in band
     )
+    # The bands count tours of six moves; a longer circuit does fewer
+    # tours for the same number of efforts (5 x 6 ~ 3 x 9), so it fits
+    # the cap and still has levels to climb.
+    tours = max(2, round(tours * KETTLEBELL_TOURS_MOVES / len(moves)))
     position = (level - band.start) / max(1, len(band) - 1)
     work = KETTLEBELL_MIN_WORK_SEC + round(10 * position)
 
@@ -2328,33 +2336,48 @@ if __name__ == "__main__":
     assert lower_body_values(8)["rounds"] == 5
     # Double progression from the ladders: the top level is the top of
     # the hardest rung's range, and each slot names its variant.
-    # The kettlebell intervals: 2 tours of 20 s at level 0, the work
-    # time rises inside a band, then a tour is added and it resets.
+    # The kettlebell intervals. Circuit B (six moves): 5 tours of 20 s
+    # at level 0, the work time rises inside a band, then a tour is
+    # added and it resets.
+    only_b = {"kettlebell_circuits": "B"}
+    kb_b = kettlebell_values(0, equipment=only_b)
+    assert kb_b["tours"] == 5 and kb_b["kb_hammer_curl_sec"] == 20, kb_b
+    assert kb_b["duration_min"] == 18, kb_b  # 3 warm-up + 5 x 6 x 30 s
+    assert all(kettlebell_values(lv, equipment=only_b)["tours"] >= 5
+               for lv in range(11))
+    assert kettlebell_values(3, equipment=only_b)["kb_hammer_curl_sec"] == 30
+    assert kettlebell_values(4, equipment=only_b)["tours"] == 6
+    assert kettlebell_values(4, equipment=only_b)["kb_hammer_curl_sec"] == 20
+    # Circuit A (nine moves) does fewer tours for the same efforts:
+    # 3 x 9 at level 0, as long as 5 x 6.
     kb0 = kettlebell_values(0)
-    assert kb0["tours"] == 5 and kb0["kb_curl_sec"] == 20, kb0
-    assert kb0["duration_min"] == 20, kb0  # 3 warm-up + 5 x 7 x 30 s
-    assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 7, kb0
+    assert kb0["tours"] == 3 and kb0["kb_curl_sec"] == 20, kb0
+    assert kb0["duration_min"] == 16, kb0  # 3 warm-up + 3 x 9 x 30 s
+    assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 9, kb0
     assert kb0["variants"]["kb_squeeze_press_sec"]["name"] == "squeeze press au sol"
-    # Circuit B has a push too (floor press, triceps): either circuit
-    # can stand in for the upper-body day.
-    for circuit in ("2026-10-16", "2026-10-17"):
-        worked = exercise_library.session_muscles(kettlebell_values(5, date=circuit))
-        assert worked.get("chest", 0) >= 1 and worked.get("triceps", 0) >= 0.6, worked
-    # The cap shortens the work time before it drops a tour, so inside
-    # the top band a level up is never less work (it used to fall from
-    # 7 tours to 5 at the top).
-    top = [kettlebell_values(lv) for lv in range(7, 11)]
-    assert all(v["tours"] == 7 for v in top), [v["tours"] for v in top]
-    work = [v["kb_curl_sec"] for v in top]
-    assert work == sorted(work), work
-    assert all(kettlebell_values(lv)["tours"] >= 5 for lv in range(11))
-    assert kettlebell_values(3)["kb_curl_sec"] == 30
-    assert kettlebell_values(4)["tours"] == 6
-    assert kettlebell_values(4)["kb_curl_sec"] == 20
-    assert kettlebell_values(10)["duration_min"] <= DEFAULT_SESSION_CAP_MIN
+    # A covers everything B works, plus the back and the hinge: it can
+    # be the only circuit, and stand in for the upper-body day.
+    a_worked = exercise_library.session_muscles(kettlebell_values(5))
+    b_worked = exercise_library.session_muscles(
+        kettlebell_values(5, equipment=only_b))
+    assert all(a_worked.get(m, 0) >= w for m, w in b_worked.items()), (
+        a_worked, b_worked)
+    for muscle in ("back", "hamstrings", "triceps", "chest"):
+        assert a_worked[muscle] >= 0.8, a_worked
+    # Each band is longer than the last, and inside the top band a
+    # level up is never less work: the cap shortens the work time
+    # before it drops a tour (it used to fall from 7 tours to 5).
+    for kb_equipment, top_tours in ((only_b, 7), ({}, 5)):
+        top = [kettlebell_values(lv, equipment=kb_equipment) for lv in range(7, 11)]
+        assert all(v["tours"] == top_tours for v in top), [v["tours"] for v in top]
+        slot = "kb_curl_sec" if not kb_equipment else "kb_hammer_curl_sec"
+        work = [v[slot] for v in top]
+        assert work == sorted(work), work
+    for lv in range(11):
+        assert kettlebell_values(lv)["duration_min"] <= DEFAULT_SESSION_CAP_MIN
     assert kettlebell_values(10, cap_min=15)["tours"] < 5  # cap holds
     kb_text = format_description_fr("kettlebell", 0, kb0, "green")
-    assert "5 tours, 20 s d'effort / 10 s de repos" in kb_text, kb_text
+    assert "3 tours, 20 s d'effort / 10 s de repos" in kb_text, kb_text
     assert "goblet squat 20s" in kb_text and "rest_sec" not in kb_text
     assert calisthenics_values(10)["squats"] == 20
     assert calisthenics_values(10)["variants"]["squats"]["name"] in (
@@ -3182,7 +3205,10 @@ if __name__ == "__main__":
               for m, w in exercise_library.LADDERS[slot]["muscles"].items()
               if w >= 0.8}
     assert {"chest", "triceps", "biceps", "abs"} <= worked, worked
-    assert circuit_b["tours"] == friday["tours"] == saturday["tours"]
+    # Same number of efforts per session whichever the circuit.
+    efforts = {v["tours"] * sum(k.startswith("kb_") for k in v)
+               for v in (friday, saturday)}
+    assert max(efforts) - min(efforts) <= 3, efforts
     b_text = format_description_fr("kettlebell", 3, circuit_b, "green")
     assert "developpe couche au sol" in b_text and "rotation russe" in b_text, b_text
 
@@ -3293,16 +3319,19 @@ if __name__ == "__main__":
     changed = lower_levels_for_heavier_bell(hb, hu, 12, 16)
     assert changed["kettlebell"] == (9, 4), changed
     assert get_level(hb, hu, "kettlebell") == 4
-    # "Seulement le circuit A" in Settings: every kettlebell day is A,
-    # the day B would have come included.
+    # Circuit A only, by default and with "A" in Settings: every
+    # kettlebell day is A, the day B would have come included; "AB"
+    # alternates again.
     days = ("2026-10-16", "2026-10-17")
-    assert any("kb_floor_press_sec" in user_session_values(
-        hb, hu, "kettlebell", 5, day) for day in days)  # alternating: B too
-    db_module.set_setting(hb, hu, "kettlebell_circuits", "A")
-    for day in days:
-        only = user_session_values(hb, hu, "kettlebell", 5, day)
-        assert "kb_squeeze_press_sec" in only and "kb_floor_press_sec" not in only
+    for setting in ("", "A"):
+        db_module.set_setting(hb, hu, "kettlebell_circuits", setting)
+        for day in days:
+            only = user_session_values(hb, hu, "kettlebell", 5, day)
+            assert "kb_deadlift_sec" in only and "kb_floor_press_sec" not in only
     db_module.set_setting(hb, hu, "kettlebell_circuits", "AB")
+    assert any("kb_floor_press_sec" in user_session_values(
+        hb, hu, "kettlebell", 5, day) for day in days)
+    db_module.set_setting(hb, hu, "kettlebell_circuits", "A")
     # 6 -> 8 is the same third more: the same drop. 12 -> 14, about half.
     set_level(hb, hu, "kettlebell", 9)
     assert lower_levels_for_heavier_bell(hb, hu, 6, 8)["kettlebell"] == (9, 4)

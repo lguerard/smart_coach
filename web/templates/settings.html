@@ -62,8 +62,8 @@
       Circuits kettlebell
       <select name="kettlebell_circuits"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
-        {% for value, label in [("AB", "A et B, en alternance"), ("A", "Seulement le circuit A (debout : woodchop, tour de taille, goblet squat, tirage, curl, squeeze press)"), ("B", "Seulement le circuit B (développé, rotation russe, triceps, pull-over, curl marteau, relevé de buste)")] %}
-        <option value="{{ value }}" {{ 'selected' if (settings.kettlebell_circuits or 'AB') == value }}>{{ label }}</option>
+        {% for value, label in [("A", "Circuit A seulement (tout le corps : woodchop, tour de taille, goblet squat, soulevé de terre, rowing, tirage, curl, triceps, squeeze press)"), ("AB", "A et B, en alternance"), ("B", "Circuit B seulement (développé, rotation russe, triceps, pull-over, curl marteau, relevé de buste)")] %}
+        <option value="{{ value }}" {{ 'selected' if (settings.kettlebell_circuits or 'A') == value }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>

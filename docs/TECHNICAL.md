@@ -161,15 +161,18 @@ calendar event is retitled on those days. Protein and fat targets use
 the target weight when it is set below the current one
 (`progress.macro_weight_kg`).
 
-Kettlebell days alternate two 20/10 circuits by date
-(`training.KETTLEBELL_CIRCUITS`): A is the standing video workout plus
-a squeeze press, B works chest, triceps, biceps and abs (floor press,
-Russian twist, overhead extension, pull-over, hammer curl, sit-up
-press). Both work the chest, so a kettlebell day can replace the
-upper-body one. "Circuits kettlebell" in Réglages keeps every
-kettlebell day to one circuit (`kettlebell_circuits`: A, B or AB;
-read through `exercise_library.equipment_for`, so the watch, the
-Programme page and the two-way sync all follow it). The
+Kettlebell days use one of two 20/10 circuits
+(`training.KETTLEBELL_CIRCUITS`). A is the standing video workout with
+a deadlift, a one-arm row, the overhead triceps extension and a squeeze
+press added: everything B works plus the back and the hinge, so it is
+the only circuit by default and can replace the upper-body day. B
+(floor press, Russian twist, overhead extension, pull-over, hammer
+curl, sit-up press) stays for "Circuits kettlebell" in Réglages
+(`kettlebell_circuits`: A, B or AB, read through
+`exercise_library.equipment_for`, so the watch, the Programme page and
+the two-way sync all follow it) and for the bonus workouts. The tour
+bands are for six moves; a longer circuit does fewer tours for the same
+number of efforts (3 x 9 at level 0, like 5 x 6). The
 session cap shortens the work time before it takes a tour away, so the
 top levels are not lighter than the ones below. Today also
 lists optional bonus workouts (`bonus.py`: abs & arms, chest &

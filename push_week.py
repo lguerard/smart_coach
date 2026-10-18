@@ -134,7 +134,7 @@ if __name__ == "__main__":
         assert refresh_today_workout(conn, uid, watch, day) == TODAY_STATE["updated"]
         assert watch.deleted == ["old"], watch.deleted
         group = watch.uploaded[0]["workoutSegments"][0]["workoutSteps"][0]
-        assert group["numberOfIterations"] == 5, group  # today's code
+        assert group["numberOfIterations"] == 3, group  # today's code: 3 x 9 moves
         # Run again: nothing to do, nothing re-sent.
         assert refresh_today_workout(conn, uid, watch, day) == TODAY_STATE["unchanged"]
         assert len(watch.uploaded) == 1

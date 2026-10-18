@@ -345,6 +345,29 @@ KETTLEBELL_SESSION = {
                       "lentement.", ("CURL", "KETTLEBELL_BICEPS_CURL"),
                       loaded=True)]],
     },
+    # The back and the hinge circuit A lacked, so that it can be the
+    # only kettlebell circuit: a one-arm row (the only pull left once
+    # the upper-body day went) and the deadlift.
+    "kb_deadlift_sec": {
+        "unit": "sec", "muscles": {"hamstrings": 1.0, "glutes": 1.0,
+                                   "lower_back": 0.8, "back": 0.4,
+                                   "quads": 0.3},
+        "rungs": [[_v("kb_deadlift", "souleve de terre",
+                      "Pieds largeur de hanches, kettlebell entre les "
+                      "pieds : pousse les fesses en arriere, dos plat, "
+                      "attrape la poignee et redresse-toi en serrant les "
+                      "fessiers ; redescends le dos toujours droit.",
+                      ("DEADLIFT", "KETTLEBELL_DEADLIFT"), loaded=True)]],
+    },
+    "kb_row_sec": {
+        "unit": "sec", "muscles": {"back": 1.0, "biceps": 0.5,
+                                   "shoulders": 0.4},
+        "rungs": [[_v("kb_one_arm_row", "rowing, 1 bras",
+                      "Penche en avant, dos plat, main libre en appui sur "
+                      "la cuisse ou une chaise : tire la kettlebell vers "
+                      "la hanche, coude pres du corps ; change de bras a "
+                      "mi-temps.", ("ROW", "KETTLEBELL_ROW"), loaded=True)]],
+    },
     # Circuit A had no chest at all: with the kettlebell standing in
     # for the upper-body day, every other week went without a push. The
     # squeeze press works the chest with a light bell -- it is the
@@ -539,7 +562,8 @@ def equipment_for(conn, user_id: int) -> dict:
     import db
 
     out = {}
-    only = db.get_setting(conn, user_id, "kettlebell_circuits")
+    only = (db.get_setting(conn, user_id, "kettlebell_circuits")
+            or db.DEFAULT_SETTINGS["kettlebell_circuits"])
     if only in ("A", "B"):
         out["kettlebell_circuits"] = only
     raw = (db.get_setting(conn, user_id, "kettlebell_kg") or "").strip()
