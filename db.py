@@ -762,6 +762,9 @@ DEFAULT_SETTINGS = {
     # Kettlebell weight in kg ("" = bodyweight only). With one set, the
     # circuits swap to loaded ladders (exercise_library.py).
     "kettlebell_kg": "",
+    # Which kettlebell circuits the person does: "AB" (alternating day
+    # by day), or only "A" / only "B" (training.kettlebell_circuit).
+    "kettlebell_circuits": "AB",
     "intensity_weekly_goal_min": "150",
     "protein_target_g_per_kg": "1.8",
     "fat_target_g_per_kg": "0.9",

@@ -30,6 +30,7 @@ import sqlite3
 from typing import Optional
 
 import custom_moves
+import exercise_library
 
 USER_DELETED = "deleted-in-garmin"  # signature of a day the person emptied
 _NON_STEP = {"rounds", "duration_min", "variants", "rest_sec", "tours",
@@ -265,7 +266,9 @@ def import_watch_edits(
         changes = diff(sent, remote)
         if not changes:
             continue
-        circuit = training.kettlebell_circuit(date) if kind == "kettlebell" else ""
+        circuit = (training.kettlebell_circuit(
+            date, exercise_library.equipment_for(conn, user_id))
+            if kind == "kettlebell" else "")
         lines = apply_changes(conn, user_id, kind, circuit, changes)
         # What is on Garmin now is what was "sent": the same edit is not
         # taken in twice, and the next sync only re-sends real changes.

@@ -1618,9 +1618,14 @@ KETTLEBELL_CIRCUITS = {
 KETTLEBELL_MOVES = KETTLEBELL_CIRCUITS["A"]
 
 
-def kettlebell_circuit(date: Optional[str]) -> str:
-    """``"A"`` or ``"B"``: alternates every calendar day, A without a
-    date (tests, a level edit stay deterministic)."""
+def kettlebell_circuit(date: Optional[str], equipment: Optional[dict] = None) -> str:
+    """``"A"`` or ``"B"``: the one circuit the person keeps to
+    (``kettlebell_circuits`` in ``equipment``), else alternating every
+    calendar day; A without a date (tests, a level edit stay
+    deterministic)."""
+    only = (equipment or {}).get("kettlebell_circuits")
+    if only in KETTLEBELL_CIRCUITS:
+        return only
     if not date:
         return "A"
     return "AB"[dt.date.fromisoformat(date).toordinal() % 2]
@@ -1650,7 +1655,7 @@ def kettlebell_values(
     ``work_sec`` on and 10 s off, repeated ``tours`` times. Tours drop
     if they would not fit in ``cap_min``.
     """
-    moves = KETTLEBELL_CIRCUITS[kettlebell_circuit(date)]
+    moves = KETTLEBELL_CIRCUITS[kettlebell_circuit(date, equipment)]
     level = max(LEVEL_MIN, min(LEVEL_MAX, level))
     band, tours = next(
         (band, tours) for band, tours in KETTLEBELL_TOURS if level in band
@@ -1699,11 +1704,12 @@ def user_session_values(
     """
     import custom_moves
 
+    equipment = exercise_library.equipment_for(conn, user_id)
     values = session_values(
-        session_type, level, session_cap_min(conn, user_id), date,
-        exercise_library.equipment_for(conn, user_id),
+        session_type, level, session_cap_min(conn, user_id), date, equipment,
     )
-    circuit = kettlebell_circuit(date) if session_type == "kettlebell" else ""
+    circuit = (kettlebell_circuit(date, equipment)
+               if session_type == "kettlebell" else "")
     return custom_moves.apply(conn, user_id, session_type, values, circuit)
 
 
@@ -3165,6 +3171,12 @@ if __name__ == "__main__":
     saturday = kettlebell_values(3, date="2026-10-17")
     assert set(KETTLEBELL_CIRCUITS[kettlebell_circuit("2026-10-16")]) <= set(friday)
     assert kettlebell_circuit("2026-10-16") != kettlebell_circuit("2026-10-17")
+    # Only one circuit, when the person keeps to it.
+    assert {kettlebell_circuit(d, {"kettlebell_circuits": "A"})
+            for d in ("2026-10-16", "2026-10-17")} == {"A"}
+    only_a = kettlebell_values(5, date="2026-10-16",
+                               equipment={"kettlebell_circuits": "A"})
+    assert set(KETTLEBELL_CIRCUITS["A"]) <= set(only_a), only_a
     circuit_b = friday if "kb_floor_press_sec" in friday else saturday
     worked = {m for slot in KETTLEBELL_CIRCUITS["B"]
               for m, w in exercise_library.LADDERS[slot]["muscles"].items()
@@ -3281,6 +3293,16 @@ if __name__ == "__main__":
     changed = lower_levels_for_heavier_bell(hb, hu, 12, 16)
     assert changed["kettlebell"] == (9, 4), changed
     assert get_level(hb, hu, "kettlebell") == 4
+    # "Seulement le circuit A" in Settings: every kettlebell day is A,
+    # the day B would have come included.
+    days = ("2026-10-16", "2026-10-17")
+    assert any("kb_floor_press_sec" in user_session_values(
+        hb, hu, "kettlebell", 5, day) for day in days)  # alternating: B too
+    db_module.set_setting(hb, hu, "kettlebell_circuits", "A")
+    for day in days:
+        only = user_session_values(hb, hu, "kettlebell", 5, day)
+        assert "kb_squeeze_press_sec" in only and "kb_floor_press_sec" not in only
+    db_module.set_setting(hb, hu, "kettlebell_circuits", "AB")
     # 6 -> 8 is the same third more: the same drop. 12 -> 14, about half.
     set_level(hb, hu, "kettlebell", 9)
     assert lower_levels_for_heavier_bell(hb, hu, 6, 8)["kettlebell"] == (9, 4)

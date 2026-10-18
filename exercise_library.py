@@ -528,20 +528,28 @@ KETTLEBELL_LADDERS = {
 
 
 def equipment_for(conn, user_id: int) -> dict:
-    """The person's equipment from Settings (``{}`` = bodyweight only).
+    """The person's equipment from Settings (``{}`` = bodyweight only),
+    and the kettlebell circuit they keep to, if only one.
 
     Returns:
-        dict: ``{"kettlebell_kg": float}`` when a kettlebell weight is
-        set, else ``{}``.
+        dict: ``kettlebell_kg`` (float) when a kettlebell weight is set;
+        ``kettlebell_circuits`` (``"A"`` or ``"B"``) when only one
+        circuit is done.
     """
     import db
 
+    out = {}
+    only = db.get_setting(conn, user_id, "kettlebell_circuits")
+    if only in ("A", "B"):
+        out["kettlebell_circuits"] = only
     raw = (db.get_setting(conn, user_id, "kettlebell_kg") or "").strip()
     try:
         weight = float(raw.replace(",", "."))
     except ValueError:
-        return {}
-    return {"kettlebell_kg": weight} if weight > 0 else {}
+        return out
+    if weight > 0:
+        out["kettlebell_kg"] = weight
+    return out
 
 
 def ladder(slot: str, equipment: Optional[dict] = None) -> dict:

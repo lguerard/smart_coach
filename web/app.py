@@ -1482,16 +1482,22 @@ def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
     date = today_str(conn, user_id)
     used = training.scheduled_types(conn, user_id)
     blocks = []
+    equipment = exercise_library.equipment_for(conn, user_id)
+    only = equipment.get("kettlebell_circuits")
     for session_type in custom_moves.EDITABLE_TYPES:
         if session_type not in used:
             continue
-        circuits = ("A", "B") if session_type == "kettlebell" else ("",)
+        circuits = (
+            ((only,) if only else ("A", "B"))
+            if session_type == "kettlebell" else ("",)
+        )
         level = training.get_level(conn, user_id, session_type)
         for circuit in circuits:
             day = _circuit_date(date, circuit)
             base = training.session_values(
                 session_type, level, training.session_cap_min(conn, user_id),
-                day, exercise_library.equipment_for(conn, user_id),
+                day, {**equipment, **({"kettlebell_circuits": circuit}
+                                      if circuit else {})},
             )
             removed = custom_moves.removed_for(conn, user_id, session_type, circuit)
             fixed = custom_moves.overrides_for(conn, user_id, session_type, circuit)
@@ -1682,6 +1688,8 @@ async def save_settings(request: Request):
             db.set_setting(conn, user_id, key, str(form[key]).strip())
     if form.get("accent") not in (None, *ACCENTS):
         db.set_setting(conn, user_id, "accent", ACCENTS[0])
+    if form.get("kettlebell_circuits") not in (None, "AB", "A", "B"):
+        db.set_setting(conn, user_id, "kettlebell_circuits", "AB")
     # Checkbox settings are absent from form data entirely when
     # unchecked -- the generic loop above can only ever turn them on,
     # never off, so they need explicit handling.

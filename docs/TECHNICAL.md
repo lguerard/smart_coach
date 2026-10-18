@@ -166,7 +166,10 @@ Kettlebell days alternate two 20/10 circuits by date
 a squeeze press, B works chest, triceps, biceps and abs (floor press,
 Russian twist, overhead extension, pull-over, hammer curl, sit-up
 press). Both work the chest, so a kettlebell day can replace the
-upper-body one. The
+upper-body one. "Circuits kettlebell" in Réglages keeps every
+kettlebell day to one circuit (`kettlebell_circuits`: A, B or AB;
+read through `exercise_library.equipment_for`, so the watch, the
+Programme page and the two-way sync all follow it). The
 session cap shortens the work time before it takes a tour away, so the
 top levels are not lighter than the ones below. Today also
 lists optional bonus workouts (`bonus.py`: abs & arms, chest &
