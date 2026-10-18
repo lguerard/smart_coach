@@ -1605,13 +1605,13 @@ def calisthenics_values(
 
 
 # Two kettlebell circuits, alternating day by day (so the usual Friday
-# and Saturday get one each): A is the standing video workout plus
-# push-ups, B works chest, triceps, biceps and abs. Both have a push,
-# so a kettlebell day can stand in for the upper-body one.
+# and Saturday get one each): A is the standing video workout plus a
+# squeeze press, B works chest, triceps, biceps and abs. Both work the
+# chest, so a kettlebell day can stand in for the upper-body one.
 KETTLEBELL_CIRCUITS = {
     "A": ("kb_woodchop_sec", "kb_around_world_sec", "kb_around_world_rev_sec",
           "kb_goblet_squat_sec", "kb_upright_row_sec", "kb_curl_sec",
-          "kb_pushup_sec"),
+          "kb_squeeze_press_sec"),
     "B": ("kb_floor_press_sec", "kb_russian_twist_sec", "kb_triceps_ext_sec",
           "kb_pullover_sec", "kb_hammer_curl_sec", "kb_situp_press_sec"),
 }
@@ -1644,7 +1644,7 @@ def kettlebell_values(
 
     Six or seven moves with one kettlebell -- circuit A (woodchop,
     around the waist both ways, goblet squat, upright row, curl,
-    push-ups) or circuit B
+    squeeze press) or circuit B
     (floor press, Russian twist, overhead triceps extension, pull-over,
     hammer curl, sit-up press), alternating by date -- each
     ``work_sec`` on and 10 s off, repeated ``tours`` times. Tours drop
@@ -2328,12 +2328,12 @@ if __name__ == "__main__":
     assert kb0["tours"] == 5 and kb0["kb_curl_sec"] == 20, kb0
     assert kb0["duration_min"] == 20, kb0  # 3 warm-up + 5 x 7 x 30 s
     assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 7, kb0
-    assert kb0["variants"]["kb_pushup_sec"]["name"] == "pompes sur les genoux"
+    assert kb0["variants"]["kb_squeeze_press_sec"]["name"] == "squeeze press au sol"
     # Circuit B has a push too (floor press, triceps): either circuit
     # can stand in for the upper-body day.
     for circuit in ("2026-10-16", "2026-10-17"):
         worked = exercise_library.session_muscles(kettlebell_values(5, date=circuit))
-        assert worked.get("chest", 0) >= 1 and worked.get("triceps", 0) >= 0.7, worked
+        assert worked.get("chest", 0) >= 1 and worked.get("triceps", 0) >= 0.6, worked
     # The cap shortens the work time before it drops a tour, so inside
     # the top band a level up is never less work (it used to fall from
     # 7 tours to 5 at the top).

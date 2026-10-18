@@ -163,9 +163,10 @@ the target weight when it is set below the current one
 
 Kettlebell days alternate two 20/10 circuits by date
 (`training.KETTLEBELL_CIRCUITS`): A is the standing video workout plus
-push-ups, B works chest, triceps, biceps and abs (floor press, Russian
-twist, overhead extension, pull-over, hammer curl, sit-up press). Both
-have a push, so a kettlebell day can replace the upper-body one. The
+a squeeze press, B works chest, triceps, biceps and abs (floor press,
+Russian twist, overhead extension, pull-over, hammer curl, sit-up
+press). Both work the chest, so a kettlebell day can replace the
+upper-body one. The
 session cap shortens the work time before it takes a tour away, so the
 top levels are not lighter than the ones below. Today also
 lists optional bonus workouts (`bonus.py`: abs & arms, chest &
