@@ -329,9 +329,19 @@ def morning_checkin(
     conn: sqlite3.Connection, user: dict, today: str | None = None,
 ) -> None:
     """The morning question about the night (``sleep_prompt``)."""
+    import sleep_feedback
+
     today = today or dt.datetime.now(
         metrics.local_tz(conn, user["id"])).date().isoformat()
-    sleep_prompt(conn, user, today)
+    # A line in the worker's log either way: a question that never
+    # arrived has to be traceable to "sent", "answered" or "off".
+    sent = sleep_prompt(conn, user, today)
+    reason = ("sent" if sent
+              else "off (ask_sleep)" if db.get_setting(
+                  conn, user["id"], "ask_sleep") == "0"
+              else "already answered"
+              if sleep_feedback.felt(conn, user["id"], today) else "not sent")
+    print(f"{user.get('username', user['id'])}: sleep question {reason}")
 
 
 CHECKINS = {"morning": morning_checkin, "afternoon": afternoon_checkin,
