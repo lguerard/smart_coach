@@ -6,7 +6,8 @@ cannot log in. Each link instead carries a signature: an HMAC of what
 it does (rate the session of that day, with that rating) under a
 random secret kept per user in the database. A link can do exactly
 that one thing and nothing else, cannot be altered, and stops working
-after ``MAX_AGE_DAYS``.
+after ``MAX_AGE_DAYS``. Two kinds: "rate" (the evening's session) and
+"sleep" (the morning's "how did you sleep").
 
 The web app (POST /quick/rate/...) checks it; the worker, which sends
 the notifications, signs it -- both read the same secret from the
@@ -23,6 +24,8 @@ from typing import Optional
 import db
 
 RATINGS = ("easy", "right", "hard")
+SLEEP_RATINGS = ("good", "ok", "bad")
+VALUES = {"rate": RATINGS, "sleep": SLEEP_RATINGS}
 MAX_AGE_DAYS = 3
 
 
@@ -34,9 +37,13 @@ def _secret(conn: sqlite3.Connection, user_id: int) -> str:
     return secret
 
 
-def sign(conn: sqlite3.Connection, user_id: int, date: str, rating: str) -> str:
-    """The signature for "rate the session of ``date`` as ``rating``"."""
-    message = f"rate:{user_id}:{date}:{rating}".encode()
+def sign(
+    conn: sqlite3.Connection, user_id: int, date: str, rating: str,
+    action: str = "rate",
+) -> str:
+    """The signature for "``action`` ``date`` as ``rating``" (rate the
+    session, or the night)."""
+    message = f"{action}:{user_id}:{date}:{rating}".encode()
     return hmac.new(_secret(conn, user_id).encode(), message,
                     hashlib.sha256).hexdigest()[:32]
 
@@ -50,12 +57,21 @@ def rate_url(
             f"{sign(conn, user_id, date, rating)}")
 
 
+def sleep_url(
+    conn: sqlite3.Connection, user_id: int, base_url: str, date: str,
+    rating: str,
+) -> str:
+    """Absolute URL of the one-tap "how did you sleep" link."""
+    return (f"{base_url.rstrip('/')}/quick/sleep/{user_id}/{date}/{rating}/"
+            f"{sign(conn, user_id, date, rating, 'sleep')}")
+
+
 def verify(
     conn: sqlite3.Connection, user_id: int, date: str, rating: str,
-    signature: str, today: Optional[str] = None,
+    signature: str, today: Optional[str] = None, action: str = "rate",
 ) -> bool:
     """Whether a rating link is genuine and still fresh."""
-    if rating not in RATINGS:
+    if rating not in VALUES.get(action, ()):
         return False
     try:
         day = dt.date.fromisoformat(date)
@@ -66,7 +82,8 @@ def verify(
         return False
     if not db.get_setting(conn, user_id, "link_secret"):
         return False  # no link was ever signed for this account
-    return hmac.compare_digest(sign(conn, user_id, date, rating), signature)
+    return hmac.compare_digest(
+        sign(conn, user_id, date, rating, action), signature)
 
 
 if __name__ == "__main__":
@@ -90,6 +107,15 @@ if __name__ == "__main__":
     assert not verify(conn, uid, "2026-10-17", "easy", sig, "2026-10-21")
     assert not verify(conn, uid, "2026-10-17", "meh", sig, "2026-10-17")
     assert not verify(conn, uid, "bad-date", "easy", sig, "2026-10-17")
+    # A sleep link is its own kind: not usable to rate a session, nor
+    # the other way round.
+    night = sleep_url(conn, uid, "https://coach.example", "2026-10-17", "bad")
+    assert night.startswith(f"https://coach.example/quick/sleep/{uid}/2026-10-17/bad/")
+    night_sig = night.rsplit("/", 1)[1]
+    assert verify(conn, uid, "2026-10-17", "bad", night_sig, "2026-10-17", "sleep")
+    assert not verify(conn, uid, "2026-10-17", "bad", night_sig, "2026-10-17")
+    assert not verify(conn, uid, "2026-10-17", "easy", sig, "2026-10-17", "sleep")
+    assert not verify(conn, uid, "2026-10-17", "good", night_sig, "2026-10-17", "sleep")
     # The secret stays the same once made.
     assert url == rate_url(conn, uid, "https://coach.example", "2026-10-17", "easy")
     print("quick_links.py: all checks passed")

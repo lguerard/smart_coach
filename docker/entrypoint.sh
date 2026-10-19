@@ -40,6 +40,8 @@ case "$1" in
         # the recovery signals it is supposed to weigh.
         ingest_at=$(cron_fields "${INGEST_TIME:-07:15}" "07:15" INGEST_TIME)
         coach_at=$(cron_fields "${COACH_TIME:-07:45}" "07:45" COACH_TIME)
+        morning_at=$(cron_fields \
+            "${CHECKIN_MORNING_TIME:-07:15}" "07:15" CHECKIN_MORNING_TIME)
         afternoon_at=$(cron_fields \
             "${CHECKIN_AFTERNOON_TIME:-16:00}" "16:00" CHECKIN_AFTERNOON_TIME)
         evening_at=$(cron_fields \
@@ -47,12 +49,13 @@ case "$1" in
 
         {
             echo "$ingest_at * * * . /app/container.env; cd /app && python run_ingest.py >> /proc/1/fd/1 2>&1"
+            echo "$morning_at * * * . /app/container.env; cd /app && python run_checkin.py morning >> /proc/1/fd/1 2>&1"
             echo "$coach_at * * * . /app/container.env; cd /app && python run_coach.py >> /proc/1/fd/1 2>&1"
             echo "$afternoon_at * * * . /app/container.env; cd /app && python run_checkin.py afternoon >> /proc/1/fd/1 2>&1"
             echo "$evening_at * * * . /app/container.env; cd /app && python run_checkin.py evening >> /proc/1/fd/1 2>&1"
         } | crontab -
 
-        echo "entrypoint: ingest at ${INGEST_TIME:-07:15}, coach at ${COACH_TIME:-07:45}, check-ins at ${CHECKIN_AFTERNOON_TIME:-16:00} and ${CHECKIN_EVENING_TIME:-21:00} (${TZ:-UTC})"
+        echo "entrypoint: ingest at ${INGEST_TIME:-07:15}, coach at ${COACH_TIME:-07:45}, check-ins at ${CHECKIN_MORNING_TIME:-07:15}, ${CHECKIN_AFTERNOON_TIME:-16:00} and ${CHECKIN_EVENING_TIME:-21:00} (${TZ:-UTC})"
 
         exec cron -f
         ;;

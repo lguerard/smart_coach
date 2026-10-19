@@ -157,6 +157,13 @@
         class="rounded border" style="border-color: var(--border);">
     </label>
     <label class="flex items-center justify-between text-sm">
+      Le matin, demander comment j'ai dormi (ma reponse passe avant le
+      score de la montre)
+      <input name="ask_sleep" type="checkbox" value="1"
+        {{ "checked" if settings.ask_sleep != "0" }}
+        class="rounded border" style="border-color: var(--border);">
+    </label>
+    <label class="flex items-center justify-between text-sm">
       Suivre le cycle menstruel (donnee Garmin, contexte coach uniquement)
       <input name="track_menstrual_cycle" type="checkbox" value="1"
         {{ "checked" if settings.track_menstrual_cycle == "1" }}

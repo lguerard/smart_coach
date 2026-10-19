@@ -634,6 +634,16 @@ CREATE TABLE IF NOT EXISTS settings (
 -- Replaces garmin-coach's append-only history.log.
 -- Meals estimated from a photo (meals.py). The photo itself is never
 -- kept; ``added`` = written into nutrition as smartcoach-meal-<id>.
+-- How the person says they slept (sleep_feedback.py), per wake-up day:
+-- the sleep vote follows it over the watch's score.
+CREATE TABLE IF NOT EXISTS sleep_feedback (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    rating TEXT NOT NULL CHECK (rating IN ('good', 'ok', 'bad')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
+);
+
 CREATE TABLE IF NOT EXISTS meal_estimates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -759,6 +769,8 @@ DEFAULT_SETTINGS = {
     # "1": the person sits at a desk on weekdays, so the coach adds a
     # silent, invisible desk break (desk.py) and an afternoon nudge.
     "desk_job": "1",
+    # "1": the morning check-in asks how the night was (sleep_feedback).
+    "ask_sleep": "1",
     # Kettlebell weight in kg ("" = bodyweight only). With one set, the
     # circuits swap to loaded ladders (exercise_library.py).
     "kettlebell_kg": "",

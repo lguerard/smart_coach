@@ -273,6 +273,17 @@ sum of that meal's entries) match loses its own row: the meal counts
 once. Each diary meal matches one estimate (`diary_uuids`); "Pas le
 même repas" undoes a wrong match and keeps it from matching again.
 
+Night as felt (`sleep_feedback.py`): at `CHECKIN_MORNING_TIME` the
+morning check-in asks "Comment as-tu dormi ?" with three signed
+buttons (Bien / Moyen / Mal, `quick_links` kind "sleep",
+`/quick/sleep/...`), also on Today. The answer is `sleep_felt` in
+`metrics.daily_wellness` and the sleep vote follows it instead of the
+watch's score -- lying awake and still with a low heart rate reads as
+sleep to the watch. "Mal" is a red vote but not a strong one: alone it
+holds the level, with a second red the session is lightened. The
+message never calls a bad night good; Tendances draws the answers over
+the score. Off with "ask_sleep" in Réglages.
+
 History per session (`session_history.py`, Progrès page): the morning
 run keeps what each session asked for (`coach_log.values_json`: tours,
 moves with their counts, own moves and Garmin edits included). Per
@@ -571,11 +582,12 @@ first account ever created is the admin.
 | Time | What happens |
 |---|---|
 | `INGEST_TIME` (07:15) | ingestion: Garmin + the phone's export |
+| `CHECKIN_MORNING_TIME` (07:15) | "Comment as-tu dormi ?" with three buttons; answer before `COACH_TIME` for it to count today |
 | `COACH_TIME` (07:45) | readiness, tonight's session, calendar, coaching message |
 | `CHECKIN_AFTERNOON_TIME` (16:00) | afternoon check-in — silent unless you are falling behind |
 | `CHECKIN_EVENING_TIME` (21:00) | evening check-in, same rule |
 
-All four are `HH:MM` in `TZ`, set in `.env`; the defaults above apply
+All five are `HH:MM` in `TZ`, set in `.env`; the defaults above apply
 when they're unset. **`INGEST_TIME` has to fall after you actually get
 up.** Garmin only publishes a night's sleep score, HRV and training
 readiness once the sleep session has *ended* and the watch has synced,

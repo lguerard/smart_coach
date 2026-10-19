@@ -218,7 +218,7 @@ def body_summary(payload: dict) -> dict:
     session = payload.get("today_session") or {}
     summary = {
         key: wellness[key] for key in (
-            "sleep_score", "body_battery_highest", "hrv_status",
+            "sleep_felt", "sleep_score", "body_battery_highest", "hrv_status",
             "training_readiness_score", "resting_hr",
             "menstrual_cycle_phase",
         ) if wellness.get(key) is not None

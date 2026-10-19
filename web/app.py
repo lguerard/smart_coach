@@ -48,6 +48,7 @@ import custom_moves
 import done_sessions
 import meals
 import session_history
+import sleep_feedback
 import quick_links
 import watch_sync
 import bodymap
@@ -702,6 +703,9 @@ def home(request: Request) -> HTMLResponse:
             "sync_sources": sources,
             "status_signals": status_signals,
             "pending_feedback": pending_feedback,
+            "sleep_felt": sleep_feedback.felt(conn, user_id, date),
+            "ask_sleep": db.get_setting(conn, user_id, "ask_sleep") != "0",
+            "coach_time": os.environ.get("COACH_TIME", "07:45"),
             "session_label_fr_map": training.SESSION_LABEL_FR,
             "wellness": wellness,
             "target_rows": target_rows,
@@ -787,6 +791,32 @@ def quick_rate(user_id: int, date: str, rating: str, signature: str):
     conn.commit()
     label = {"easy": "trop facile", "right": "au bon niveau", "hard": "trop dure"}[rating]
     return PlainTextResponse(f"Note : {label}. Merci !")
+
+
+@app.post("/quick/sleep/{user_id}/{date}/{rating}/{signature}")
+def quick_sleep(user_id: int, date: str, rating: str, signature: str):
+    """A notification button: how the night was, no login needed (signed
+    link, quick_links, kind "sleep")."""
+    conn = get_conn()
+    if not quick_links.verify(
+        conn, user_id, date, rating, signature,
+        today=today_str(conn, user_id), action="sleep",
+    ):
+        return PlainTextResponse("Lien invalide ou expire.", status_code=403)
+    sleep_feedback.record(conn, user_id, date, rating)
+    return PlainTextResponse(
+        f"Nuit notee : {sleep_feedback.LABEL_FR[rating]}. Merci !")
+
+
+@app.post("/sleep")
+async def submit_sleep(request: Request):
+    """How last night was, from Today; it wins over the watch's score."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    sleep_feedback.record(conn, user_id, today_str(conn, user_id),
+                          str(form.get("rating", "")))
+    return RedirectResponse("/#sommeil", status_code=303)
 
 
 @app.post("/sessions/done")
@@ -1051,6 +1081,7 @@ def trends(request: Request) -> HTMLResponse:
     # chart cost thirty full scans of a table that only grows.
     scores_by_date = metrics.sleep_scores_for_range(conn, user_id, date, days)
     sleep_scores = [scores_by_date.get(d) for d in dates]
+    felt_by_date = sleep_feedback.series(conn, user_id, dates[0], dates[-1])
 
     levels = conn.execute(
         "SELECT local_date, session_type, level FROM coach_log WHERE "
@@ -1091,6 +1122,7 @@ def trends(request: Request) -> HTMLResponse:
             "rhr_values": [rhr_by_date.get(d) for d in dates],
             "rhr_baseline": round(baseline, 1) if baseline else None,
             "sleep_values": sleep_scores,
+            "sleep_felt": [felt_by_date.get(d) for d in dates],
             "calibration": calibration,
             "level_labels": [r["local_date"] for r in levels],
             "level_series": {
@@ -1699,6 +1731,9 @@ async def save_settings(request: Request):
     )
     db.set_setting(
         conn, user_id, "desk_job", "1" if "desk_job" in form else "0",
+    )
+    db.set_setting(
+        conn, user_id, "ask_sleep", "1" if "ask_sleep" in form else "0",
     )
     db.set_setting(
         conn, user_id, "trust_device_tdee",

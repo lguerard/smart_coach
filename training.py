@@ -852,6 +852,14 @@ def rhr_baseline(
 
 
 def _sleep_vote(wellness: dict) -> Optional[str]:
+    # The person's own "how did you sleep" first: lying awake and still
+    # with a low heart rate reads as sleep to the watch, so its score
+    # can call a bad night good. Not a strong red: one bad night holds
+    # the level, it takes a second red signal to lighten the session.
+    import sleep_feedback
+
+    if wellness.get("sleep_felt") in sleep_feedback.VOTE:
+        return sleep_feedback.VOTE[wellness["sleep_felt"]]
     score = wellness.get("sleep_score")
     if score is None:
         return None
@@ -860,6 +868,17 @@ def _sleep_vote(wellness: dict) -> Optional[str]:
     if score < SLEEP_VOTE_RED:
         return "red"
     return "yellow"
+
+
+def _sleep_detail(wellness: dict) -> str:
+    import sleep_feedback
+
+    score = wellness.get("sleep_score")
+    garmin = "" if score is None else f"score {score:.0f}"
+    felt = sleep_feedback.LABEL_FR.get(wellness.get("sleep_felt") or "")
+    if felt:
+        return f"tu dis : {felt}" + (f" (montre : {garmin})" if garmin else "")
+    return garmin
 
 
 def _activity_load_vote(wellness: dict) -> Optional[str]:
@@ -1109,7 +1128,6 @@ def _all_votes(
     Returns:
         list[tuple[str, str, str]]: Signals with data, in reading order.
     """
-    sleep_score = wellness.get("sleep_score")
     recent = wellness.get("recent_minutes")
     previous = wellness.get("previous_minutes")
     resting_hr = wellness.get("resting_hr")
@@ -1129,8 +1147,7 @@ def _all_votes(
         load_detail = f"{recent:.0f} min cette semaine contre {previous:.0f}"
 
     candidates = (
-        ("Sommeil", _sleep_vote(wellness),
-         "" if sleep_score is None else f"score {sleep_score:.0f}"),
+        ("Sommeil", _sleep_vote(wellness), _sleep_detail(wellness)),
         ("Charge recente", _activity_load_vote(wellness), load_detail),
         ("FC de repos", _resting_hr_vote(wellness, baseline_rhr), rhr_detail),
         ("VFC", _hrv_vote(wellness),
@@ -2328,6 +2345,18 @@ if __name__ == "__main__":
     assert compute_status({"training_readiness_score": 60}, None) == "green"
     assert compute_status({"training_readiness_score": 40}, None) == "yellow"
     assert compute_status({"training_readiness_score": 25}, None) == "yellow"
+    # What the person says about the night wins over the watch: a bad
+    # night under a good score holds the level (not a strong red: it
+    # takes a second red to lighten the session); a good one counts green.
+    assert _sleep_vote({"sleep_score": 85, "sleep_felt": "bad"}) == "red"
+    assert compute_status({"sleep_score": 85, "sleep_felt": "bad",
+                           "training_readiness_score": 70}, None) == "yellow"
+    assert compute_status({"sleep_score": 85, "sleep_felt": "bad",
+                           "training_readiness_score": 20}, None) == "red"
+    assert compute_status({"sleep_score": 45, "sleep_felt": "good",
+                           "training_readiness_score": 70}, None) == "green"
+    assert _sleep_detail({"sleep_score": 85, "sleep_felt": "bad"}) == (
+        "tu dis : mal dormi (montre : score 85)")
 
     assert treadmill_values(0)["speed_kmh"] == 5.5
     assert treadmill_values(20)["speed_kmh"] == 7.0

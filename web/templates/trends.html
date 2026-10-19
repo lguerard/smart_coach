@@ -45,7 +45,11 @@
 </div>
 
 <div class="card p-4">
-  <h2 class="font-semibold text-sm mb-3">Score de sommeil -- 30 jours</h2>
+  <h2 class="font-semibold text-sm mb-1">Score de sommeil -- 30 jours</h2>
+  <p class="text-xs mb-3" style="color: var(--muted);">
+    La ligne : le score de la montre. Les points : ce que tu as dit le
+    matin (bien / moyen / mal) -- c'est lui que le coach écoute.
+  </p>
   <div style="height: 200px;"><canvas id="sleepChart"></canvas></div>
 </div>
 
@@ -120,13 +124,28 @@ new Chart(document.getElementById('rhrChart'), {
               y: { grid: { color: grid } } } },
 });
 
+// What the person said, drawn as points over the watch's score.
+const sleepFelt = {{ sleep_felt|tojson }};
+const feltY = { good: 85, ok: 60, bad: 30 };
+const feltLabel = { good: 'bien dormi', ok: 'nuit moyenne', bad: 'mal dormi' };
+const feltColor = { good: css.getPropertyValue('--good'),
+  ok: css.getPropertyValue('--warning'), bad: css.getPropertyValue('--critical') };
 new Chart(document.getElementById('sleepChart'), {
   type: 'line',
   data: { labels: dates, datasets: [{
-    data: {{ sleep_values|tojson }}, borderColor: c2, borderWidth: 2,
+    label: 'Montre', data: {{ sleep_values|tojson }}, borderColor: c2, borderWidth: 2,
     pointRadius: 0, tension: 0.3, spanGaps: true,
+  }, {
+    label: 'Ton ressenti', data: sleepFelt.map(f => f ? feltY[f] : null),
+    showLine: false, pointRadius: 5, pointHoverRadius: 6,
+    pointBackgroundColor: sleepFelt.map(f => f ? feltColor[f] : 'transparent'),
+    pointBorderColor: sleepFelt.map(f => f ? feltColor[f] : 'transparent'),
   }]},
-  options: { plugins: { legend: { display: false } },
+  options: { plugins: {
+      legend: { display: sleepFelt.some(Boolean), labels: { boxWidth: 10 } },
+      tooltip: { callbacks: { label: (ctx) => ctx.datasetIndex === 1
+        ? 'Toi : ' + feltLabel[sleepFelt[ctx.dataIndex]]
+        : 'Montre : ' + ctx.parsed.y } } },
     scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
               y: { grid: { color: grid }, suggestedMin: 0, suggestedMax: 100 } } },
 });

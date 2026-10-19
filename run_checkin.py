@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Cron entrypoint: a second and third daily touchpoint beyond the
-morning coach run (run_coach.py) -- an afternoon hydration/steps
-pace check, and an evening sleep-debt wind-down reminder.
+morning coach run (run_coach.py) -- a morning "how did you sleep"
+question, an afternoon hydration/steps pace check, and an evening
+sleep-debt wind-down reminder.
 
 Both stay SILENT when the user is on track: this is a nudge for a
 real gap, not a running commentary that would just add notification
@@ -285,13 +286,62 @@ def rating_prompt(conn: sqlite3.Connection, user: dict, today: str) -> bool:
     return True
 
 
-CHECKINS = {"afternoon": afternoon_checkin, "evening": evening_checkin}
+def sleep_prompt(conn: sqlite3.Connection, user: dict, today: str) -> bool:
+    """Morning question: how was the night, with one-tap buttons.
+
+    What the person says wins over the watch's score in the morning
+    decision (training._sleep_vote) when it comes before the coach run.
+    Off with "ask_sleep" = "0"; not sent once the night is rated.
+
+    Returns:
+        bool: Whether a notification was sent.
+    """
+    import quick_links
+    import sleep_feedback
+
+    user_id = user["id"]
+    if db.get_setting(conn, user_id, "ask_sleep") == "0":
+        return False
+    if sleep_feedback.felt(conn, user_id, today):
+        return False
+    ntfy_topic = db.get_setting(conn, user_id, "ntfy_topic") or None
+    text = ("Comment as-tu dormi ? Ta reponse compte plus que le score de "
+            "la montre pour la seance du jour.")
+    base = public_url(conn, user_id)
+    if not base:
+        notify.notify(text + " (Reponds sur l'accueil du site.)",
+                      title="Smart Coach", topic=ntfy_topic)
+        return True
+    actions = [
+        {"action": "http", "label": sleep_feedback.BUTTON_FR[rating],
+         "method": "POST", "clear": True,
+         "url": quick_links.sleep_url(conn, user_id, base, today, rating)}
+        for rating in sleep_feedback.RATINGS
+    ]
+    notify.notify_with_actions(
+        text, actions, title="Smart Coach", topic=ntfy_topic,
+        click=f"{base.rstrip('/')}/#sommeil",
+    )
+    return True
+
+
+def morning_checkin(
+    conn: sqlite3.Connection, user: dict, today: str | None = None,
+) -> None:
+    """The morning question about the night (``sleep_prompt``)."""
+    today = today or dt.datetime.now(
+        metrics.local_tz(conn, user["id"])).date().isoformat()
+    sleep_prompt(conn, user, today)
+
+
+CHECKINS = {"morning": morning_checkin, "afternoon": afternoon_checkin,
+            "evening": evening_checkin}
 
 
 def main() -> None:
     """Run the requested check-in for every user account."""
     if len(sys.argv) < 2 or sys.argv[1] not in CHECKINS:
-        sys.exit("Usage: run_checkin.py afternoon|evening")
+        sys.exit("Usage: run_checkin.py morning|afternoon|evening")
     checkin = CHECKINS[sys.argv[1]]
 
     conn = db.connect()
@@ -322,6 +372,29 @@ if __name__ == "__main__":
         lambda text, actions, title="Smart Coach", topic=None, click=None:
         buttons.append((text, actions, click))
     )
+
+    # Morning question about the night: three signed buttons, once.
+    import quick_links
+    import sleep_feedback
+
+    assert sleep_prompt(conn, user, "2026-07-13")  # no address: plain text
+    assert "accueil" in sent[-1][0] and buttons == [], sent
+    db.set_setting(conn, uid, "public_url", "https://coach.example")
+    assert sleep_prompt(conn, user, "2026-07-13")
+    text, actions, click = buttons[-1]
+    assert "dormi" in text and click == "https://coach.example/#sommeil", click
+    assert [a["label"] for a in actions] == ["Bien", "Moyen", "Mal"]
+    sig = actions[2]["url"].rsplit("/", 1)[1]
+    assert "/quick/sleep/" in actions[2]["url"] and quick_links.verify(
+        conn, uid, "2026-07-13", "bad", sig, "2026-07-13", "sleep")
+    sleep_feedback.record(conn, uid, "2026-07-13", "bad")
+    assert not sleep_prompt(conn, user, "2026-07-13")  # answered already
+    db.set_setting(conn, uid, "ask_sleep", "0")
+    assert not sleep_prompt(conn, user, "2026-07-14")  # turned off
+    db.set_setting(conn, uid, "ask_sleep", "1")
+    db.set_setting(conn, uid, "public_url", "")
+    sent.clear()
+    buttons.clear()
 
     # Evening rating question: tonight's planned session, not rated yet.
     conn.execute(

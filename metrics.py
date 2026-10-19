@@ -832,6 +832,13 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         **latest_body_comp(conn, user_id, date),
         **garmin_wellness(conn, user_id, date),
     }
+    # What the person says about the night wins over the watch's score
+    # in the sleep vote (training._sleep_vote).
+    import sleep_feedback
+
+    felt = sleep_feedback.felt(conn, user_id, date)
+    if felt:
+        wellness["sleep_felt"] = felt
     # Yesterday's whole-day stress: at wake-up today's own average only
     # covers the night, so this is the one the status vote can use.
     stress_before = conn.execute(
