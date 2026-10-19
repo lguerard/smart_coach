@@ -68,6 +68,15 @@
       </select>
     </label>
     <label class="block text-sm">
+      Message du matin
+      <select name="message_style"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+        {% for value, label in [("fiche", "Fiche courte (ta nuit, la séance, pourquoi ce niveau, un point sur hier)"), ("texte", "Texte rédigé par le coach (paragraphes)")] %}
+        <option value="{{ value }}" {{ 'selected' if (settings.message_style or 'fiche') == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="block text-sm">
       Langue du coach (fr / en)
       <input name="language" value="{{ settings.language }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">

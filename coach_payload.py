@@ -9,6 +9,7 @@ budget the morning one had. One builder means a regenerated message is
 the same message with a different phrasing, not a poorer one.
 """
 
+import db
 import desk
 import metrics
 import progress
@@ -70,6 +71,8 @@ def build_payload(
     return {
         "date": today,
         "language": language,
+        # "fiche" (the default card, no model) or "texte" (written).
+        "message_style": db.get_setting(conn, user_id, "message_style") or "fiche",
         "wellness_today": wellness,
         # The morning run fires just after wake-up, so wellness_today's
         # movement counters are still ~0. Yesterday's are the ones that

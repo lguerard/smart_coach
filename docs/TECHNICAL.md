@@ -273,6 +273,15 @@ sum of that meal's entries) match loses its own row: the meal counts
 once. Each diary meal matches one estimate (`diary_uuids`); "Pas le
 même repas" undoes a wrong match and keeps it from matching again.
 
+Morning message (Réglages "Message du matin"): a card by default --
+the night as the person said it (the watch's score in brackets), the
+session with its moves and the shared effort/rest time said once, why it
+is at that level in plain words (up a notch, same, lighter, and the
+signals behind it), how it goes up, and one point on yesterday. No desk
+exercises (the afternoon check-in keeps its silent break) and no
+"sitting" hours: Garmin's sedentary time is every awake minute without
+much movement, not time sitting, so it is not a message point any more.
+
 Night as felt (`sleep_feedback.py`): at `CHECKIN_MORNING_TIME` the
 morning check-in asks "Comment as-tu dormi ?" with three signed
 buttons (Bien / Moyen / Mal, `quick_links` kind "sleep",
@@ -348,14 +357,18 @@ afterwards" below)
                            coach_brief.py decides the day's angle and
                            the ONE point about yesterday worth making
                            (all data-quality caveats applied there);
-                           llm.py (claude -p) writes that brief up as
-                           a short, warm message -- no sections --
-                           (try it: preview_message.py --live);
-                           COACH_MODEL picks the model, LLM_FALLBACKS
-                           the providers tried when it fails (API,
-                           OpenAI-compatible/Ollama), and a plain
-                           message built from the brief alone
-                           (plain_message.py) always goes out last; achievements.py checks/
+                           by default the message is a short card
+                           built from that brief, no model
+                           (plain_message.card: the night, tonight's
+                           session and why at that level, one point
+                           on yesterday); with "message_style" =
+                           "texte" llm.py (claude -p) writes it up as
+                           a short, warm message instead (try it:
+                           preview_message.py --live); COACH_MODEL
+                           picks the model, LLM_FALLBACKS the
+                           providers tried when it fails (API,
+                           OpenAI-compatible/Ollama), and the card
+                           always goes out last; achievements.py checks/
                            announces unlocks; notify.py pushes it;
                            logged to coach_log
   16:00  run_checkin.py   afternoon: refreshes today's Garmin

@@ -442,11 +442,8 @@
           {{ movement.intensity_week.value }} min d'intensité sur 7 j / {{ movement.intensity_week.goal }}
         </span>
         {% endif %}
-        {% if movement.sedentary_hours is defined %}
-        <span class="chip-{{ 'red' if 'sedentary_high' in movement.flags else 'green' }} px-2.5 py-1 rounded-full">
-          {{ movement.sedentary_hours }} h assis
-        </span>
-        {% endif %}
+        {# No "h assis" chip: Garmin's sedentary time is every awake
+           minute without much movement, not time sitting. #}
         {% if movement.stress_avg is defined %}
         <span class="chip-{{ 'yellow' if 'stress_high' in movement.flags else 'green' }} px-2.5 py-1 rounded-full">
           stress {{ movement.stress_avg }}

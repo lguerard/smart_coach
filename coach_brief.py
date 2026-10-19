@@ -33,9 +33,12 @@ WEEKLY_WEEKDAY = 6  # Sunday: the one day the weight/trend paragraph appears
 
 # Movement flags in the order worth mentioning. Stress and a drained
 # battery come first only when the day does not already explain them.
+# Garmin's "sedentary" time is every awake minute without much
+# movement -- standing, driving, lying awake -- not sitting, so it is not
+# a message point: "you sat 13 hours" was simply wrong.
 MOVEMENT_PRIORITY = (
-    "sedentary_high", "steps_low", "floors_low", "intensity_low",
-    "stress_high", "battery_drained",
+    "steps_low", "floors_low", "intensity_low", "stress_high",
+    "battery_drained",
 )
 
 ANGLE_REST = "rest"
@@ -291,35 +294,6 @@ def session_brief(payload: dict) -> dict:
     return brief
 
 
-def desk_brief(payload: dict) -> dict:
-    """At most two desk exercises and one note, or ``{}``.
-
-    Parameters:
-        payload (dict): ``coach_payload.build_payload`` output.
-
-    Returns:
-        dict: ``items`` (name/how/seconds), optional ``note`` and
-        ``gentle_only``.
-    """
-    desk = payload.get("desk_break") or {}
-    items = (desk.get("items") or [])[:2]
-    if not items:
-        return {}
-    brief = {
-        "items": [
-            {
-                "name": i["name"], "how": i["how"], "seconds": i["seconds"],
-                **({"when": i["when"]} if i.get("when") else {}),
-            }
-            for i in items
-        ],
-        "gentle_only": bool(desk.get("gentle_only")),
-    }
-    if desk.get("notes"):
-        brief["note"] = desk["notes"][0]
-    return brief
-
-
 def weekly_brief(payload: dict) -> dict:
     """The weight/body-composition paragraph, on Sunday only.
 
@@ -417,7 +391,7 @@ def build_brief(payload: dict) -> dict:
 
     Returns:
         dict: ``language``, ``date``, ``angle``, ``body``, ``session``,
-        ``yesterday``, ``desk``, ``help`` (sized foods/water/care),
+        ``yesterday``, ``help`` (sized foods/water/care),
         ``next_step`` (what the closing line is built on), optional
         ``skipped`` / ``green_streak`` / ``weather`` / ``weekly``. Small
         enough that every field gets used.
@@ -431,10 +405,10 @@ def build_brief(payload: dict) -> dict:
         "session": session_brief(payload),
         "yesterday": yesterday_point(payload, chosen),
     }
-    desk = desk_brief(payload)
-    if desk:
-        brief["desk"] = desk
-    help_ = help_brief(payload, chosen, brief["yesterday"], bool(desk))
+    # No desk exercises in the morning message: the person found them
+    # noise. The afternoon check-in still has its silent break.
+    help_ = help_brief(payload, chosen, brief["yesterday"],
+                       bool(payload.get("desk_break")))
     if help_:
         brief["help"] = help_
     # Off-system days have no session to adjust, so no stock close.
@@ -604,7 +578,7 @@ if __name__ == "__main__":
     assert rest["session"]["why"], rest
     assert rest["yesterday"] == {"topic": "none"}, rest
     assert rest["body"]["illness_signs"] == ["VFC basse", "x"], rest
-    assert len(rest["desk"]["items"]) == 2 and rest["desk"]["note"] == "n1"
+    assert "desk" not in rest  # no desk exercises in the morning
     assert "weekly" not in rest and "skipped" not in rest
 
     train = build_brief(_payload(weather_today={"temp_max_c": 18}))
@@ -614,7 +588,7 @@ if __name__ == "__main__":
     # Small on purpose: nothing in it that the message should not use.
     assert set(train) <= {
         "language", "date", "angle", "body", "session", "yesterday",
-        "desk", "help", "next_step", "skipped", "green_streak",
+        "help", "next_step", "skipped", "green_streak",
         "weather", "weekly",
     }, train
 
@@ -666,7 +640,7 @@ if __name__ == "__main__":
     helped = build_brief(short)
     assert helped["help"]["food"]["items"], helped
     assert helped["help"]["food"]["covers_gap"], helped
-    assert helped["desk"]["items"][0]["when"] == "apres le dejeuner"
+    assert "desk" not in helped
     assert "tableau de bord" in helped["next_step"], helped
     # No food miss, no food help; the closing step is still there.
     plain = build_brief(_payload())

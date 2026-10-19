@@ -91,13 +91,7 @@ FR_SYSTEM_PROMPT = (
     "neutre (ne dis pas que c'est bien, ni que c'est mal), puis "
     "next_step ; jamais de culpabilisation. green_streak : "
     "felicite la serie.\n"
-    "- desk : 1 ou 2 gestes silencieux pour son bureau PARTAGE. Nomme "
-    "chaque geste (name) et resume how en UNE phrase, sans changer le "
-    "geste ni ses chiffres ; dis quand le faire (when) ; ajoute note "
-    "si elle existe. gentle_only = "
-    "journee douce, dis-le. Si yesterday est un point mouvement, une "
-    "seule phrase sur hier puis le geste dans le meme paragraphe : ne "
-    "repete pas deux fois le meme conseil.\n"
+
     "- help : l'aide concrete, DEJA chiffree. food.items = quoi manger "
     "(name, qty) : reprends aliments et quantites tels quels, n'en "
     "invente jamais d'autres. water.glasses (et habit). lighter_dinner."
@@ -123,7 +117,7 @@ FR_SYSTEM_PROMPT = (
     "moves tels quels, puis si elle monte, reste pareille ou s'allege "
     "et pourquoi (level_reason en clair) ; avec progress_hint, une "
     "demi-phrase sur ce qui la fera monter ; (3) hier (yesterday, "
-    "yesterday_session ou skipped) ; (4) bureau (desk) ou aide (help) ; "
+    "yesterday_session ou skipped) ; (4) aide (help) ; "
     "(5) next_step. Saute un paragraphe dont le brief ne dit rien, "
     "n'invente rien pour le remplir, ne repete jamais une info. "
     "Phrases courtes et naturelles, comme un message a un ami. Un emoji "
@@ -146,8 +140,7 @@ FR_SYSTEM_PROMPT = (
     "de toute son energie pour recuperer, et c'est la meilleure "
     "decision de la journee. Pas de tapis, de l'eau, du sommeil, et une "
     "petite marche seulement si l'envie vient.\n\n"
-    "Au bureau, sans que personne le remarque : respiration 4-4-4-4, "
-    "six cycles, les yeux sur l'ecran.\n\n"
+
     "Demain on voit comment tu te sens, et on reprendra par une marche "
     "avant de remonter sur le tapis. Repose-toi bien.\n"
     "(entrainement) Bonjour ! Nuit correcte et coeur bien repose ce "
@@ -158,8 +151,7 @@ FR_SYSTEM_PROMPT = (
     "'trop facile' si c'est le cas, et elle montera des la prochaine.\n\n"
     "Il te manquait 38 g de proteines hier : deux oeufs et un yaourt "
     "grec a midi te remettent d'aplomb.\n\n"
-    "Pause bureau avant 11 h : montees sur pointes contre le bureau, "
-    "20 fois, lentement.\n\n"
+
     "Ce soir, dis-moi sur le tableau de bord si c'etait trop facile, "
     "juste bien ou trop dur : c'est comme ca que j'ajuste la suite."
 )
@@ -215,13 +207,7 @@ EN_SYSTEM_PROMPT = (
     "simple idea. topic=none: do not mention yesterday.\n"
     "- skipped: if present, one kind sentence: the fact, neutral "
     "(do not call it good or bad), then next_step; never guilt. green_streak: congratulate the streak.\n"
-    "- desk: 1 or 2 silent moves for their SHARED office. Name each "
-    "move (name) and sum up how in ONE sentence, without changing the "
-    "move or its figures; say when to do it (when); add note if "
-    "present. gentle_only = easy "
-    "day, say so. If yesterday is a movement point, one sentence about "
-    "it then the move in the same paragraph: never give the same tip "
-    "twice.\n"
+
     "- help: the concrete help, ALREADY sized. food.items = what to eat "
     "(name, qty): quote foods and quantities as-is, never invent "
     "others. water.glasses (and habit). lighter_dinner.how. care (rest "
@@ -247,7 +233,7 @@ EN_SYSTEM_PROMPT = (
     "whether it goes up, stays the same or is lighter and why "
     "(level_reason in plain words); with progress_hint, half a sentence "
     "on what will make it go up; (3) yesterday (yesterday, "
-    "yesterday_session or skipped); (4) desk or help; (5) next_step. "
+    "yesterday_session or skipped); (4) help; (5) next_step. "
     "Skip a paragraph the brief says nothing about, invent nothing to "
     "fill it, never repeat a piece of information. Short, natural "
     "sentences, like a message to a friend. One emoji at most. Be "
@@ -268,8 +254,7 @@ EN_SYSTEM_PROMPT = (
     "(rest) Hey! Today we ease off: your body needs all its energy to "
     "recover, and that is the best call of the day. No treadmill, "
     "water, sleep, and a gentle walk only if you feel like it.\n\n"
-    "At your desk, without anyone noticing: 4-4-4-4 breathing, six "
-    "cycles, eyes on the screen.\n\n"
+
     "Tomorrow we see how you feel, and we will restart with a walk "
     "before getting back on the treadmill. Rest well.\n"
     "(training) Good morning! A decent night and a well-rested heart "
@@ -280,8 +265,7 @@ EN_SYSTEM_PROMPT = (
     "next time.\n\n"
     "You were 38 g short on protein yesterday: two eggs and a Greek "
     "yoghurt at lunch will sort you out.\n\n"
-    "Desk break before 11: calf raises against the desk, 20 times, "
-    "slowly.\n\n"
+
     "Tonight, tell me on the dashboard whether it was too easy, just "
     "right or too hard: that is how I adjust what comes next."
 )
@@ -451,10 +435,10 @@ def _coach_openai_compatible(payload: dict) -> str:
 
 
 def _coach_template(payload: dict) -> str:
-    """No model at all: the message assembled from the brief itself."""
+    """No model at all: the card assembled from the brief itself."""
     import plain_message
 
-    text = plain_message.render_or_none(payload)
+    text = plain_message.card_or_none(payload)
     if not text:
         raise ProviderUnavailable("template: could not render")
     return text
@@ -518,8 +502,12 @@ def coach(payload: dict) -> str:
         ValueError: Unknown provider name in the configuration.
         ProviderUnavailable: Every provider failed, the template too.
     """
-    chain = provider_chain()
     brief = coach_brief.build_brief(payload)
+    # The card (the default) is built from the brief itself: no model,
+    # so nothing in it can be misread. "texte" asks a model to write it.
+    if payload.get("message_style") == "fiche":
+        return _coach_template(brief)
+    chain = provider_chain()
     errors = []
     for name in chain:
         try:
@@ -566,7 +554,7 @@ if __name__ == "__main__":
             if key not in ("language", "date"):
                 assert key in prompt, key
         for key in ("angle", "body", "session", "yesterday", "skipped",
-                    "green_streak", "desk", "weather", "weekly"):
+                    "green_streak", "weather", "weekly"):
             assert key in prompt, key
 
     # The caveats now live in the brief, so the prompt must keep telling

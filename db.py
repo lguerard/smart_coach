@@ -771,6 +771,9 @@ DEFAULT_SETTINGS = {
     "desk_job": "1",
     # "1": the morning check-in asks how the night was (sleep_feedback).
     "ask_sleep": "1",
+    # Morning message: "fiche" (a short card built from the decisions,
+    # no model) or "texte" (written by the model, as before).
+    "message_style": "fiche",
     # Kettlebell weight in kg ("" = bodyweight only). With one set, the
     # circuits swap to loaded ladders (exercise_library.py).
     "kettlebell_kg": "",
