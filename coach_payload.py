@@ -9,6 +9,7 @@ budget the morning one had. One builder means a regenerated message is
 the same message with a different phrasing, not a poorer one.
 """
 
+import day_review
 import db
 import desk
 import metrics
@@ -68,11 +69,26 @@ def build_payload(
         conn, user_id, today, today_session.get("tier", "train"),
         today_session.get("status"), language,
     )
+    since_last = None
+    if (
+        today_session.get("tier", "train") == "train"
+        and scheduled in training.SESSION_LABEL_FR
+        and today_session.get("level") is not None
+    ):
+        since_last = day_review.since_last_session(
+            conn, user_id, today, scheduled, today_session["level"],
+            today_session.get("values") or {},
+        )
     return {
         "date": today,
         "language": language,
-        # "fiche" (the default card, no model) or "texte" (written).
-        "message_style": db.get_setting(conn, user_id, "message_style") or "fiche",
+        # Yesterday's session (planned, done, minutes, rating) and what
+        # is different tonight from the last session of the same type.
+        "yesterday_training": day_review.yesterday_training(conn, user_id, today),
+        **({"since_last_session": since_last} if since_last else {}),
+        # "texte" (written by the model, the default) or "fiche" (the
+        # same points assembled without a model).
+        "message_style": db.get_setting(conn, user_id, "message_style") or "texte",
         "wellness_today": wellness,
         # The morning run fires just after wake-up, so wellness_today's
         # movement counters are still ~0. Yesterday's are the ones that

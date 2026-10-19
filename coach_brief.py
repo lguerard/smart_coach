@@ -272,6 +272,12 @@ def session_brief(payload: dict) -> dict:
             import custom_moves
 
             brief["moves"].append(custom_moves.finisher_text(values))
+        # The bell's weight once, not after every move.
+        import plain_message
+
+        brief["moves"], kg = plain_message._bell_kg(brief["moves"])
+        if kg:
+            brief["bell_kg"] = kg
         nexts = [info["next"] for info in variants.values()
                  if info.get("next")]
         if nexts:
@@ -383,6 +389,87 @@ def help_brief(
     return help_
 
 
+def review_brief(payload: dict) -> dict:
+    """Yesterday reviewed: the session, the food, the steps, a verdict.
+
+    Every figure is checked here (a food log the export never reached, or
+    one that looks partial, is said as such, never turned into a miss),
+    so the message can draw conclusions without doing any arithmetic.
+
+    Returns:
+        dict: ``training`` (``day_review.yesterday_training``), ``food``
+        (``kind`` plus ``protein_g`` / ``calories_kcal`` as ``{eaten,
+        target}`` when credible), ``steps`` (``{value, goal}``), and
+        ``verdict``: ``good`` (what was planned was done and the rest
+        followed), ``mixed`` or ``off``; ``wins`` and ``misses`` name
+        what drives it.
+    """
+    training_day = dict(payload.get("yesterday_training") or {})
+    review: dict = {}
+    wins, misses = [], []
+    if training_day.get("planned") or training_day.get("done"):
+        review["training"] = {k: v for k, v in training_day.items()
+                              if v not in (None, "") and k != "date"}
+        tier = training_day.get("planned_tier")
+        if training_day.get("done") == "rien":
+            if tier == "train":
+                misses.append("seance")
+        elif training_day.get("recorded"):
+            wins.append("seance")
+        elif tier in ("rest", "recovery"):
+            wins.append("repos")
+
+    point = food_point(payload)
+    food = {"kind": point["kind"]}
+    weekly = payload.get("weekly_progress") or {}
+    day = weekly.get("nutrition_yesterday") or {}
+    if point["kind"] in ("protein_short", "calories_over", "water_short",
+                         "on_track"):
+        actual, gap = day.get("actual") or {}, day.get("gap") or {}
+        for key in ("protein_g", "calories_kcal"):
+            if actual.get(key) is not None and gap.get(key) is not None:
+                food[key] = {"eaten": round(actual[key]),
+                             "target": round(actual[key] + gap[key])}
+        (misses if point["kind"] != "on_track" else wins).append(
+            "proteines" if point["kind"] in ("protein_short", "on_track")
+            else "calories" if point["kind"] == "calories_over" else "eau")
+    review["food"] = food
+
+    steps = (payload.get("movement_yesterday") or {}).get("steps") or {}
+    if steps.get("value") is not None:
+        review["steps"] = {"value": steps["value"], "goal": steps.get("goal")}
+        if steps.get("verdict") == "low":
+            misses.append("pas")
+        elif steps.get("verdict") in ("reached", "close"):
+            wins.append("pas")
+    review["wins"], review["misses"] = wins, misses
+    review["verdict"] = ("good" if wins and not misses
+                         else "off" if misses and not wins
+                         else "mixed" if wins or misses else "none")
+    return review
+
+
+def changes_brief(payload: dict) -> dict:
+    """What is different tonight, and why.
+
+    Returns:
+        dict: ``since_last_session`` figures (``day_review``), plus
+        ``level_text``: the level decision in plain words (up a notch,
+        same, lighter, and the signals behind it).
+    """
+    import plain_message
+
+    session = payload.get("today_session") or {}
+    changes = dict(payload.get("since_last_session") or {})
+    text = plain_message._level_line(
+        {"level_reason": session.get("level_reason")},
+        {"tired_muscles": session.get("tired_muscles")}, True,
+    ) if session.get("level_reason") else ""
+    if text:
+        changes["level_text"] = text
+    return changes
+
+
 def build_brief(payload: dict) -> dict:
     """Reduce the full payload to what the message is written from.
 
@@ -412,9 +499,11 @@ def build_brief(payload: dict) -> dict:
     if help_:
         brief["help"] = help_
     # Off-system days have no session to adjust, so no stock close.
+    # A training day has no closing step any more: the evening
+    # notification's rating buttons already ask how it went.
     session_kind = (payload.get("today_session") or {}).get("type")
     step = (
-        "" if session_kind == "off_system"
+        "" if session_kind == "off_system" or chosen == ANGLE_TRAIN
         else aids.next_step(chosen, brief["language"])
     )
     if step:
@@ -450,6 +539,10 @@ def build_brief(payload: dict) -> dict:
     weekly = weekly_brief(payload)
     if weekly:
         brief["weekly"] = weekly
+    brief["review"] = review_brief(payload)
+    changes = changes_brief(payload)
+    if changes:
+        brief["changes"] = changes
     return brief
 
 
@@ -589,8 +682,36 @@ if __name__ == "__main__":
     assert set(train) <= {
         "language", "date", "angle", "body", "session", "yesterday",
         "help", "next_step", "skipped", "green_streak",
-        "weather", "weekly",
+        "weather", "weekly", "review", "changes",
     }, train
+
+    # --- yesterday reviewed, and what changed -----------------------------
+    reviewed = build_brief(_payload(
+        weekly_progress=_food(gap={"protein_g": 38.0}),
+        yesterday_training={"date": "d", "planned": "Kettlebell a la maison",
+                            "planned_tier": "train",
+                            "done": "Kettlebell a la maison",
+                            "recorded": True, "minutes": 26, "rating": "bien"},
+        movement_yesterday={"flags": ["steps_low"], "steps": {
+            "value": 3900, "goal": 8000, "verdict": "low"}},
+        since_last_session={"last_date": "2026-10-03", "days": 2,
+                            "level": {"from": 4, "to": 5}},
+        today_session={"type": "treadmill", "status": "yellow", "level": 5,
+                       "values": {"speed_kmh": 6.5},
+                       "level_reason": "ta derniere seance de ce type etait "
+                                       "trop facile : niveau 4 -> 5"},
+    ))
+    review = reviewed["review"]
+    assert review["training"]["minutes"] == 26, review
+    assert review["food"]["kind"] == "protein_short", review
+    assert review["wins"] == ["seance"] and set(review["misses"]) == {
+        "proteines", "pas"}, review
+    assert review["verdict"] == "mixed", review
+    assert reviewed["changes"]["level"] == {"from": 4, "to": 5}
+    assert reviewed["changes"]["level_text"].startswith("On monte d'un cran")
+    # A food log that never reached the export is not a miss.
+    unsynced = build_brief(_payload(weekly_progress={}))["review"]
+    assert unsynced["food"] == {"kind": "not_synced"} and not unsynced["misses"]
 
     # Weather is context for an outdoor-able training day only.
     assert "weather" not in build_brief(_payload(
@@ -641,10 +762,9 @@ if __name__ == "__main__":
     assert helped["help"]["food"]["items"], helped
     assert helped["help"]["food"]["covers_gap"], helped
     assert "desk" not in helped
-    assert "tableau de bord" in helped["next_step"], helped
-    # No food miss, no food help; the closing step is still there.
+    assert "next_step" not in helped, helped  # the evening buttons ask
     plain = build_brief(_payload())
-    assert "help" not in plain and plain["next_step"], plain
+    assert "help" not in plain and "next_step" not in plain, plain
     # Water and calories get their own help.
     assert build_brief(_payload(weekly_progress=_food(
         gap={"hydration_ml": 900.0},

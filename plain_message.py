@@ -346,6 +346,7 @@ def _session_card(session: dict, fr: bool) -> list[str]:
     if not session.get("moves"):
         return [f"🏋️ {session['note']}."] if session.get("note") else []
     _, kg = _bell_kg(list(session.get("moves") or []))
+    kg = kg or session.get("bell_kg")
     if kg:
         label += f" {kg} kg"
     rounds, minutes = values.get("rounds"), values.get("duration_min")
@@ -358,41 +359,142 @@ def _session_card(session: dict, fr: bool) -> list[str]:
     return [head, _moves_block(session, fr)]
 
 
+WIN_FR = {"seance": "la séance", "repos": "le repos", "proteines": "les protéines",
+          "calories": "les calories", "eau": "l'eau", "pas": "les pas"}
+
+
+def _num(value) -> str:
+    return f"{value:,}".replace(",", " ") if isinstance(value, int) else str(value)
+
+
+def _review_block(brief: dict, fr: bool) -> str:
+    """Yesterday reviewed, with a conclusion -- not a list."""
+    if not fr:
+        return ""
+    review = brief.get("review") or {}
+    sentences = []
+    training = review.get("training") or {}
+    planned, done = training.get("planned"), training.get("done")
+    if done == "rien":
+        if training.get("planned_tier") == "train" and planned:
+            sentences.append(f"Hier, la séance {planned.lower()} n'a pas été faite.")
+    elif done and planned and done != planned:
+        sentences.append(f"Hier, {done.lower()} à la place de {planned.lower()}.")
+    elif done:
+        detail = ", ".join(x for x in (
+            f"{training['minutes']} min" if training.get("minutes") else "",
+            f"notée « {training['rating']} »" if training.get("rating") else "",
+        ) if x)
+        sentences.append(f"Hier, séance {done.lower()} faite"
+                         + (f" ({detail})." if detail else "."))
+    elif training.get("planned_tier") in ("rest", "recovery"):
+        sentences.append("Hier, journée de récupération.")
+    elif planned:
+        sentences.append(f"Hier, aucune séance enregistrée ({planned.lower()} "
+                         "prévue).")
+    food = review.get("food") or {}
+    eaten = [f"{food['protein_g']['eaten']} g de protéines sur "
+             f"{food['protein_g']['target']}" if food.get("protein_g") else "",
+             f"{_num(food['calories_kcal']['eaten'])} kcal sur "
+             f"{_num(food['calories_kcal']['target'])}"
+             if food.get("calories_kcal") else ""]
+    eaten = [x for x in eaten if x]
+    if eaten:
+        sentences.append("Côté assiette : " + ", ".join(eaten) + ".")
+    elif food.get("kind") in ("not_synced", "log_partial"):
+        sentences.append("Tes repas d'hier ne sont pas encore tous arrivés : "
+                         "pas de bilan alimentaire.")
+    steps = review.get("steps") or {}
+    if steps.get("value") is not None:
+        sentences.append(f"{_num(steps['value'])} pas"
+                         + (f" sur {_num(steps['goal'])}." if steps.get("goal") else "."))
+    wins = [WIN_FR.get(w, w) for w in review.get("wins") or []]
+    misses = [WIN_FR.get(m, m) for m in review.get("misses") or []]
+    verdict = review.get("verdict")
+    if verdict == "good":
+        sentences.append("Bilan : une bonne journée, tout a suivi.")
+    elif verdict == "mixed":
+        sentences.append(f"Bilan : {_and(wins)}, c'est fait ; {_and(misses)}, "
+                         "à rattraper aujourd'hui.")
+    elif verdict == "off":
+        sentences.append(f"Bilan : journée plus difficile ({_and(misses)}), "
+                         "on repart sur de bonnes bases aujourd'hui.")
+    if not sentences:
+        # An older brief without a review: its one point about yesterday.
+        return _yesterday_line(brief.get("yesterday") or {},
+                               brief.get("help") or {}, fr)
+    food_help = ((brief.get("help") or {}).get("food") or {}).get("items")
+    if food_help:
+        items = " + ".join(f"{i['qty']} {i['name']}".replace("x1 ", "")
+                           for i in food_help)
+        sentences.append(f"Pour rattraper : {items} à midi.")
+    return " ".join(sentences)
+
+
+def _changes_block(brief: dict, fr: bool) -> str:
+    """What is different tonight from the last time, and why."""
+    if not fr:
+        return ""
+    changes = brief.get("changes") or {}
+    parts = []
+    for key, fmt in (("level", "niveau {a} → {b}"), ("rounds", "{a} → {b} tours"),
+                     ("work_sec", "{a} → {b} s d'effort"),
+                     ("bell_kg", "kettlebell {a} → {b} kg"),
+                     ("speed_kmh", "{a} → {b} km/h"),
+                     ("incline_pct", "pente {a} → {b} %"),
+                     ("duration_min", "{a} → {b} min")):
+        if changes.get(key):
+            parts.append(fmt.format(a=changes[key]["from"], b=changes[key]["to"]))
+    parts += [f"{h['from']} → {h['to']}" for h in changes.get("harder") or []]
+    if changes.get("added"):
+        parts.append("en plus : " + ", ".join(changes["added"]))
+    if changes.get("removed"):
+        parts.append("en moins : " + ", ".join(changes["removed"]))
+    text = changes.get("level_text") or ""
+    if parts:
+        days = changes.get("days")
+        since = ("Par rapport à hier" if days == 1 else
+                 f"Par rapport à ta dernière séance (il y a {days} jours)"
+                 if days else "Par rapport à ta dernière séance")
+        return f"{since} : " + ", ".join(parts) + ". " + text
+    return text
+
+
 def card(brief: dict) -> str:
-    """The morning message as a short card, from a ``coach_brief`` brief.
+    """The morning message, without a model, from a ``coach_brief`` brief:
+    yesterday reviewed, what changes tonight and why, then tonight.
 
     Returns:
-        str: A few lines, one per point, blank lines between blocks.
+        str: Three short blocks separated by blank lines.
     """
     fr = brief.get("language", "fr") != "en"
     body = brief.get("body") or {}
     session = brief.get("session") or {}
     blocks = []
 
-    # The night: what the person said first, the watch in brackets.
+    # Yesterday, then the night: what the person said first.
     felt = (FELT_FR if fr else FELT_EN).get(body.get("sleep_felt") or "")
     score = body.get("sleep_score")
     night = felt or (f"score {score:.0f}/100" if score is not None else "")
     if felt and score is not None:
         night += f" (montre : {score:.0f})" if fr else f" (watch: {score:.0f})"
-    parts = [f"{'Nuit' if fr else 'Night'} : {night}" if night else ""]
-    readiness = body.get("training_readiness_score")
-    if readiness is not None:
-        parts.append(f"{'récupération' if fr else 'readiness'} {readiness:.0f}/100")
-    line = " · ".join(p for p in parts if p)
-    if line:
-        blocks.append(f"🌙 {line[0].upper()}{line[1:]}")
+    review = _review_block(brief, fr)
+    night_line = (f"Cette nuit : {night}." if fr else f"Last night: {night}.") if night else ""
+    if review or night_line:
+        blocks.append(" ".join(x for x in (review, night_line) if x))
     if body.get("illness_signs"):
         blocks.append(("⚠️ À surveiller : " if fr else "⚠️ Watch for: ")
                       + ", ".join(body["illness_signs"])
                       + (". Si de vrais symptômes arrivent, consulte."
                          if fr else ". If real symptoms show up, see a doctor."))
 
-    # Tonight, and why at that level.
+    # What changes, and why.
+    changes = _changes_block(brief, fr) or _level_line(session, body, fr)
+    if changes:
+        blocks.append(changes)
+
+    # Tonight.
     session_lines = _session_card(session, fr)
-    level = _level_line(session, body, fr)
-    if level:
-        session_lines.append(f"➡️ {level}")
     hint = session.get("progress_hint") or ""
     if hint and fr:
         import re
@@ -417,34 +519,13 @@ def card(brief: dict) -> str:
     if session_lines:
         blocks.append("\n".join(session_lines))
 
-    # Yesterday: one point at most.
-    changed = brief.get("yesterday_session")
-    if changed:
-        blocks.append(
-            f"✅ Hier : {changed['done']} à la place de "
-            f"{changed['instead_of']}, c'est noté." if fr else
-            f"✅ Yesterday: {changed['done']} instead of "
-            f"{changed['instead_of']}, noted.")
-    elif brief.get("skipped") and brief.get("angle") == "skipped_yesterday":
-        blocks.append("Hier, pas de séance : inutile de rattraper, celle du "
-                      "jour suffit." if fr else
-                      "No session yesterday: no need to make up for it.")
-    point = brief.get("yesterday") or {}
-    help_ = brief.get("help") or {}
-    yesterday = _yesterday_line(point, help_, fr)
-    if yesterday:
-        icon = "🍽️" if point.get("topic") == "food" else "👟"
-        blocks.append(f"{icon} {yesterday}")
-
-    care = help_.get("care")
+    care = (brief.get("help") or {}).get("care")
     if care:
         blocks.append(
             f"💧 Bois environ {care['drink_ml'] / 1000:.1f} L. Consulte si tu "
             f"as {care['see_doctor_if']}." if fr else
             f"💧 Drink about {care['drink_ml'] / 1000:.1f} L. See a doctor "
             f"if you have {care['see_doctor_if']}.")
-    # The closing step, except on a training day: the rating buttons
-    # tonight already ask for it.
     if brief.get("next_step") and brief.get("angle") != "train":
         blocks.append(brief["next_step"])
     return "\n\n".join(b.strip() for b in blocks if b.strip())
@@ -536,20 +617,61 @@ if __name__ == "__main__":
         "help": {"food": {"items": [{"qty": "2", "name": "oeufs"}]}},
         "next_step": "Ce soir, dis-moi sur le tableau de bord...",
     }
+    morning["review"] = {
+        "training": {"planned": "Kettlebell a la maison",
+                     "planned_tier": "train", "done": "Kettlebell a la maison",
+                     "recorded": True, "minutes": 26, "rating": "bien"},
+        "food": {"kind": "protein_short",
+                 "protein_g": {"eaten": 57, "target": 95},
+                 "calories_kcal": {"eaten": 1650, "target": 2100}},
+        "steps": {"value": 3900, "goal": 8000},
+        "wins": ["seance"], "misses": ["proteines", "pas"], "verdict": "mixed",
+    }
+    morning["changes"] = {
+        "last_date": "2026-10-17", "days": 2,
+        "level": {"from": 4, "to": 5}, "work_sec": {"from": 25, "to": 30},
+        "harder": [{"from": "fente avant", "to": "fente marchee"}],
+        "level_text": "On monte d'un cran ce soir : tu as réussi les "
+                      "dernières à ce niveau.",
+    }
     text = card(morning)
-    # The night as said first, the watch in brackets; never "assis".
-    assert text.startswith("🌙 Nuit : mal dormi (montre : 78)"), text
+    review, changed, tonight = text.split("\n\n")
+    # Yesterday reviewed with a conclusion, then the night as said.
+    assert review.startswith("Hier, séance kettlebell a la maison faite "
+                             "(26 min, notée « bien »)."), review
+    assert "Côté assiette : 57 g de protéines sur 95, 1 650 kcal sur 2 100." in review
+    assert "3 900 pas sur 8 000." in review, review
+    assert "Bilan : la séance, c'est fait ; les protéines et les pas, à " \
+        "rattraper aujourd'hui." in review, review
+    assert "Pour rattraper : 2 oeufs à midi." in review, review
+    assert review.endswith("Cette nuit : mal dormi (montre : 78)."), review
+    # What changes and why.
+    assert changed.startswith("Par rapport à ta dernière séance (il y a 2 "
+                              "jours) : niveau 4 → 5, 25 → 30 s d'effort, "
+                              "fente avant → fente marchee."), changed
+    assert changed.endswith("tu as réussi les dernières à ce niveau."), changed
+    # Tonight.
+    assert tonight.startswith("🏋️ Ce soir : Kettlebell — 4 tours"), tonight
     assert "25 s d'effort, 10 s de repos : goblet squat · rowing, 1 bras" in text
     assert "· à la fin : étirement triceps 30 s." in text, text
-    assert "nuit et récupération un peu justes" in text, text
     assert "après 2 séances à ce niveau" in text, text
-    assert "protéines" in text and "tableau de bord" not in text, text
-    assert "assis" not in text and "bureau" not in text, text
-    up = card({**morning, "session": {**morning["session"],
+    assert "tableau de bord" not in text and "assis" not in text, text
+    assert "bureau" not in text, text
+    # Nothing changed: the reason alone, from the level decision.
+    same = card({**morning, "changes": {"level_text": "Même séance que la "
+                                         "dernière fois : nuit un peu juste."}})
+    assert "\n\nMême séance que la dernière fois : nuit un peu juste.\n\n" in same
+    # Without a review (older brief): the one point about yesterday.
+    old_style = card({k: v for k, v in morning.items()
+                      if k not in ("review", "changes")})
+    assert old_style.startswith("Il te manquait 38 g de protéines hier."), old_style
+    assert "nuit et récupération un peu justes" in old_style, old_style
+    bare = {k: v for k, v in morning.items() if k not in ("review", "changes")}
+    up = card({**bare, "session": {**morning["session"],
         "level_reason": "ta derniere seance de ce type etait trop facile : "
                         "niveau 3 -> 4", "progress_hint": ""}})
     assert "On monte d'un cran ce soir : ta dernière séance était trop facile." in up
-    lighter = card({**morning, "session": {**morning["session"],
+    lighter = card({**bare, "session": {**morning["session"],
         "level_reason": "jour rouge (vfc, sommeil) : niveau 5 -> 4"}})
     assert "Séance allégée ce soir : variabilité cardiaque et nuit pas au top." in lighter
     walk = card({"language": "fr", "angle": "recovery", "body": {},
@@ -562,8 +684,8 @@ if __name__ == "__main__":
     tread = card({"language": "fr", "angle": "train", "body": {"sleep_score": 81},
                   "session": {"type": "treadmill", "values": {
                       "speed_kmh": 6.3, "incline_pct": 12, "duration_min": 20}}})
-    assert tread == ("🌙 Nuit : score 81/100\n\n🏃 Ce soir : Tapis, 6.3 km/h, "
-                     "12 % de pente, 20 min."), tread
+    assert tread == ("Cette nuit : score 81/100.\n\n🏃 Ce soir : Tapis, 6.3 "
+                     "km/h, 12 % de pente, 20 min."), tread
     weighed = card({"language": "fr", "angle": "train", "session": {
         "type": "kettlebell", "values": {"rounds": 4, "rest_sec": 10},
         "moves": ["goblet squat (6 kg) 25s", "curl kettlebell (6 kg) 25s"]}})

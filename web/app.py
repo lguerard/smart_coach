@@ -1721,7 +1721,7 @@ async def save_settings(request: Request):
     if form.get("accent") not in (None, *ACCENTS):
         db.set_setting(conn, user_id, "accent", ACCENTS[0])
     if form.get("message_style") not in (None, "fiche", "texte"):
-        db.set_setting(conn, user_id, "message_style", "fiche")
+        db.set_setting(conn, user_id, "message_style", "texte")
     if form.get("kettlebell_circuits") not in (None, "AB", "A", "B"):
         db.set_setting(conn, user_id, "kettlebell_circuits", "A")
     # Checkbox settings are absent from form data entirely when

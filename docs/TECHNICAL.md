@@ -273,14 +273,24 @@ sum of that meal's entries) match loses its own row: the meal counts
 once. Each diary meal matches one estimate (`diary_uuids`); "Pas le
 même repas" undoes a wrong match and keeps it from matching again.
 
-Morning message (Réglages "Message du matin"): a card by default --
-the night as the person said it (the watch's score in brackets), the
-session with its moves and the shared effort/rest time said once, why it
-is at that level in plain words (up a notch, same, lighter, and the
-signals behind it), how it goes up, and one point on yesterday. No desk
-exercises (the afternoon check-in keeps its silent break) and no
-"sitting" hours: Garmin's sedentary time is every awake minute without
-much movement, not time sitting, so it is not a message point any more.
+Morning message (Réglages "Message du matin"): three short paragraphs.
+(1) Yesterday reviewed with a conclusion -- the session planned and done,
+its length and rating (`day_review.yesterday_training`), protein and
+calories eaten against the target, steps against the goal, and a
+verdict with what went well and what was missing
+(`coach_brief.review_brief`; a food log the export never reached is
+said as such, never turned into a miss), then the fix for today and the
+night as the person said it. (2) What changes tonight and why: tonight
+against the last session of the same type
+(`day_review.since_last_session`: level, tours, effort time, length,
+the bell's weight, moves stepped up, added or removed) and the level
+decision in plain words. (3) Tonight concretely and how it goes up.
+Written by the model by default ("texte"); "fiche" says the same points
+without one, and is also what goes out when no model answers. No desk
+exercises (the afternoon check-in keeps its silent break), no "rate it
+on the dashboard" close on a training day (the evening buttons ask), and
+no "sitting" hours: Garmin's sedentary time is every awake minute
+without much movement, not time sitting.
 
 Night as felt (`sleep_feedback.py`): at `CHECKIN_MORNING_TIME` the
 morning check-in asks "Comment as-tu dormi ?" with three signed
@@ -357,14 +367,14 @@ afterwards" below)
                            coach_brief.py decides the day's angle and
                            the ONE point about yesterday worth making
                            (all data-quality caveats applied there);
-                           by default the message is a short card
-                           built from that brief, no model
-                           (plain_message.card: the night, tonight's
-                           session and why at that level, one point
-                           on yesterday); with "message_style" =
-                           "texte" llm.py (claude -p) writes it up as
-                           a short, warm message instead (try it:
-                           preview_message.py --live); COACH_MODEL
+                           day_review.py reviews yesterday and what
+                           changed since the last session of that type;
+                           llm.py (claude -p) writes the brief up as
+                           three short paragraphs (yesterday, what
+                           changes and why, tonight; try it:
+                           preview_message.py --live), or
+                           plain_message.card says the same points with
+                           no model ("message_style" = "fiche"); COACH_MODEL
                            picks the model, LLM_FALLBACKS the
                            providers tried when it fails (API,
                            OpenAI-compatible/Ollama), and the card

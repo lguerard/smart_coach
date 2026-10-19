@@ -71,8 +71,8 @@
       Message du matin
       <select name="message_style"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
-        {% for value, label in [("fiche", "Fiche courte (ta nuit, la séance, pourquoi ce niveau, un point sur hier)"), ("texte", "Texte rédigé par le coach (paragraphes)")] %}
-        <option value="{{ value }}" {{ 'selected' if (settings.message_style or 'fiche') == value }}>{{ label }}</option>
+        {% for value, label in [("texte", "Rédigé par le coach : bilan d'hier, ce qui change et pourquoi, ce soir"), ("fiche", "Les mêmes points, sans rédaction (plus sec, jamais d'erreur de formulation)")] %}
+        <option value="{{ value }}" {{ 'selected' if (settings.message_style or 'texte') == value }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>
