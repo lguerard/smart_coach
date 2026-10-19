@@ -363,9 +363,19 @@ def main() -> None:
             print(f"{user['username']}: FAILED ({sys.argv[1]}) -- {error}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and sys.argv[1:] == ["--selfcheck"]:
+    # The self-check runs only when asked: it used to be the whole
+    # __main__, so cron's "run_checkin.py afternoon" ran these tests on a
+    # scratch database and no check-in ever reached a phone.
+    import subprocess
     import tempfile
     from pathlib import Path
+
+    # A real run reaches main(): without a check-in name it says how to
+    # call it, instead of silently passing tests.
+    usage = subprocess.run([sys.executable, __file__], capture_output=True,
+                           text=True, timeout=30)
+    assert usage.returncode != 0 and "Usage" in usage.stderr, usage
 
     tmp = Path(tempfile.mkdtemp()) / "smart_coach.db"
     conn = db.connect(tmp)
@@ -542,3 +552,7 @@ if __name__ == "__main__":
     assert sent == [], sent
 
     print("run_checkin.py: all checks passed (no live push sent)")
+
+
+if __name__ == "__main__" and sys.argv[1:] != ["--selfcheck"]:
+    main()

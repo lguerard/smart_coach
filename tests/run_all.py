@@ -8,7 +8,7 @@ from _helpers import run_module_selfcheck
 MODULES = [
     "db.py", "training.py", "training_load.py", "metrics.py", "progress.py",
     "achievements.py", "llm.py", "notify.py", "gcal.py", "weather.py",
-    "run_checkin.py", "setup_calendar.py --selfcheck", "set_schedule.py --selfcheck", "push_week.py --selfcheck",
+    "run_checkin.py --selfcheck", "setup_calendar.py --selfcheck", "set_schedule.py --selfcheck", "push_week.py --selfcheck",
     "ingest/sync_drive.py", "ingest/parse_health_connect.py",
     "ingest/garmin_api.py", "desk.py", "exercise_library.py", "muscles.py", "bodymap.py", "coach_brief.py", "plain_message.py", "body.py", "web/icons.py", "bonus.py", "custom_moves.py", "done_sessions.py", "watch_sync.py", "quick_links.py", "meals.py", "session_history.py", "sleep_feedback.py", "day_review.py", "tests/selfcheck_run_coach.py",
 ]
