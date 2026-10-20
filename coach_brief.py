@@ -548,6 +548,8 @@ def build_brief(payload: dict) -> dict:
     if weekly:
         brief["weekly"] = weekly
     brief["review"] = review_brief(payload)
+    if payload.get("sleep_trend"):
+        brief["sleep_trend"] = payload["sleep_trend"]
     changes = changes_brief(payload)
     if changes:
         brief["changes"] = changes
@@ -690,7 +692,7 @@ if __name__ == "__main__":
     assert set(train) <= {
         "language", "date", "angle", "body", "session", "yesterday",
         "help", "next_step", "skipped", "green_streak",
-        "weather", "weekly", "review", "changes",
+        "weather", "weekly", "review", "changes", "sleep_trend",
     }, train
 
     # --- yesterday reviewed, and what changed -----------------------------

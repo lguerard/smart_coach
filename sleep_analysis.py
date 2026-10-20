@@ -282,18 +282,32 @@ def period(
     spo2 = [n["spo2"] for n in nights if n["spo2"]]
     out["spo2_nights"] = len(spo2)
 
-    said = out["conclusions"]
+    keyed: list[tuple[str, str]] = []
+    out["keyed"] = keyed
+
+    class _Said:
+        """``said.append(text)`` with the key of the point being made."""
+        key = ""
+
+        def append(self, text: str) -> None:
+            out["conclusions"].append(text)
+            keyed.append((self.key, text))
+
+    said = _Said()
     sleep = out["sleep_min"]
+    said.key = "average"
     said.append(
         f"Tu dors en moyenne {_duration(sleep)} par nuit (estimation), pour "
         f"{_duration(out['in_bed_min'])} au lit"
         + (" : c'est trop peu, il faudrait 7 à 9 h. C'est le premier point "
            "à travailler." if sleep < 420 else "."))
     gap = out["watch_sleep_min"] - sleep
+    said.key = "watch"
     if gap >= 15:
         said.append(f"La montre compte {_duration(out['watch_sleep_min'])} : "
                     f"elle surestime tes nuits d'environ {gap} min, le temps "
                     "éveillé qu'elle prend pour du sommeil.")
+    said.key = "wakes"
     if out["wakes_per_night"] is not None and out["wakes_per_night"] >= 1:
         busiest = sorted(hours, key=lambda h: -hours[h])[:3]
         window = (f", surtout vers {', '.join(f'{h} h' for h in sorted(busiest, key=lambda h: (h + 12) % 24))}"
@@ -303,6 +317,7 @@ def period(
                     "te lèves. Le pouls redescend ensuite même si tu restes "
                     "éveillé : le temps passé à essayer de te rendormir ne se "
                     "voit pas, ta note du matin le dit mieux.")
+    said.key = "final"
     if out["final_wakes"]:
         final_count = len(out["final_wakes"])
         said.append(f"{_s(final_count, 'nuit')} sur {len(nights)} se "
@@ -310,15 +325,19 @@ def period(
                     "sans te rendormir (vers "
                     f"{_clock(statistics.median(_evening_minutes(t) - 24 * 60 for t in out['final_wakes']))}) : "
                     "le sommeil de fin de nuit est celui qui manque.")
+    said.key = "regular"
     if out["bed"]["spread_min"] >= 90:
         said.append(f"Ton heure de coucher varie beaucoup (de "
                     f"{out['bed']['earliest']} à {out['bed']['latest']}) : un "
                     "horaire régulier aide à dormir d'une traite.")
+    said.key = "target"
     if sleep < 420:
         target = _clock(_evening_minutes(out["bed"]["median"]) - (420 - sleep))
+        out["bed_target"] = target
         said.append(f"Pour viser 7 h, couche-toi vers {target} au lieu de "
                     f"{out['bed']['median']} (tu te lèves vers "
                     f"{out['wake']['median']}).")
+    said.key = "spo2"
     if spo2:
         dips = statistics.mean(s["dips_per_hour"] for s in spo2)
         said.append(f"Oxygène la nuit (mesuré sur {_s(len(spo2), 'nuit')}) : "
@@ -330,6 +349,7 @@ def period(
         said.append("Pas de mesure d'oxygène la nuit : active l'oxymètre "
                     "pendant le sommeil dans Garmin Connect, c'est l'indice "
                     "qui manque pour parler d'apnée avec le médecin.")
+    said.key = "felt"
     felt_bad = [n for n in nights if n["felt"] == "bad"]
     if felt_bad:
         scored = [n["score"] for n in felt_bad if n["score"] is not None]
@@ -337,6 +357,45 @@ def period(
                     + (f", que la montre notait en moyenne {statistics.mean(scored):.0f}/100."
                        if scored else "."))
     return out
+
+
+MORNING_MIN_NIGHTS = 5
+
+
+def morning_trend(report: dict, date: str) -> Optional[dict]:
+    """What the morning message takes from the two weeks of nights.
+
+    One or two points a day, not the whole page: the bedtime that would
+    give 7 hours first when the nights are short (the one thing to do
+    tonight), then one other conclusion that changes from day to day so
+    the message does not say the same thing every morning.
+
+    Returns:
+        dict | None: ``nights``, ``sleep_min`` / ``watch_sleep_min``
+        (averages), ``wakes_per_night``, ``bed_target`` (or None) and
+        ``points`` (one or two French sentences). None with fewer than
+        ``MORNING_MIN_NIGHTS`` nights.
+    """
+    if report.get("count", 0) < MORNING_MIN_NIGHTS:
+        return None
+    keyed = report.get("keyed") or []
+    target = report.get("bed_target")
+    points = []
+    if target:
+        points.append(
+            f"Sur les {report['count']} dernières nuits, tu dors en moyenne "
+            f"{_duration(report['sleep_min'])} : pour viser 7 h, couche-toi "
+            f"vers {target} ce soir (au lieu de {report['bed']['median']}).")
+    rest = [text for key, text in keyed
+            if key not in ("average", "target") or (key == "average" and not target)]
+    if rest:
+        points.append(rest[dt.date.fromisoformat(date).toordinal() % len(rest)])
+    return {
+        "nights": report["count"], "sleep_min": report["sleep_min"],
+        "watch_sleep_min": report["watch_sleep_min"],
+        "wakes_per_night": report.get("wakes_per_night"),
+        "bed_target": target, "points": points[:2],
+    }
 
 
 if __name__ == "__main__":
@@ -433,4 +492,16 @@ if __name__ == "__main__":
     assert "« mal dormi »" in text and "80/100" in text, text
     assert period(conn, other, "2026-10-19") == {"nights": [], "count": 0,
                                                   "conclusions": []}
+    assert [k for k, _ in p["keyed"]][:2] == ["average", "watch"], p["keyed"]
+    assert p["bed_target"] == "22:39", p["bed_target"]  # 00:10 minus 91 min
+    # The morning takes two points: tonight's bedtime, then one other
+    # that changes from day to day. Too few nights: nothing.
+    assert morning_trend(p, "2026-10-19") is None  # 3 nights
+    five = {**p, "count": 5}
+    days = {d: morning_trend(five, d) for d in ("2026-10-19", "2026-10-20")}
+    for trend in days.values():
+        assert trend["points"][0].startswith("Sur les 5 dernières nuits"), trend
+        assert "couche-toi vers 22:39 ce soir" in trend["points"][0], trend
+        assert len(trend["points"]) == 2 and "Tu dors en moyenne" not in trend["points"][1]
+    assert days["2026-10-19"]["points"][1] != days["2026-10-20"]["points"][1]
     print("sleep_analysis.py: all checks passed")

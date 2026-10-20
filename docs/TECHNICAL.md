@@ -287,7 +287,10 @@ never more than the watch's count. Over 14 nights the page gives the
 averages, the bedtime spread, the 7-night shortfall against 7 h 30, when
 awakenings happen, and plain conclusions (including the bedtime that
 would give 7 hours). The morning message gets last night as `night`
-(estimated length, awakening times). It is an estimate: the heart rate
+(estimated length, awakening times) and, from 5 nights on, the two
+weeks as `sleep_trend` (`sleep_analysis.morning_trend`): the bedtime for
+7 hours tonight first when the nights are short, then one other
+conclusion of the page that changes from day to day. It is an estimate: the heart rate
 shows getting up, not the time spent awake lying down again.
 
 Morning message (Réglages "Message du matin"): three short paragraphs.

@@ -491,8 +491,9 @@ def card(brief: dict) -> str:
              if read.get("final_wake") else ""),
         ) if x)
     night_line = (f"Cette nuit : {night}." if fr else f"Last night: {night}.") if night else ""
-    if review or night_line:
-        blocks.append(" ".join(x for x in (review, night_line) if x))
+    trend = " ".join((brief.get("sleep_trend") or {}).get("points") or []) if fr else ""
+    if review or night_line or trend:
+        blocks.append(" ".join(x for x in (review, night_line, trend) if x))
     if body.get("illness_signs"):
         blocks.append(("⚠️ À surveiller : " if fr else "⚠️ Watch for: ")
                       + ", ".join(body["illness_signs"])
@@ -709,5 +710,12 @@ if __name__ == "__main__":
     assert read == ("Cette nuit : mal dormi, environ 5 h 20 de sommeil, "
                     "réveillé vers 02:41 et 04:40, sans te rendormir après "
                     "04:40."), read
+    trended = card({"language": "fr", "body": {"sleep_felt": "ok"},
+                    "sleep_trend": {"points": ["Sur les 11 dernières nuits, tu "
+                                               "dors en moyenne 5 h 52 : couche-toi "
+                                               "vers 22:33 ce soir.", "Autre point."]}})
+    assert trended == ("Cette nuit : nuit moyenne. Sur les 11 dernières nuits, "
+                       "tu dors en moyenne 5 h 52 : couche-toi vers 22:33 ce "
+                       "soir. Autre point."), trended
     assert card_or_none(None) is not None
     print("plain_message.py: all checks passed")

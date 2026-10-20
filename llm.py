@@ -132,6 +132,11 @@ FR_SYSTEM_PROMPT = (
     "dit pourquoi, en clair : reprends-le. Ne cite QUE les changements "
     "listes : sans added, removed ni harder, les mouvements sont les "
     "memes, ne parle jamais de nouveaux mouvements.\n"
+    "- sleep_trend : la conclusion des 2 dernieres semaines de nuits "
+    "(page Sommeil) : nights, sleep_min (moyenne estimee), bed_target "
+    "(l'heure de coucher pour viser 7 h). points = une ou deux "
+    "conclusions DEJA formulees : reprends-les avec tes mots, sans en "
+    "ajouter ni changer les chiffres.\n"
     "Le budget calories/macros part dans une notification a part : ne "
     "le repete pas.\n"
     "Style : 3 courts paragraphes separes par une ligne vide (4 le "
@@ -140,7 +145,9 @@ FR_SYSTEM_PROMPT = (
     "conclusions, pas une liste -- ce qui a marche (wins) puis ce qui a "
     "manque (misses) avec les chiffres de review, et la conclusion "
     "(verdict) ; s'il y a un manque, le geste concret de help pour "
-    "aujourd'hui ; termine par la nuit (body : sleep_felt d'abord). "
+    "aujourd'hui ; termine par la nuit (body : sleep_felt d'abord, puis "
+    "night) et, s'il existe, sleep_trend (la tendance et l'heure de "
+    "coucher pour ce soir). "
     "(2) CE QUI CHANGE et POURQUOI : explique ce qui est different ce "
     "soir (changes : chaque from -> to, mouvements plus durs, ajoutes ou "
     "retires, poids de la kettlebell) et la raison (level_text, la nuit "
@@ -266,6 +273,11 @@ EN_SYSTEM_PROMPT = (
     "version), added / removed (moves). level_text says why, plainly: "
     "use it. Name ONLY the listed changes: without added, removed or "
     "harder the moves are the same, never speak of new moves.\n"
+    "- sleep_trend: the conclusion of the last 2 weeks of nights (the "
+    "Sleep page): nights, sleep_min (estimated average), bed_target "
+    "(the bedtime that gives 7 h). points = one or two conclusions "
+    "ALREADY worded: say them in your words, add none, keep the "
+    "figures.\n"
     "The calorie/macro budget goes out in a separate notification: do "
     "not repeat it.\n"
     "Style: 3 short paragraphs separated by a blank line (4 on Sunday), "
@@ -274,7 +286,8 @@ EN_SYSTEM_PROMPT = (
     "-- what went well (wins) then what was missing (misses) with the "
     "review figures, and the conclusion (verdict); if something was "
     "missing, the concrete fix from help for today; end with the night "
-    "(body: sleep_felt first). (2) WHAT CHANGES and WHY: explain what is "
+    "(body: sleep_felt first, then night) and, if present, sleep_trend "
+    "(the trend and tonight's bedtime). (2) WHAT CHANGES and WHY: explain what is "
     "different tonight (changes: each from -> to, harder, added or "
     "removed moves, the kettlebell weight) and the reason (level_text, "
     "the night or body's signals); nothing changed = say so and why. A "
@@ -619,7 +632,7 @@ if __name__ == "__main__":
     # Yesterday reviewed with conclusions, then what changes and why.
     for prompt in (FR_SYSTEM_PROMPT, EN_SYSTEM_PROMPT):
         for key in ("review", "verdict", "wins", "misses", "changes",
-                    "level_text", "harder"):
+                    "level_text", "harder", "sleep_trend", "bed_target"):
             assert key in prompt, key
     # Rest talk only on rest/recovery days: the prompt used to hand the
     # model "ton corps demande du calme" as THE translation of a held

@@ -89,6 +89,10 @@ def build_payload(
         # Last night read from the heart rate, beyond the watch's score.
         **({"night": night} if (night := sleep_analysis.night(
             conn, user_id, today)) else {}),
+        # The two weeks of nights (the Sommeil page), reduced to one or
+        # two points for this morning.
+        **({"sleep_trend": trend} if (trend := sleep_analysis.morning_trend(
+            sleep_analysis.period(conn, user_id, today), today)) else {}),
         **({"since_last_session": since_last} if since_last else {}),
         # "texte" (written by the model, the default) or "fiche" (the
         # same points assembled without a model).
