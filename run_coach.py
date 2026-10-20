@@ -36,8 +36,13 @@ import weather
 from ingest import garmin_api
 
 
-def run_for_user(conn, user: dict) -> None:
-    """Run the daily pipeline for a single user."""
+def run_for_user(conn, user: dict, note: str | None = None) -> None:
+    """Run the daily pipeline for a single user.
+
+    Parameters:
+        note (str | None): A line put before the message (a replan says
+            why the day's session changed).
+    """
     user_id = user["id"]
     username = user["username"]
     language = db.get_setting(conn, user_id, "language") or "fr"
@@ -227,10 +232,51 @@ def run_for_user(conn, user: dict) -> None:
     # The push always opens with the deterministic day budget, so the
     # numbers reach the phone even if the LLM phrases around them.
     header = progress.format_plan_header(payload["today_targets"], language)
+    body = f"{note}\n\n{message}" if note else message
     notify.notify(
-        f"{header}\n{message}" if header else message, topic=ntfy_topic,
+        f"{header}\n{body}" if header else body, topic=ntfy_topic,
     )
     print(f"{username}: {message}")
+
+
+def planned_change(conn, user_id: int) -> tuple[str | None, str | None] | None:
+    """(this morning's session type, the planning's now) when the
+    planning for today was changed after the morning run; else None."""
+    today = dt.datetime.now(metrics.local_tz(conn, user_id)).date().isoformat()
+    entry = conn.execute(
+        "SELECT session_type FROM coach_log WHERE user_id = ? AND "
+        "local_date = ? ORDER BY id DESC LIMIT 1", (user_id, today),
+    ).fetchone()
+    if entry is None:
+        return None  # the morning has not run: it will use the planning
+    weekday = dt.date.fromisoformat(today).weekday()
+    now = training.schedule_for_user(conn, user_id)[weekday].get("session_type")
+    return None if entry["session_type"] == now else (entry["session_type"], now)
+
+
+def replan_today(conn, user: dict) -> str | None:
+    """Redo today when its planned session changed after the morning run.
+
+    Changing the planning in Settings used to leave this morning's
+    decision in place -- the watch, the calendar and "Envoyer sur la
+    montre" kept the old session. The whole day is decided again for
+    the new session (its own level, the same morning signals): a new
+    coach_log row replaces the morning's, the watch and the calendar
+    follow, and the message is sent again. The old session's level is
+    left as it is.
+
+    Returns:
+        str | None: The new session's label, or None when nothing had
+        to change.
+    """
+    change = planned_change(conn, user["id"])
+    if change is None:
+        return None
+    labels = training.SESSION_LABEL_FR
+    old, new = (labels.get(t, "repos") if t else "pas de seance" for t in change)
+    run_for_user(conn, user, note=f"Planning modifie : {new} ce soir au lieu "
+                                  f"de {old}. Voici la journee mise a jour.")
+    return new
 
 
 def main() -> None:
@@ -265,4 +311,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--replan"]:
+        # After changing today's planning: redo today for whoever's
+        # planning no longer matches this morning's decision.
+        connection = db.connect()
+        db.init_db(connection)
+        for account in db.all_users(connection):
+            done = replan_today(connection, dict(account))
+            print(f"{account['username']}: "
+                  + (f"replanned -> {done}" if done else "nothing to replan"))
+    else:
+        main()

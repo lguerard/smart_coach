@@ -858,13 +858,23 @@ def rhr_baseline(
 def _sleep_vote(wellness: dict) -> Optional[str]:
     # The person's own "how did you sleep" first: lying awake and still
     # with a low heart rate reads as sleep to the watch, so its score
-    # can call a bad night good. Not a strong red: one bad night holds
-    # the level, it takes a second red signal to lighten the session.
+    # can call a bad night good. "Bad" holds the day and the level
+    # (compute_status, plan_day) but never cancels the session on its
+    # own.
     import sleep_feedback
 
-    if wellness.get("sleep_felt") in sleep_feedback.VOTE:
-        return sleep_feedback.VOTE[wellness["sleep_felt"]]
-    score = wellness.get("sleep_score")
+    felt = wellness.get("sleep_felt")
+    if felt in sleep_feedback.VOTE:
+        vote = sleep_feedback.VOTE[felt]
+        # A bad night the watch also scores red stays red: saying so
+        # never makes the day look better than the measure.
+        if felt == "bad" and _score_vote(wellness.get("sleep_score")) == "red":
+            return "red"
+        return vote
+    return _score_vote(wellness.get("sleep_score"))
+
+
+def _score_vote(score) -> Optional[str]:
     if score is None:
         return None
     if score >= SLEEP_VOTE_GREEN:
@@ -1239,7 +1249,9 @@ def compute_status(
     reds = [label for label, vote, _ in votes if vote == "red"]
     if len(reds) >= 2 or any(label in STRONG_RED_LABELS for label in reds):
         return "red"
-    if reds or any(
+    # A night the person calls bad holds the day: never green, never red
+    # on its own (sleep_feedback.VOTE).
+    if reds or wellness.get("sleep_felt") == "bad" or any(
         vote == "yellow" and label in BLOCKING_YELLOW_LABELS
         for label, vote, _ in votes
     ):
@@ -2113,9 +2125,11 @@ def plan_day(
             # A yellow day still moves the level up when the level has
             # clearly been mastered (steady_progress); the day itself
             # stays yellow.
+            # ...but not after a night the person calls bad: it holds.
             steady = (
                 steady_progress(conn, user_id, session_type, date, before)
-                if status == "yellow" else None
+                if status == "yellow" and wellness.get("sleep_felt") != "bad"
+                else None
             )
             effective = "green" if steady else status
             gate = (
@@ -2350,12 +2364,18 @@ if __name__ == "__main__":
     assert compute_status({"training_readiness_score": 40}, None) == "yellow"
     assert compute_status({"training_readiness_score": 25}, None) == "yellow"
     # What the person says about the night wins over the watch: a bad
-    # night under a good score holds the level (not a strong red: it
-    # takes a second red to lighten the session); a good one counts green.
-    assert _sleep_vote({"sleep_score": 85, "sleep_felt": "bad"}) == "red"
+    # night under a good score holds the level, and never cancels the
+    # session on its own -- it takes two real red signals for that; a
+    # good one counts green.
+    assert _sleep_vote({"sleep_score": 85, "sleep_felt": "bad"}) == "yellow"
     assert compute_status({"sleep_score": 85, "sleep_felt": "bad",
-                           "training_readiness_score": 70}, None) == "yellow"
+                           "training_readiness_score": 90,
+                           "resting_hr": 50}, 52) == "yellow"  # not green
     assert compute_status({"sleep_score": 85, "sleep_felt": "bad",
+                           "training_readiness_score": 20}, None) == "yellow"
+    assert compute_status({"sleep_score": 40, "sleep_felt": "bad",
+                           "training_readiness_score": 20}, None) == "red"
+    assert compute_status({"sleep_score": 40,
                            "training_readiness_score": 20}, None) == "red"
     assert compute_status({"sleep_score": 45, "sleep_felt": "good",
                            "training_readiness_score": 70}, None) == "green"

@@ -42,6 +42,15 @@
   {# ---------- Centre: today's session and the coach ---------- #}
   <section class="home-main space-y-4 min-w-0">
 
+    {% if note %}
+    <div class="card p-3 text-sm" style="border-color: var(--accent); color: var(--accent-text);">{{ note }}</div>
+    {% elif planning_changed %}
+    <div class="card p-4 text-sm flex flex-wrap items-center justify-between gap-2" style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);">
+      <span>Ton planning prévoit <strong>{{ planning_changed.now }}</strong> aujourd'hui, mais ce matin le coach a préparé <strong>{{ planning_changed.was }}</strong>.</span>
+      <form method="post" action="/replan"><button class="btn btn-primary btn-sm">{{ icon('refresh', 13) }} Refaire la séance du jour</button></form>
+    </div>
+    {% endif %}
+
     {% if ask_sleep %}
     <div class="card p-4" id="sommeil" {% if not sleep_felt %}style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);"{% endif %}>
       <form method="post" action="/sleep" class="flex flex-wrap items-center justify-between gap-2">

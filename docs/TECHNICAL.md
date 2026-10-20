@@ -203,6 +203,15 @@ day already on the watch rebuilt at its type's current level with the
 person's own moves -- only the changed ones re-uploaded, no new decision,
 no level change. The web container mounts `data/garmin-tokens` for it.
 
+Planning changed after the morning run (`run_coach.replan_today`):
+when today's session in the planning no longer matches this morning's
+decision, the day is decided again for the new session (its own level,
+the same morning signals) -- a new coach_log row replaces the morning's,
+the watch, the calendar and "Envoyer sur la montre" follow, and the
+message goes out again with a line saying why. Saving Réglages does it
+in the background; Today shows "Refaire la séance du jour" when they
+differ; `python run_coach.py --replan` does it from a terminal.
+
 Two-way watch sync (`watch_sync.py`): each workout put on the watch is
 stored with its shape (steps, the slot each came from, counts). Before
 the morning run builds today's session and before "Envoyer sur la
@@ -318,8 +327,10 @@ buttons (Bien / Moyen / Mal, `quick_links` kind "sleep",
 `/quick/sleep/...`), also on Today. The answer is `sleep_felt` in
 `metrics.daily_wellness` and the sleep vote follows it instead of the
 watch's score -- lying awake and still with a low heart rate reads as
-sleep to the watch. "Mal" is a red vote but not a strong one: alone it
-holds the level, with a second red the session is lightened. The
+sleep to the watch. "Mal" holds the day: never green, no level step
+up, but it never cancels or lightens the session on its own (nights can
+be bad for weeks, and the sessions are what the goals need); it stays
+red only when the watch's score is red too. The
 message never calls a bad night good; Tendances draws the answers over
 the score. Off with "ask_sleep" in Réglages.
 

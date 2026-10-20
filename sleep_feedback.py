@@ -16,7 +16,11 @@ from typing import Optional
 RATINGS = ("good", "ok", "bad")
 LABEL_FR = {"good": "bien dormi", "ok": "nuit moyenne", "bad": "mal dormi"}
 BUTTON_FR = {"good": "Bien", "ok": "Moyen", "bad": "Mal"}
-VOTE = {"good": "green", "ok": "yellow", "bad": "red"}
+# "bad" is a yellow vote that also keeps the day from being green
+# (training.compute_status) and the level from going up: it holds the
+# session, it never cancels it -- nights are often bad for a while, and
+# a walk every time would stop the progress the sessions are for.
+VOTE = {"good": "green", "ok": "yellow", "bad": "yellow"}
 
 
 def record(

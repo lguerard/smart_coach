@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 import webauthn
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import (
     HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
 )
@@ -704,6 +704,8 @@ def home(request: Request) -> HTMLResponse:
             "sync_sources": sources,
             "status_signals": status_signals,
             "pending_feedback": pending_feedback,
+            "planning_changed": _planning_changed(conn, user_id),
+            "note": request.query_params.get("note"),
             "sleep_felt": sleep_feedback.felt(conn, user_id, date),
             "ask_sleep": db.get_setting(conn, user_id, "ask_sleep") != "0",
             "coach_time": os.environ.get("COACH_TIME", "07:45"),
@@ -1710,8 +1712,10 @@ def settings_page(request: Request) -> HTMLResponse:
 
 
 @app.post("/settings")
-async def save_settings(request: Request):
-    """Persist edited settings and level overrides, then redirect back."""
+async def save_settings(request: Request, background: BackgroundTasks):
+    """Persist edited settings and level overrides, then redirect back.
+    Today's planned session changed after the morning run: the day is
+    redone in the background (watch, calendar, message)."""
     conn = get_conn()
     user_id = current_user_id(request)
     form = await request.form()
@@ -1775,15 +1779,74 @@ async def save_settings(request: Request):
     # the level fields above (which hold the old levels) are applied.
     new_kg = exercise_library.equipment_for(conn, user_id).get("kettlebell_kg")
     lowered = training.lower_levels_for_heavier_bell(conn, user_id, old_kg, new_kg)
+    notes = []
     if lowered:
-        note = (f"Kettlebell passee a {new_kg:g} kg : niveaux ajustes ("
-                + ", ".join(f"{training.SESSION_LABEL_FR[t].lower()} {a} -> {b}"
-                            for t, (a, b) in lowered.items()) + ").")
+        notes.append(f"Kettlebell passee a {new_kg:g} kg : niveaux ajustes ("
+                     + ", ".join(f"{training.SESSION_LABEL_FR[t].lower()} {a} -> {b}"
+                                 for t, (a, b) in lowered.items()) + ").")
+    replan = _schedule_replan(conn, user_id, background)
+    if replan:
+        notes.append(replan)
+    if notes:
         return RedirectResponse(
-            url="/settings?" + urlencode({"saved": 1, "note": note}),
+            url="/settings?" + urlencode({"saved": 1, "note": " ".join(notes)}),
             status_code=303,
         )
     return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+
+def _planning_changed(conn: sqlite3.Connection, user_id: int) -> dict | None:
+    """Today's planning against this morning's decision, labelled, when
+    they differ (Today offers to redo the day)."""
+    import run_coach
+
+    change = run_coach.planned_change(conn, user_id)
+    if change is None:
+        return None
+    label = lambda t: training.SESSION_LABEL_FR.get(t, t) if t else "repos"
+    return {"was": label(change[0]), "now": label(change[1])}
+
+
+def _replan_in_background(user_id: int) -> None:
+    """``run_coach.replan_today`` on its own connection (a background
+    task outlives the request's)."""
+    import run_coach
+
+    conn = db.connect()
+    try:
+        user = db.get_user(conn, user_id)
+        if user is not None:
+            run_coach.replan_today(conn, dict(user))
+    except Exception as error:  # noqa: BLE001 -- logged, the page is done
+        print(f"replan for user {user_id} failed: {error}")
+    finally:
+        conn.close()
+
+
+def _schedule_replan(
+    conn: sqlite3.Connection, user_id: int, background: BackgroundTasks,
+) -> str | None:
+    """Queue today's replan when the planning for today no longer
+    matches this morning's decision; the note to show, or None."""
+    import run_coach
+
+    change = run_coach.planned_change(conn, user_id)
+    if change is None:
+        return None
+    background.add_task(_replan_in_background, user_id)
+    label = training.SESSION_LABEL_FR.get(change[1], "repos") if change[1] else "pas de seance"
+    return (f"Seance du jour mise a jour : {label}. La montre, l'agenda et "
+            "le message suivent dans une minute ou deux.")
+
+
+@app.post("/replan")
+def replan(request: Request, background: BackgroundTasks):
+    """Today's button when the planning changed after the morning run."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    note = _schedule_replan(conn, user_id, background)
+    return RedirectResponse(
+        "/" + ("?" + urlencode({"note": note}) if note else ""), status_code=303)
 
 
 # --- Private body photos ---------------------------------------------------

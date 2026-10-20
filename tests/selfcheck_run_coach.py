@@ -162,4 +162,43 @@ if __name__ == "__main__":
     assert payload["today_session"]["type"] == "rest", payload
     assert "activity_yesterday" in payload and "illness_watch" in payload
 
+    # The planning changed after the morning run (treadmill -> kettlebell
+    # today): the day is redone for the new session -- watch, calendar,
+    # message, a new log row -- and only once.
+    _reset()
+    _install({"sleep_score": 80, "training_readiness_score": 70})
+    conn, user = _user()
+    run_coach.run_for_user(conn, user)
+    assert calls["pushed"][0][0] == "treadmill", calls
+    assert run_coach.planned_change(conn, user["id"]) is None
+    assert run_coach.replan_today(conn, user) is None
+    kettlebell_day = {"session_type": "kettlebell", "title": "Kettlebell",
+                      "start": "20:00", "duration_min": 30}
+    training.schedule_for_user = lambda conn, uid: {
+        day: dict(kettlebell_day) for day in range(7)}
+    assert run_coach.planned_change(conn, user["id"]) == ("treadmill", "kettlebell")
+    _reset()
+    assert run_coach.replan_today(conn, user) == "Kettlebell a la maison"
+    assert calls["pushed"][0][0] == "kettlebell", calls
+    assert calls["sent"] and "Planning modifie : Kettlebell a la maison ce " \
+        "soir au lieu de Tapis" in calls["sent"][-1], calls["sent"]
+    assert _logged(conn, user["id"])["session_type"] == "kettlebell"
+    assert run_coach.planned_change(conn, user["id"]) is None
+    assert run_coach.replan_today(conn, user) is None  # once
+
+    # A bad night with one other red signal holds the session: it is not
+    # replaced by a walk any more (it takes two real red signals).
+    _reset()
+    _install({"sleep_score": 82, "training_readiness_score": 20})
+    conn, user = _user()
+    import sleep_feedback
+
+    today = dt.datetime.now(metrics.local_tz(conn, user["id"])).date().isoformat()
+    sleep_feedback.record(conn, user["id"], today, "bad")
+    metrics.daily_wellness = lambda c, uid, day: {
+        "sleep_score": 82, "training_readiness_score": 20, "sleep_felt": "bad"}
+    run_coach.run_for_user(conn, user)
+    row = _logged(conn, user["id"])
+    assert row["tier"] == training.TIER_TRAIN and row["status"] == "yellow", dict(row)
+
     print("selfcheck_run_coach.py: all checks passed (no live call made)")
