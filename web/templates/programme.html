@@ -83,9 +83,17 @@
   <ul class="divide-y" style="border-color: var(--border);">
     {% for m in b.library %}
     <li class="py-1.5 flex items-center justify-between gap-2" style="border-color: var(--border);">
-      <span class="text-sm {{ 'line-through' if m.removed }}" style="{{ 'color: var(--muted);' if m.removed }}">
-        {{ m.name }} <span class="text-xs" style="color: var(--muted);">{{ m.amount }}{% if m.fixed %} · fixé depuis Garmin{% endif %}</span>
-      </span>
+      <div class="min-w-0">
+        <p class="text-sm {{ 'line-through' if m.removed }}" style="{{ 'color: var(--muted);' if m.removed }}">
+          {{ m.name }} <span class="text-xs" style="color: var(--muted);">{{ m.amount }}{% if m.fixed %} · fixé depuis Garmin{% endif %}</span>
+        </p>
+        {% if m.cue and not m.removed %}
+        <details class="text-xs mt-0.5">
+          <summary class="cursor-pointer link">Comment le faire</summary>
+          <p class="mt-1 leading-relaxed" style="color: var(--text-secondary);">{{ m.cue }}</p>
+        </details>
+        {% endif %}
+      </div>
       {% if m.fixed %}
       <form method="post" action="/programme/override/clear">
         <input type="hidden" name="session_type" value="{{ b.type }}">
@@ -118,9 +126,15 @@
         {% if m.cue %}<p class="text-xs" style="color: var(--text-secondary);">{{ m.cue }}</p>{% endif %}
         {% if m.garmin_key %}<p class="text-xs" style="color: var(--muted);">Montre : {{ m.garmin_label }}</p>{% endif %}
       </div>
-      <form method="post" action="/programme/move/{{ m.id }}/delete">
-        <button class="btn btn-sm" style="color: var(--critical);">Supprimer</button>
-      </form>
+      <div class="flex flex-col gap-1 shrink-0">
+        <form method="post" action="/programme/move/{{ m.id }}/placement">
+          <input type="hidden" name="placement" value="{{ 'end' if m.placement == 'round' else 'round' }}">
+          <button class="btn btn-sm w-full">{{ 'Une fois à la fin' if m.placement == 'round' else 'À chaque tour' }}</button>
+        </form>
+        <form method="post" action="/programme/move/{{ m.id }}/delete">
+          <button class="btn btn-sm w-full" style="color: var(--critical);">Supprimer</button>
+        </form>
+      </div>
     </li>
     {% endfor %}
   </ul>

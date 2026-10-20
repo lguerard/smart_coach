@@ -931,6 +931,21 @@ def init_db(conn: sqlite3.Connection) -> None:
                    "values_json"):
         if column not in coach_cols:
             conn.execute(f"ALTER TABLE coach_log ADD COLUMN {column} TEXT")
+    # Once per account: own stretches set in every kettlebell tour go to
+    # the end. Circuit A gained the overhead triceps extension, done in
+    # the same position as the triceps stretch, so the stretch in every
+    # tour read as the same move twice; at the end is what a stretch is
+    # for (the form's own advice). The Programme page can put it back.
+    for (user_id,) in conn.execute(
+        "SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM settings "
+        "WHERE key = 'stretch_end_migrated')").fetchall():
+        conn.execute(
+            "UPDATE custom_moves SET placement = 'end' WHERE user_id = ? AND "
+            "session_type = 'kettlebell' AND placement = 'round' AND "
+            "garmin_key LIKE '%stretch%'", (user_id,))
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (user_id, key, value) VALUES "
+            "(?, 'stretch_end_migrated', '1')", (user_id,))
     meal_cols = {
         row["name"] for row in conn.execute("PRAGMA table_info(meal_estimates)")
     }
@@ -1017,6 +1032,10 @@ def create_user(
             "INSERT OR IGNORE INTO settings (user_id, key, value) "
             "VALUES (?, ?, ?)", (user_id, key, value),
         )
+    # One-time data fixes in init_db are for accounts that existed then.
+    conn.execute(
+        "INSERT OR IGNORE INTO settings (user_id, key, value) VALUES "
+        "(?, 'stretch_end_migrated', '1')", (user_id,))
     conn.commit()
     return user_id
 

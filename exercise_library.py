@@ -453,6 +453,77 @@ KETTLEBELL_SESSION_B = {
 LADDERS.update(KETTLEBELL_SESSION)
 LADDERS.update(KETTLEBELL_SESSION_B)
 
+# How to do each move of the kettlebell circuit, in full: the position,
+# the movement, the breathing and the mistake to avoid. The one-line
+# cues above were too short to learn a move from (shown on Today and on
+# the Programme page; the watch keeps the name).
+DETAILED_CUES = {
+    "kb_woodchop": (
+        "Debout, pieds un peu plus larges que les épaules, kettlebell à deux "
+        "mains par la poignée. Pars près de la hanche gauche, genoux fléchis, "
+        "puis monte en diagonale, bras tendus, jusqu'au-dessus de l'épaule "
+        "droite en pivotant sur le pied arrière ; redescends en contrôlant. "
+        "Le mouvement vient des hanches et du buste, pas des bras. Change de "
+        "côté à mi-temps."),
+    "kb_around_world": (
+        "Debout, pieds largeur de hanches, genoux souples, ventre serré. "
+        "Passe la kettlebell de la main droite à la main gauche devant toi, "
+        "puis de la gauche à la droite derrière le dos : elle tourne autour "
+        "de la taille dans le sens des aiguilles d'une montre. Le bassin ne "
+        "bouge pas, ce sont les abdos qui le tiennent. Respire normalement."),
+    "kb_around_world_rev": (
+        "Le même tour de taille dans l'autre sens : de la main gauche à la "
+        "main droite devant toi, puis de la droite à la gauche derrière le "
+        "dos. Bassin immobile, ventre serré, regard devant."),
+    "kb_goblet_squat_int": (
+        "Kettlebell contre la poitrine, tenue par les cornes, coudes vers le "
+        "bas. Pieds un peu plus larges que les épaules, pointes légèrement "
+        "ouvertes. Descends en poussant les fesses en arrière jusqu'aux "
+        "cuisses parallèles (ou aussi bas que possible), dos droit, talons au "
+        "sol, coudes entre les genoux ; remonte en poussant dans les talons. "
+        "Inspire en descendant, souffle en remontant."),
+    "kb_deadlift": (
+        "Pieds largeur de hanches, kettlebell au sol entre les pieds. Pousse "
+        "les fesses en arrière, genoux légèrement fléchis, dos plat, et "
+        "attrape la poignée à deux mains. Redresse-toi en poussant les "
+        "hanches vers l'avant et en serrant les fessiers, puis redescends "
+        "lentement de la même façon. Le dos ne s'arrondit jamais : s'il le "
+        "fait, descends moins bas."),
+    "kb_one_arm_row": (
+        "Un pied en avant, la main du même côté en appui sur la cuisse ou une "
+        "chaise, buste penché à 45° environ, dos plat. Kettlebell dans "
+        "l'autre main, bras tendu. Tire-la vers la hanche, coude près du "
+        "corps, en serrant l'omoplate, puis redescends doucement. Change de "
+        "bras à mi-temps."),
+    "kb_upright_row": (
+        "Debout, kettlebell à deux mains par la poignée devant les cuisses. "
+        "Monte-la le long du corps jusqu'au bas de la poitrine, coudes vers "
+        "l'extérieur et plus hauts que les poignets, puis redescends "
+        "lentement. Épaules basses, loin des oreilles ; si ça pince dans "
+        "l'épaule, monte moins haut."),
+    "kb_curl": (
+        "Debout, kettlebell tenue par les côtés de la poignée, bras tendus "
+        "devant les cuisses. Coudes collés au corps, monte-la vers la "
+        "poitrine en pliant seulement les coudes, puis redescends en 2 "
+        "secondes. Ne balance pas le buste pour t'aider."),
+    "kb_overhead_ext": (
+        "Un exercice de force pour les triceps, pas un étirement : on tend "
+        "les bras. Debout, ventre serré, kettlebell tenue par les cornes "
+        "derrière la tête, coudes pointés vers le plafond et près de la "
+        "tête. Tends les bras vers le haut, puis laisse redescendre derrière "
+        "la tête en contrôlant : seuls les avant-bras bougent."),
+    "kb_squeeze_press": (
+        "Allongé sur le dos, genoux pliés, pieds au sol. Kettlebell tenue "
+        "par les côtés et serrée fort entre les paumes au-dessus de la "
+        "poitrine. Pousse vers le plafond sans relâcher la pression, puis "
+        "redescends jusqu'à frôler la poitrine. Souffle en poussant, inspire "
+        "en descendant ; c'est le serrage qui fait travailler les pectoraux."),
+}
+for _ladder in LADDERS.values():
+    for _rung in _ladder["rungs"]:
+        for _variant in _rung:
+            _variant["cue"] = DETAILED_CUES.get(_variant["key"], _variant["cue"])
+
 # With one kettlebell, these slots swap to loaded ladders. The hinge
 # (swing, deadlift) replaces the glute bridge, and a row and a press
 # replace the superman and the chair dips -- the bodyweight circuits had

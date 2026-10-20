@@ -2322,11 +2322,11 @@ if __name__ == "__main__":
         "workoutSegments"][0]["workoutSteps"][0]
     assert kb_group["numberOfIterations"] == kb_values["tours"], kb_group
     kb_steps = kb_group["workoutSteps"]
-    assert len(kb_steps) == 18, len(kb_steps)  # 9 moves + 9 rests (circuit A)
+    assert len(kb_steps) == 20, len(kb_steps)  # 10 moves + 10 rests (circuit A)
     assert kb_steps[0]["endConditionValue"] == kb_values["kb_woodchop_sec"]
     assert kb_steps[1]["stepType"]["stepTypeKey"] == "rest"
     assert kb_steps[1]["endConditionValue"] == 10
-    assert [s["stepOrder"] for s in kb_steps] == list(range(1, 19))
+    assert [s["stepOrder"] for s in kb_steps] == list(range(1, 21))
     # The person's own moves: one in every tour, one stretch at the end.
     custom = dict(kb_values)
     custom["custom_1"] = 8
@@ -2338,8 +2338,8 @@ if __name__ == "__main__":
     custom_steps = build_workout("kettlebell", 3, custom).to_dict()[
         "workoutSegments"][0]["workoutSteps"]
     assert len(custom_steps) == 2, custom_steps  # the tours, then the stretch
-    assert len(custom_steps[0]["workoutSteps"]) == 20  # 10 moves + 10 rests
-    pushups = custom_steps[0]["workoutSteps"][18]  # the own move, after the 9
+    assert len(custom_steps[0]["workoutSteps"]) == 22  # 11 moves + 11 rests
+    pushups = custom_steps[0]["workoutSteps"][20]  # the own move, after the 10
     assert pushups["endCondition"]["conditionTypeKey"] == "reps", pushups
     stretch = custom_steps[1]
     assert stretch["stepOrder"] == 2 and stretch["endConditionValue"] == 30

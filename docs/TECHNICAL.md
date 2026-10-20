@@ -162,9 +162,11 @@ the target weight when it is set below the current one
 (`progress.macro_weight_kg`).
 
 Kettlebell days use one of two 20/10 circuits
-(`training.KETTLEBELL_CIRCUITS`). A is the standing video workout with
-a deadlift, a one-arm row, the overhead triceps extension and a squeeze
-press added: everything B works plus the back and the hinge, so it is
+(`training.KETTLEBELL_CIRCUITS`). A is the standing video workout (the
+waist pass both ways) with a deadlift, a one-arm row, the overhead
+triceps extension and a squeeze press added (full how-to in
+`exercise_library.DETAILED_CUES`, shown on Today and the Programme
+page): everything B works plus the back and the hinge, so it is
 the only circuit by default and can replace the upper-body day. B
 (floor press, Russian twist, overhead extension, pull-over, hammer
 curl, sit-up press) stays for "Circuits kettlebell" in Réglages
@@ -172,7 +174,9 @@ curl, sit-up press) stays for "Circuits kettlebell" in Réglages
 `exercise_library.equipment_for`, so the watch, the Programme page and
 the two-way sync all follow it) and for the bonus workouts. The tour
 bands are for six moves; a longer circuit does fewer tours for the same
-number of efforts (3 x 9 at level 0, like 5 x 6). The
+number of efforts (3 x 10 at level 0, like 5 x 6) and still gains one
+tour per band. An own move goes between "every tour" and "once at the
+end" from the Programme page (`custom_moves.set_placement`). The
 session cap shortens the work time before it takes a tour away, so the
 top levels are not lighter than the ones below. Today also
 lists optional bonus workouts (`bonus.py`: abs & arms, chest &

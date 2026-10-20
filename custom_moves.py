@@ -113,6 +113,21 @@ def add_move(
     return cursor.lastrowid
 
 
+def set_placement(
+    conn: sqlite3.Connection, user_id: int, move_id: int, placement: str,
+) -> bool:
+    """Move one of the person's own moves into every tour ("round") or
+    once at the end ("end"). Theirs only; False when nothing changed."""
+    if placement not in ("round", "end"):
+        return False
+    changed = conn.execute(
+        "UPDATE custom_moves SET placement = ? WHERE id = ? AND user_id = ? "
+        "AND placement != ?", (placement, move_id, user_id, placement),
+    ).rowcount
+    conn.commit()
+    return bool(changed)
+
+
 def delete_move(conn: sqlite3.Connection, user_id: int, move_id: int) -> bool:
     """Delete one of the person's own moves (theirs only)."""
     deleted = conn.execute(
@@ -432,4 +447,29 @@ if __name__ == "__main__":
         raise AssertionError("unknown slot accepted")
     except ValueError:
         pass
+    # An own move moved between "every tour" and "once at the end":
+    # theirs only, and nothing for an unknown placement.
+    mine = add_move(conn, uid, "kettlebell", "", "Etirement kettlebell", "",
+                    "sec", 30, "round", "triceps_stretch")
+    assert set_placement(conn, uid, mine, "end")
+    assert not set_placement(conn, uid, mine, "end")  # already there
+    assert not set_placement(conn, uid, mine, "sideways")
+    stranger = db.create_user(conn, "stranger", "pw-123456")
+    assert not set_placement(conn, stranger, mine, "round")
+    assert conn.execute("SELECT placement FROM custom_moves WHERE id = ?",
+                        (mine,)).fetchone()["placement"] == "end"
+    # The one-time fix (db.init_db): an account from before it has its
+    # stretch in every tour moved to the end, once; put back, it stays.
+    set_placement(conn, uid, mine, "round")
+    conn.execute("DELETE FROM settings WHERE user_id = ? AND key = "
+                 "'stretch_end_migrated'", (uid,))
+    conn.commit()
+    db.init_db(conn)
+    placement = lambda: conn.execute("SELECT placement FROM custom_moves WHERE "
+                                     "id = ?", (mine,)).fetchone()["placement"]
+    assert placement() == "end"
+    set_placement(conn, uid, mine, "round")
+    db.init_db(conn)
+    assert placement() == "round"
+    delete_move(conn, uid, mine)
     print("custom_moves.py: all checks passed")

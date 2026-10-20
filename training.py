@@ -1645,7 +1645,8 @@ def calisthenics_values(
 # the floor one last. B (chest, triceps, biceps, abs) stays for "AB",
 # alternating day by day, and for the bonus workouts.
 KETTLEBELL_CIRCUITS = {
-    "A": ("kb_woodchop_sec", "kb_around_world_sec", "kb_goblet_squat_sec",
+    "A": ("kb_woodchop_sec", "kb_around_world_sec", "kb_around_world_rev_sec",
+          "kb_goblet_squat_sec",
           "kb_deadlift_sec", "kb_row_sec", "kb_upright_row_sec",
           "kb_curl_sec", "kb_triceps_ext_sec", "kb_squeeze_press_sec"),
     "B": ("kb_floor_press_sec", "kb_russian_twist_sec", "kb_triceps_ext_sec",
@@ -1697,10 +1698,13 @@ def kettlebell_values(
     band, tours = next(
         (band, tours) for band, tours in KETTLEBELL_TOURS if level in band
     )
-    # The bands count tours of six moves; a longer circuit does fewer
-    # tours for the same number of efforts (5 x 6 ~ 3 x 9), so it fits
-    # the cap and still has levels to climb.
-    tours = max(2, round(tours * KETTLEBELL_TOURS_MOVES / len(moves)))
+    # The bands count tours of six moves; a longer circuit starts with
+    # fewer tours for the same number of efforts (5 x 6 ~ 3 x 10), and
+    # still gains one tour per band, so a band up is never the same
+    # tours with less work.
+    band_index = next(i for i, (b, _) in enumerate(KETTLEBELL_TOURS) if b is band)
+    first = KETTLEBELL_TOURS[0][1]
+    tours = max(2, round(first * KETTLEBELL_TOURS_MOVES / len(moves))) + band_index
     position = (level - band.start) / max(1, len(band) - 1)
     work = KETTLEBELL_MIN_WORK_SEC + round(10 * position)
 
@@ -2401,12 +2405,17 @@ if __name__ == "__main__":
     assert kettlebell_values(3, equipment=only_b)["kb_hammer_curl_sec"] == 30
     assert kettlebell_values(4, equipment=only_b)["tours"] == 6
     assert kettlebell_values(4, equipment=only_b)["kb_hammer_curl_sec"] == 20
-    # Circuit A (nine moves) does fewer tours for the same efforts:
-    # 3 x 9 at level 0, as long as 5 x 6.
+    # Circuit A (ten moves) does fewer tours for the same efforts:
+    # 3 x 10 at level 0, as long as 5 x 6.
     kb0 = kettlebell_values(0)
     assert kb0["tours"] == 3 and kb0["kb_curl_sec"] == 20, kb0
-    assert kb0["duration_min"] == 16, kb0  # 3 warm-up + 3 x 9 x 30 s
-    assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 9, kb0
+    assert kb0["duration_min"] == 18, kb0  # 3 warm-up + 3 x 10 x 30 s
+    assert kb0["rest_sec"] == 10 and len(kb0["variants"]) == 10, kb0
+    # The waist pass both ways, and full how-to cues.
+    assert {"kb_around_world_sec", "kb_around_world_rev_sec"} <= set(kb0)
+    assert "pas un étirement" in kb0["variants"]["kb_triceps_ext_sec"]["cue"]
+    # One more tour per band, whatever the circuit size.
+    assert [kettlebell_values(lv)["tours"] for lv in (0, 4, 7)] == [3, 4, 5]
     assert kb0["variants"]["kb_squeeze_press_sec"]["name"] == "squeeze press au sol"
     # A covers everything B works, plus the back and the hinge: it can
     # be the only circuit, and stand in for the upper-body day.
@@ -2420,7 +2429,7 @@ if __name__ == "__main__":
     # Each band is longer than the last, and inside the top band a
     # level up is never less work: the cap shortens the work time
     # before it drops a tour (it used to fall from 7 tours to 5).
-    for kb_equipment, top_tours in ((only_b, 7), ({}, 5)):
+    for kb_equipment, top_tours in ((only_b, 7), ({}, 5)):  # B: 6 moves, A: 10
         top = [kettlebell_values(lv, equipment=kb_equipment) for lv in range(7, 11)]
         assert all(v["tours"] == top_tours for v in top), [v["tours"] for v in top]
         slot = "kb_curl_sec" if not kb_equipment else "kb_hammer_curl_sec"

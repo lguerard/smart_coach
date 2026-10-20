@@ -1539,6 +1539,7 @@ def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
             variants = base.get("variants") or {}
             library = [
                 {"slot": slot, "name": variants.get(slot, {}).get("name", slot),
+                 "cue": variants.get(slot, {}).get("cue", ""),
                  "amount": f"{fixed.get(slot, value)}{' s' if slot.endswith('_sec') else ''}",
                  "fixed": slot in fixed,
                  "removed": slot in removed}
@@ -1642,6 +1643,15 @@ async def programme_add_move(request: Request):
         return RedirectResponse(
             "/programme?" + urlencode({"error": str(error)}), status_code=303,
         )
+    return RedirectResponse("/programme?saved", status_code=303)
+
+
+@app.post("/programme/move/{move_id}/placement")
+async def programme_move_placement(move_id: int, request: Request):
+    """An own move into every tour, or once at the end."""
+    form = await request.form()
+    custom_moves.set_placement(get_conn(), current_user_id(request), move_id,
+                               str(form.get("placement", "")))
     return RedirectResponse("/programme?saved", status_code=303)
 
 
