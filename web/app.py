@@ -15,6 +15,7 @@ path except /login and /static behind having a valid session.
 """
 
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -95,8 +96,12 @@ def _ui_context(request: Request) -> dict:
 templates = Jinja2Templates(
     directory=APP_DIR / "templates", context_processors=[_ui_context],
 )
+# theme.css's address changes with its content, so a browser holding an
+# old copy fetches the new one after an update instead of keeping it.
+THEME_VERSION = hashlib.sha256(
+    (APP_DIR / "static" / "theme.css").read_bytes()).hexdigest()[:10]
 templates.env.globals.update(icon=icon, session_badge=session_badge,
-                             move_art=move_art)
+                             move_art=move_art, theme_version=THEME_VERSION)
 
 # /quick/: one-tap links from phone notifications, signed (quick_links)
 # instead of logged in.

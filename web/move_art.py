@@ -318,6 +318,19 @@ _PROPS = {
 }
 
 
+# Paint carried by the drawing itself, so it still shows when the page's
+# stylesheet is an old cached copy; theme.css's .move-art rules win
+# over these (CSS beats presentation attributes) and theme them.
+_PAINT = {
+    "bone": 'stroke="currentColor" stroke-width="3.4" stroke-linecap="round" fill="none"',
+    "far": 'stroke="currentColor" stroke-width="3.4" stroke-linecap="round" fill="none" opacity="0.4"',
+    "head": 'stroke="currentColor" stroke-width="2.6" fill="none"',
+    "bell": 'fill="#0d9488"',
+    "ground": 'stroke="currentColor" stroke-width="2" opacity="0.25"',
+    "prop": 'stroke="currentColor" stroke-width="2" fill="none" opacity="0.5"',
+}
+
+
 def _anim(attr: str, a: float, b: float) -> str:
     if a == b:
         return ""
@@ -329,14 +342,14 @@ def _anim(attr: str, a: float, b: float) -> str:
 def _line(a: dict, b: dict, p: str, q: str, cls: str) -> str:
     (x1, y1), (x2, y2) = a[p], a[q]
     (u1, v1), (u2, v2) = b[p], b[q]
-    return (f'<line class="{cls}" x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}">'
+    return (f'<line class="{cls}" {_PAINT[cls]} x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}">'
             + _anim("x1", x1, u1) + _anim("y1", y1, v1)
             + _anim("x2", x2, u2) + _anim("y2", y2, v2) + "</line>")
 
 
 def _circle(cx: float, cy: float, r: float, cls: str, to=None) -> str:
     to = to or (cx, cy)
-    return (f'<circle class="{cls}" cx="{cx}" cy="{cy}" r="{r}">'
+    return (f'<circle class="{cls}" {_PAINT[cls]} cx="{cx}" cy="{cy}" r="{r}">'
             + _anim("cx", cx, to[0]) + _anim("cy", cy, to[1]) + "</circle>")
 
 
@@ -346,8 +359,8 @@ def svg(art_key: Optional[str], size: int = 72, label: str = "") -> Markup:
     if art is None:
         return Markup("")
     a, b = art["a"], art["b"]
-    parts = [f'<line class="ground" x1="0" y1="{GROUND}" x2="100" y2="{GROUND}"/>']
-    parts += [f'<g class="prop">{_PROPS[p]}</g>' for p in art.get("props", [])]
+    parts = [f'<line class="ground" {_PAINT["ground"]} x1="0" y1="{GROUND}" x2="100" y2="{GROUND}"/>']
+    parts += [f'<g class="prop" {_PAINT["prop"]}>{_PROPS[p]}</g>' for p in art.get("props", [])]
     parts += [_line(a, b, p, q, "far") for p, q in _FAR_BONES if p in a and q in a]
     parts += [_line(a, b, p, q, "bone") for p, q in _BONES if p in a and q in a]
     parts.append(_circle(*a["H"], HEAD_R, "head", b["H"]))
@@ -358,7 +371,7 @@ def svg(art_key: Optional[str], size: int = 72, label: str = "") -> Markup:
         # Around the waist: the bell circles the hips, smaller behind.
         sweep = 1 if art["orbit"] > 0 else 0
         parts.append(
-            '<circle class="bell" r="4.2"><animateMotion dur="2.2s" '
+            f'<circle class="bell" {_PAINT["bell"]} r="4.2"><animateMotion dur="2.2s" '
             'repeatCount="indefinite" path="M50 58 a15 5 0 1 '
             f'{sweep} 0.01 0"/></circle>')
     title = f"<title>{label}</title>" if label else ""
