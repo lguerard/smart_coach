@@ -34,7 +34,8 @@ def _timed(slots, level, date, equipment) -> list[dict]:
     items = []
     for slot in slots:
         variant = exercise_library.variant_for(slot, level, date, equipment)
-        items.append({"slot": slot, "name": variant["name"],
+        items.append({"slot": slot, "key": variant["key"],
+                      "name": variant["name"],
                       "amount": f"{BONUS_WORK_SEC} s", "cue": variant["cue"],
                       "muscles": variant["muscles"], "value": BONUS_WORK_SEC,
                       "garmin": list(variant["garmin"])})
@@ -48,7 +49,8 @@ def _counted(values: dict, slots, level, date) -> list[dict]:
             slot, level, values[slot], date,
         )
         amount = line[len(variant["name"]):].strip()
-        items.append({"slot": slot, "name": variant["name"],
+        items.append({"slot": slot, "key": variant["key"],
+                      "name": variant["name"],
                       "amount": amount, "cue": variant["cue"],
                       "muscles": variant["muscles"], "value": values[slot],
                       "garmin": list(variant["garmin"])})
@@ -121,7 +123,8 @@ def bonus_workouts(
                         f"{BONUS_REST_SEC} s de repos entre chaque")
     else:
         items = _counted(bodyweight, ("plank_sec",), upper, date) + [{
-            "slot": "crunch", "name": "crunch", "amount": "15",
+            "slot": "crunch", "key": "crunch", "name": "crunch",
+            "amount": "15",
             "cue": "Allonge, genoux plies, decolle les epaules en soufflant, "
                    "le bas du dos reste au sol.",
             "muscles": {"abs": 1.0}, "value": 15,

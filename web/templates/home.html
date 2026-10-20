@@ -181,7 +181,9 @@
         <summary class="cursor-pointer text-xs font-medium link">Les mouvements de ce soir</summary>
         <ul class="mt-2 divide-y" style="border-color: var(--border);">
           {% for slot, v in values.variants.items() %}
-          <li class="py-2" style="border-color: var(--border);">
+          <li class="py-2 flex gap-3" style="border-color: var(--border);">
+            {{ move_art(v.key, 64, v.name) }}
+            <div class="min-w-0 flex-1">
             <div class="flex items-baseline justify-between gap-3">
               <span class="font-medium">{{ v.name }}</span>
               <span class="num text-sm font-semibold shrink-0" style="color: var(--accent-text);">{{ values[slot] }}{{ ' s' if slot.endswith('_sec') }}</span>
@@ -190,6 +192,7 @@
             {% if v.range or v.next %}
             <p class="text-xs" style="color: var(--muted);">{% if v.range %}plage {{ v.range[0] }}-{{ v.range[1] }}{% endif %}{% if v.range and v.next %} · {% endif %}{% if v.next %}ensuite : {{ v.next }}{% endif %}</p>
             {% endif %}
+            </div>
           </li>
           {% endfor %}
         </ul>
@@ -248,12 +251,15 @@
           {% if w["items"] %}
           <ul class="mt-2 space-y-1.5">
             {% for item in w["items"] %}
-            <li class="text-sm">
+            <li class="text-sm flex gap-3">
+              {{ move_art(item.key, 52, item.name) }}
+              <div class="min-w-0 flex-1">
               <div class="flex items-baseline justify-between gap-3">
                 <span>{{ item.name }}</span>
                 <span class="num text-sm font-semibold shrink-0" style="color: var(--accent-text);">{{ item.amount }}</span>
               </div>
               <p class="text-xs" style="color: var(--muted);">{{ item.cue }}</p>
+              </div>
             </li>
             {% endfor %}
           </ul>

@@ -151,6 +151,17 @@ recorded or its slot is over (`training.pending_feedback`); any
 session of the last two weeks can be rated or re-rated from Sessions
 (`training.rateable_sessions`).
 
+Each move on Today (tonight's moves, the bonus sessions) and on the
+Programme page has a small drawing (`web/move_art.py`, Jinja global
+`move_art`): a stick figure drawn in SVG, moving between the start and
+the end position of the move (SMIL, about 2.5 s a loop, still when the
+system asks for reduced motion), with the kettlebell in the accent
+colour. Every library variant maps to one of the drawings
+(`VARIANT_ART`); the self-check fails when a new variant has none. They
+are drawn here rather than taken from an exercise image bank, whose
+pictures are copyrighted or of unclear origin. A move added by hand has
+no drawing.
+
 Hard days. A declared or sensor-read illness rests the day; the day
 after a rest is a gentle flat walk (20 min). A red day trains at a
 lowered level, even several in a row (the deload guardrail handles

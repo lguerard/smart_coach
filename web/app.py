@@ -67,6 +67,7 @@ import training_load
 from ingest import garmin_api
 from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
 from web.icons import icon, session_badge
+from web.move_art import for_variant as move_art
 
 APP_DIR = Path(__file__).parent
 app = FastAPI(title="smart_coach")
@@ -94,7 +95,8 @@ def _ui_context(request: Request) -> dict:
 templates = Jinja2Templates(
     directory=APP_DIR / "templates", context_processors=[_ui_context],
 )
-templates.env.globals.update(icon=icon, session_badge=session_badge)
+templates.env.globals.update(icon=icon, session_badge=session_badge,
+                             move_art=move_art)
 
 # /quick/: one-tap links from phone notifications, signed (quick_links)
 # instead of logged in.
@@ -1540,6 +1542,7 @@ def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
             library = [
                 {"slot": slot, "name": variants.get(slot, {}).get("name", slot),
                  "cue": variants.get(slot, {}).get("cue", ""),
+                 "key": variants.get(slot, {}).get("key"),
                  "amount": f"{fixed.get(slot, value)}{' s' if slot.endswith('_sec') else ''}",
                  "fixed": slot in fixed,
                  "removed": slot in removed}
