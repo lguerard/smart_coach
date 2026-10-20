@@ -14,6 +14,7 @@ import db
 import desk
 import metrics
 import progress
+import sleep_analysis
 import training
 
 
@@ -85,6 +86,9 @@ def build_payload(
         # Yesterday's session (planned, done, minutes, rating) and what
         # is different tonight from the last session of the same type.
         "yesterday_training": day_review.yesterday_training(conn, user_id, today),
+        # Last night read from the heart rate, beyond the watch's score.
+        **({"night": night} if (night := sleep_analysis.night(
+            conn, user_id, today)) else {}),
         **({"since_last_session": since_last} if since_last else {}),
         # "texte" (written by the model, the default) or "fiche" (the
         # same points assembled without a model).

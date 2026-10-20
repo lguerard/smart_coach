@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Sommeil - Smart Coach{% endblock %}
+{% block content %}
+
+{% macro duration(m) %}{{ (m // 60) }} h {{ '%02d' % (m % 60) }}{% endmacro %}
+
+<div class="card p-4">
+  <h1 class="card-title text-base">{{ icon('moon', 18) }} Mon sommeil · {{ report.count }} nuit{{ 's' if report.count > 1 }} sur les 14 derniers jours</h1>
+  <p class="text-xs mt-1" style="color: var(--text-secondary);">
+    Lu à partir de ton pouls pendant la nuit et des phases de la montre,
+    pas du score Garmin : la montre prend le temps passé allongé et
+    éveillé pour du sommeil. Ce sont des estimations, pas un examen
+    médical.
+  </p>
+</div>
+
+{% if not report.count %}
+<div class="card p-5 text-sm text-center" style="color: var(--muted);">
+  Pas encore de nuit enregistrée sur les deux dernières semaines.
+</div>
+{% else %}
+<div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+  <div class="metric" style="--metric-color: var({{ '--critical' if report.sleep_min < 360 else '--warning' if report.sleep_min < 420 else '--good' }});">
+    <p class="caption">Sommeil estimé</p>
+    <p class="metric-value">{{ duration(report.sleep_min) }}</p>
+    <p class="text-xs" style="color: var(--muted);">par nuit · objectif 7 h à 9 h</p>
+  </div>
+  <div class="metric" style="--metric-color: var(--muted);">
+    <p class="caption">Selon la montre</p>
+    <p class="metric-value">{{ duration(report.watch_sleep_min) }}</p>
+    <p class="text-xs" style="color: var(--muted);">{{ duration(report.in_bed_min) }} au lit</p>
+  </div>
+  <div class="metric" style="--metric-color: var(--orange);">
+    <p class="caption">Réveils probables</p>
+    <p class="metric-value">{{ ('%g' % report.wakes_per_night).replace('.', ',') if report.wakes_per_night is not none else '–' }}</p>
+    <p class="text-xs" style="color: var(--muted);">par nuit</p>
+  </div>
+  <div class="metric" style="--metric-color: var(--blue);">
+    <p class="caption">Coucher</p>
+    <p class="metric-value">{{ report.bed.median }}</p>
+    <p class="text-xs" style="color: var(--muted);">de {{ report.bed.earliest }} à {{ report.bed.latest }}</p>
+  </div>
+  <div class="metric" style="--metric-color: var(--blue);">
+    <p class="caption">Lever</p>
+    <p class="metric-value">{{ report.wake.median }}</p>
+    <p class="text-xs" style="color: var(--muted);">en médiane</p>
+  </div>
+  <div class="metric" style="--metric-color: var({{ '--critical' if report.debt_min >= 420 else '--warning' if report.debt_min > 0 else '--good' }});">
+    <p class="caption">Manque sur 7 nuits</p>
+    <p class="metric-value">{{ duration(report.debt_min) }}</p>
+    <p class="text-xs" style="color: var(--muted);">par rapport à 7 h 30</p>
+  </div>
+</div>
+
+<div class="card p-4">
+  <h2 class="card-title mb-2">Ce que disent tes nuits</h2>
+  <ul class="space-y-2 text-sm">
+    {% for line in report.conclusions %}
+    <li class="flex gap-2"><span style="color: var(--accent);">•</span><span>{{ line }}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="card p-4">
+  <h2 class="card-title mb-1">Nuit par nuit</h2>
+  <p class="text-xs mb-3" style="color: var(--muted);">
+    La barre va du coucher au lever. <span style="color: var(--orange);">▮</span> réveil probable
+    (le pouls monte quelques minutes, souvent quand tu te lèves),
+    <span style="color: var(--critical);">▬</span> réveillé jusqu'au lever.
+    Le point : ta note du matin.
+  </p>
+  <div class="flex items-center gap-2 mb-1 text-[10px] num" style="color: var(--muted);">
+    <span class="shrink-0" style="width: 5.5rem;"></span>
+    <div class="relative flex-1 h-3">
+      {% for x, h in [(120, '23 h'), (240, '1 h'), (360, '3 h'), (480, '5 h'), (600, '7 h')] %}
+      <span class="absolute whitespace-nowrap" style="left: {{ (x / 720 * 100)|round(2) }}%; transform: translateX(-50%);">{{ h }}</span>
+      {% endfor %}
+    </div>
+    <span class="shrink-0" style="width: 3.2rem;"></span>
+  </div>
+  <ul class="space-y-2">
+    {% for n in report.nights %}
+    <li class="flex items-center gap-2">
+      <span class="w-22 shrink-0 text-xs leading-tight" style="width: 5.5rem;">
+        {{ n.day_label.split(' ')[0][:3] }} {{ n.date[8:10] }}/{{ n.date[5:7] }}<br>
+        <span class="num" style="color: var(--muted);">{{ n.bed }}–{{ n.wake }}</span>
+      </span>
+      <svg viewBox="0 0 720 18" preserveAspectRatio="none" class="flex-1 h-5" role="img"
+           aria-label="Nuit du {{ n.day_label }} : {{ duration(n.sleep_min) }} estimées, {{ n.wakes|length }} réveils probables">
+        {% for x in [120, 240, 360, 480, 600] %}<line x1="{{ x }}" x2="{{ x }}" y1="0" y2="18" stroke="var(--grid)" stroke-width="1"/>{% endfor %}
+        <rect x="{{ n.x0 }}" y="4" width="{{ [n.x1 - n.x0, 1]|max }}" height="10" rx="3" fill="color-mix(in srgb, var(--accent) 55%, transparent)"/>
+        {% for w in n.wakes if not (n.final_x is defined and loop.last) %}
+        <rect x="{{ w.x }}" y="1" width="{{ [w.minutes, 4]|max }}" height="16" rx="1" fill="var(--orange)"><title>{{ w.at }} · {{ w.minutes }} min{% if w.peak_bpm %} · pouls {{ w.peak_bpm }}{% endif %}</title></rect>
+        {% endfor %}
+        {% if n.final_x is defined %}
+        <rect x="{{ n.final_x }}" y="1" width="{{ [n.x1 - n.final_x, 3]|max }}" height="16" rx="2" fill="var(--critical)"><title>réveillé dès {{ n.final_wake }} jusqu'au lever</title></rect>
+        {% endif %}
+      </svg>
+      <span class="shrink-0 text-xs num text-right" style="width: 3.2rem;">
+        {{ duration(n.sleep_min) }}
+        {% if n.felt %}<span class="inline-block w-2 h-2 rounded-full align-middle ml-0.5" title="{{ {'good': 'bien dormi', 'ok': 'nuit moyenne', 'bad': 'mal dormi'}[n.felt] }}"
+          style="background: var({{ '--good' if n.felt == 'good' else '--warning' if n.felt == 'ok' else '--critical' }});"></span>{% endif %}
+        <br><span style="color: var(--muted);">{% if n.score is not none %}montre {{ n.score }}{% endif %}</span>
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% set missing = 14 - report.count %}
+  {% if missing > 0 %}
+  <p class="text-xs mt-3" style="color: var(--muted);">{{ missing }} nuit{{ 's' if missing > 1 }} sans enregistrement (montre pas portée ou pas synchronisée).</p>
+  {% endif %}
+</div>
+
+<div class="card p-4 text-xs" style="color: var(--text-secondary);">
+  <p class="caption mb-1">Comment c'est calculé</p>
+  Un réveil probable, c'est le pouls qui reste au moins 2 minutes à 10 battements
+  au-dessus de son niveau de la nuit, ou une phase d'éveil enregistrée par la
+  montre (les deux à moins de 10 minutes d'écart comptent pour un). Un réveil
+  après 3 h 30 dans les deux dernières heures, suivi d'un pouls qui ne redescend
+  pas, compte comme éveillé jusqu'au lever. Le sommeil estimé, c'est le temps au
+  lit moins ces moments, et jamais plus que ce que compte la montre. Une montée
+  du pouls peut aussi être un rêve ou un mouvement : c'est une estimation.
+</div>
+{% endif %}
+{% endblock %}

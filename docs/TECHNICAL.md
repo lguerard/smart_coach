@@ -273,6 +273,23 @@ sum of that meal's entries) match loses its own row: the meal counts
 once. Each diary meal matches one estimate (`diary_uuids`); "Pas le
 même repas" undoes a wrong match and keeps it from matching again.
 
+Sleep, read beyond the watch's score (`sleep_analysis.py`, page
+Sommeil): the night's series are kept in `sleep_samples` -- heart rate
+from Garmin's sleep payload (`garmin_api.sleep_series`, also SpO2,
+breathing and restless moments when the watch records them) and per
+minute from the phone's export (`parse_health_connect._parse_sleep_hr`,
+last 60 nights). A probable awakening is the heart rate staying at least
+2 minutes 10 bpm above the night's median, or an awake stage the watch
+logged (merged within 10 minutes); a rise after 3:30 in the last two
+hours that never comes back down is a final awakening, awake until
+getting up. The estimated sleep is the time in bed minus those moments,
+never more than the watch's count. Over 14 nights the page gives the
+averages, the bedtime spread, the 7-night shortfall against 7 h 30, when
+awakenings happen, and plain conclusions (including the bedtime that
+would give 7 hours). The morning message gets last night as `night`
+(estimated length, awakening times). It is an estimate: the heart rate
+shows getting up, not the time spent awake lying down again.
+
 Morning message (Réglages "Message du matin"): three short paragraphs.
 (1) Yesterday reviewed with a conclusion -- the session planned and done,
 its length and rating (`day_review.yesterday_training`), protein and

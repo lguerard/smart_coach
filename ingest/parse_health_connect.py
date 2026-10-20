@@ -674,6 +674,53 @@ def _parse_heart_rate_daily(
     return len(data)
 
 
+SLEEP_HR_DAYS = 60
+
+
+def _parse_sleep_hr(
+    hc: sqlite3.Connection, conn: sqlite3.Connection, user_id: int,
+) -> int:
+    """Per-minute heart rate through each recent night (sleep_analysis).
+
+    The nights themselves come from the Garmin API; the export has the
+    watch's heart rate at a finer step than Garmin's sleep payload, which
+    is what shows the brief rises of an awakening the watch scores as
+    sleep. Idempotent: one row per minute and night.
+    """
+    since = (dt.datetime.now(dt.timezone.utc)
+             - dt.timedelta(days=SLEEP_HR_DAYS)).isoformat()
+    nights = conn.execute(
+        "SELECT start_utc, end_utc FROM sleep_sessions WHERE user_id = ? "
+        "AND end_utc >= ?", (user_id, since),
+    ).fetchall()
+    windows = sorted(
+        (int(dt.datetime.fromisoformat(n["start_utc"]).timestamp() * 1000),
+         int(dt.datetime.fromisoformat(n["end_utc"]).timestamp() * 1000))
+        for n in nights
+    )
+    if not windows:
+        return 0
+    # One pass over the export's series (it has no index on time).
+    minutes: dict[int, list[int]] = {}
+    for epoch_ms, bpm in hc.execute(
+        "SELECT epoch_millis, beats_per_minute FROM "
+        "heart_rate_record_series_table WHERE epoch_millis BETWEEN ? AND ?",
+        (windows[0][0], max(end for _, end in windows)),
+    ):
+        if bpm and any(start <= epoch_ms <= end for start, end in windows):
+            minutes.setdefault(epoch_ms // 60000, []).append(bpm)
+    rows = [
+        (user_id, dt.datetime.fromtimestamp(m * 60, dt.timezone.utc).isoformat(),
+         round(sum(v) / len(v), 1))
+        for m, v in minutes.items()
+    ]
+    conn.executemany(
+        "INSERT OR REPLACE INTO sleep_samples (user_id, ts_utc, kind, value, "
+        "source) VALUES (?, ?, 'hr', ?, 'hc')", rows,
+    )
+    return len(rows)
+
+
 def parse_and_upsert(
     hc_export_path: Path, conn: sqlite3.Connection, user_id: int,
 ) -> dict[str, int]:
@@ -699,6 +746,7 @@ def parse_and_upsert(
         counts = {
             "steps": _parse_steps(hc, conn, user_id),
             "heart_rate_daily": _parse_heart_rate_daily(hc, conn, user_id),
+            "sleep_hr": _parse_sleep_hr(hc, conn, user_id),
             "resting_heart_rate": _parse_resting_heart_rate(hc, conn, user_id),
             "weight": _parse_weight(hc, conn, user_id),
             "body_fat": _parse_body_fat(hc, conn, user_id),
@@ -911,6 +959,35 @@ if __name__ == "__main__":
         # double-count.
         counts2 = parse_and_upsert(hc_path, conn, uid)
         assert counts2 == counts
+
+        # Heart rate through a recent night (the night itself comes from
+        # Garmin): averaged per minute, inside the night only, once.
+        night_hc = sqlite3.connect(tmp / "night.db")
+        night_hc.execute("CREATE TABLE heart_rate_record_series_table "
+                         "(parent_key INTEGER, beats_per_minute INTEGER, "
+                         "epoch_millis INTEGER)")
+        bed = dt.datetime.now(dt.timezone.utc).replace(
+            second=0, microsecond=0) - dt.timedelta(hours=10)
+        bed_ms = int(bed.timestamp() * 1000)
+        night_hc.executemany(
+            "INSERT INTO heart_rate_record_series_table VALUES (1, ?, ?)",
+            [(54, bed_ms + 1000), (58, bed_ms + 20_000),   # minute 0: 56
+             (60, bed_ms + 60_000),                        # minute 1
+             (90, bed_ms - 3_600_000)])                    # before bed
+        conn.execute(
+            "INSERT INTO sleep_sessions (uuid, user_id, start_utc, end_utc, "
+            "local_date) VALUES ('garmin-sleep-1', ?, ?, ?, 'd')",
+            (uid, bed.isoformat(), (bed + dt.timedelta(hours=7)).isoformat()))
+        assert _parse_sleep_hr(night_hc, conn, uid) == 2
+        assert _parse_sleep_hr(night_hc, conn, uid) == 2
+        assert [r["value"] for r in conn.execute(
+            "SELECT value FROM sleep_samples WHERE user_id = ? ORDER BY ts_utc",
+            (uid,))] == [56.0, 60.0]
+        assert _parse_sleep_hr(night_hc, conn, other_uid) == 0
+        night_hc.close()
+        conn.execute("DELETE FROM sleep_sessions")
+        conn.execute("DELETE FROM sleep_samples")
+        conn.commit()
         row = conn.execute(
             "SELECT avg_bpm, sample_count FROM heart_rate_daily WHERE "
             "user_id = ?", (uid,),

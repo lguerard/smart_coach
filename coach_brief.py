@@ -226,6 +226,14 @@ def body_summary(payload: dict) -> dict:
             "menstrual_cycle_phase",
         ) if wellness.get(key) is not None
     }
+    night = payload.get("night") or {}
+    if night.get("has_hr"):
+        summary["night"] = {
+            "sleep_min": night["sleep_min"],
+            "watch_sleep_min": night["watch_sleep_min"],
+            "wakes": [w["at"] for w in night["wakes"]],
+            **({"final_wake": night["final_wake"]} if night.get("final_wake") else {}),
+        }
     if session.get("status"):
         summary["status"] = session["status"]
     if session.get("tired_muscles"):
@@ -709,6 +717,15 @@ if __name__ == "__main__":
     assert review["verdict"] == "mixed", review
     assert reviewed["changes"]["level"] == {"from": 4, "to": 5}
     assert reviewed["changes"]["level_text"].startswith("On monte d'un cran")
+    # Last night read from the heart rate rides in body; a night
+    # without heart rate does not.
+    night = {"has_hr": True, "sleep_min": 320, "watch_sleep_min": 350,
+             "wakes": [{"at": "02:41"}, {"at": "04:40"}], "final_wake": "04:40"}
+    assert build_brief(_payload(night=night))["body"]["night"] == {
+        "sleep_min": 320, "watch_sleep_min": 350, "wakes": ["02:41", "04:40"],
+        "final_wake": "04:40"}
+    assert "night" not in build_brief(_payload(
+        night={**night, "has_hr": False}))["body"]
     # A food log that never reached the export is not a miss.
     unsynced = build_brief(_payload(weekly_progress={}))["review"]
     assert unsynced["food"] == {"kind": "not_synced"} and not unsynced["misses"]

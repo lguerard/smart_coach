@@ -479,6 +479,17 @@ def card(brief: dict) -> str:
     if felt and score is not None:
         night += f" (montre : {score:.0f})" if fr else f" (watch: {score:.0f})"
     review = _review_block(brief, fr)
+    read = body.get("night") or {}
+    if read and fr:
+        minutes = read["sleep_min"]
+        wakes = read.get("wakes") or []
+        night = ", ".join(x for x in (
+            night,
+            f"environ {minutes // 60} h {minutes % 60:02d} de sommeil",
+            (f"réveillé vers {_and(wakes)}" if wakes else ""),
+            (f"sans te rendormir après {read['final_wake']}"
+             if read.get("final_wake") else ""),
+        ) if x)
     night_line = (f"Cette nuit : {night}." if fr else f"Last night: {night}.") if night else ""
     if review or night_line:
         blocks.append(" ".join(x for x in (review, night_line) if x))
@@ -691,5 +702,12 @@ if __name__ == "__main__":
         "moves": ["goblet squat (6 kg) 25s", "curl kettlebell (6 kg) 25s"]}})
     assert "Kettlebell 6 kg — 4 tours" in weighed, weighed
     assert "goblet squat · curl kettlebell." in weighed, weighed
+    # Last night read from the heart rate: length and awakenings.
+    read = card({"language": "fr", "body": {"sleep_felt": "bad", "night": {
+        "sleep_min": 320, "watch_sleep_min": 350, "wakes": ["02:41", "04:40"],
+        "final_wake": "04:40"}}})
+    assert read == ("Cette nuit : mal dormi, environ 5 h 20 de sommeil, "
+                    "réveillé vers 02:41 et 04:40, sans te rendormir après "
+                    "04:40."), read
     assert card_or_none(None) is not None
     print("plain_message.py: all checks passed")

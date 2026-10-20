@@ -121,6 +121,19 @@ CREATE TABLE IF NOT EXISTS sleep_stages (
 );
 CREATE INDEX IF NOT EXISTS idx_sleep_stages_parent ON sleep_stages(parent_uuid);
 
+-- What happened through the night, sample by sample (sleep_analysis.py):
+-- heart rate (Garmin's sleep payload every ~2 min, and the phone's
+-- export per minute), blood oxygen and breathing when the watch
+-- records them, restless moments. Kept for the sleep windows only.
+CREATE TABLE IF NOT EXISTS sleep_samples (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    ts_utc TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('hr', 'spo2', 'resp', 'restless')),
+    value REAL NOT NULL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (user_id, kind, ts_utc, source)
+);
+
 CREATE TABLE IF NOT EXISTS exercise_sessions (
     uuid TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),

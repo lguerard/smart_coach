@@ -48,6 +48,7 @@ import custom_moves
 import done_sessions
 import meals
 import session_history
+import sleep_analysis
 import sleep_feedback
 import quick_links
 import watch_sync
@@ -1838,6 +1839,38 @@ def _meals_redirect(note: str | None = None) -> RedirectResponse:
     return RedirectResponse(
         "/repas" + ("?" + urlencode({"note": note}) if note else ""),
         status_code=303,
+    )
+
+
+# --- Sleep: Smart Coach's own reading of the nights ---
+
+# The timeline runs from 21:00 to 09:00 (720 minutes).
+SLEEP_AXIS_START_H = 21
+
+
+def _axis_min(iso: str) -> int:
+    when = dt.datetime.fromisoformat(iso)
+    minutes = when.hour * 60 + when.minute - SLEEP_AXIS_START_H * 60
+    return max(0, min(720, minutes + (1440 if minutes < 0 else 0)))
+
+
+@app.get("/sommeil", response_class=HTMLResponse)
+def sleep_page(request: Request) -> HTMLResponse:
+    """The last two weeks of nights: estimate, awakenings, conclusions."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    report = sleep_analysis.period(conn, user_id, today_str(conn, user_id))
+    for night in report["nights"]:
+        night["x0"] = _axis_min(night["start_iso"])
+        night["x1"] = _axis_min(night["end_iso"])
+        for wake in night["wakes"]:
+            wake["x"] = min(720, night["x0"] + wake["offset_min"])
+        if night["final_wake"]:
+            last = night["wakes"][-1]
+            night["final_x"] = last["x"]
+        night["day_label"] = date_label_fr(night["date"])
+    return templates.TemplateResponse(
+        request, "sleep.html", {"report": report},
     )
 
 

@@ -500,7 +500,55 @@ def upsert_sleep(
             stages,
         )
         stage_count += len(stages)
+        conn.executemany(
+            "INSERT OR REPLACE INTO sleep_samples (user_id, ts_utc, kind, "
+            "value, source) VALUES (?, ?, ?, ?, 'garmin')",
+            [(user_id, ts, kind, value)
+             for ts, kind, value in sleep_series(data)],
+        )
     return session_count, stage_count
+
+
+# The night's series in Garmin's sleep payload: (list key, value key,
+# kind). Read defensively -- a watch without Pulse Ox has no SpO2 list,
+# and the field names are Garmin's, not documented.
+_SLEEP_SERIES = (
+    ("sleepHeartRate", "value", "hr"),
+    ("wellnessEpochSPO2DataDTOList", "spo2Reading", "spo2"),
+    ("wellnessEpochRespirationDataDTOList", "respirationValue", "resp"),
+    ("sleepRestlessMoments", "value", "restless"),
+)
+
+
+def _sample_time(item: dict) -> Optional[str]:
+    for key in ("startGMT", "epochTimestamp", "startTimeGMT"):
+        value = item.get(key)
+        if isinstance(value, (int, float)):
+            return _epoch_ms_utc(int(value)).isoformat()
+        if isinstance(value, str) and value:
+            try:
+                return _parse_gmt(value).isoformat()
+            except ValueError:
+                return None
+    return None
+
+
+def sleep_series(data: dict) -> list[tuple[str, str, float]]:
+    """The per-sample series of one night's sleep payload.
+
+    Returns:
+        list[tuple]: ``(ts_utc, kind, value)``; nothing for the series
+        the payload does not have.
+    """
+    out = []
+    for list_key, value_key, kind in _SLEEP_SERIES:
+        for item in data.get(list_key) or []:
+            if not isinstance(item, dict):
+                continue
+            value, ts = item.get(value_key), _sample_time(item)
+            if isinstance(value, (int, float)) and value > 0 and ts:
+                out.append((ts, kind, float(value)))
+    return out
 
 
 def upsert_hrv(
@@ -1859,6 +1907,15 @@ if __name__ == "__main__":
                     "sleepStartTimestampGMT": 1784239200000,
                     "sleepEndTimestampGMT": 1784268000000,
                 },
+                "sleepHeartRate": [
+                    {"value": 54, "startGMT": 1784239200000},
+                    {"value": 71, "startGMT": 1784246400000},
+                    {"value": None, "startGMT": 1784246520000},
+                ],
+                "wellnessEpochSPO2DataDTOList": [
+                    {"epochTimestamp": "2026-07-15T00:00:00.0",
+                     "spo2Reading": 93},
+                ],
                 "sleepLevels": [
                     {"startGMT": "2026-07-14T22:00:00.0",
                      "endGMT": "2026-07-15T00:00:00.0",
@@ -2021,6 +2078,14 @@ if __name__ == "__main__":
     )
     assert sleep_sessions == 1, sleep_sessions
     assert sleep_stages == 4, sleep_stages
+    # The night's series ride along: heart rate (an empty reading
+    # skipped) and SpO2, each with its time.
+    samples = conn.execute(
+        "SELECT kind, value, ts_utc FROM sleep_samples WHERE user_id = ? "
+        "ORDER BY kind, ts_utc", (uid,)).fetchall()
+    assert [(r["kind"], r["value"]) for r in samples] == [
+        ("hr", 54.0), ("hr", 71.0), ("spo2", 93.0)], [dict(r) for r in samples]
+    assert samples[2]["ts_utc"].startswith("2026-07-15T00:00:00"), dict(samples[2])
     srow = conn.execute(
         "SELECT * FROM sleep_sessions WHERE uuid = 'garmin-sleep-555'",
     ).fetchone()
