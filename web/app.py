@@ -1750,11 +1750,14 @@ async def save_settings(request: Request, background: BackgroundTasks):
         field = f"level_{session_type}"
         if field in form and str(form[field]).strip():
             training.set_level(conn, user_id, session_type, int(form[field]))
+    schedule_notes: list[str] = []
     if "schedule_0_title" in form:
         # Rebuild the weekly plan from the form; invalid fields keep
         # the user's previous value rather than corrupting the JSON.
         old = training.schedule_for_user(conn, user_id)
         schedule = {}
+        by_label = {_plain_label(label): stype for stype, label
+                    in training.SESSION_LABEL_FR.items()}
         for weekday in range(7):
             entry = dict(old[weekday])
             stype = str(form.get(f"schedule_{weekday}_type", "")).strip()
@@ -1764,6 +1767,16 @@ async def save_settings(request: Request, background: BackgroundTasks):
             title = str(form.get(f"schedule_{weekday}_title", "")).strip()
             if title:
                 entry["title"] = title
+            # The type decides the session, the title is only its name --
+            # renaming a day to another session's exact name meant that
+            # session, so the type follows (a renamed Tuesday kept doing
+            # lower body).
+            named = by_label.get(_plain_label(title))
+            if named and named != entry["session_type"]:
+                entry["session_type"] = named
+                schedule_notes.append(
+                    f"{_DAYS_FR[weekday].capitalize()} : seance mise sur "
+                    f"{training.SESSION_LABEL_FR[named]}, d'apres son nom.")
             start = str(form.get(f"schedule_{weekday}_start", "")).strip()
             if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", start):
                 entry["start"] = start
@@ -1779,7 +1792,7 @@ async def save_settings(request: Request, background: BackgroundTasks):
     # the level fields above (which hold the old levels) are applied.
     new_kg = exercise_library.equipment_for(conn, user_id).get("kettlebell_kg")
     lowered = training.lower_levels_for_heavier_bell(conn, user_id, old_kg, new_kg)
-    notes = []
+    notes = list(schedule_notes)
     if lowered:
         notes.append(f"Kettlebell passee a {new_kg:g} kg : niveaux ajustes ("
                      + ", ".join(f"{training.SESSION_LABEL_FR[t].lower()} {a} -> {b}"
@@ -1793,6 +1806,14 @@ async def save_settings(request: Request, background: BackgroundTasks):
             status_code=303,
         )
     return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+
+def _plain_label(text: str) -> str:
+    """A session name compared without case or accents."""
+    import unicodedata
+
+    return "".join(c for c in unicodedata.normalize("NFD", text.lower())
+                   if unicodedata.category(c) != "Mn").strip()
 
 
 def _planning_changed(conn: sqlite3.Connection, user_id: int) -> dict | None:
