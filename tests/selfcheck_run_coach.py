@@ -98,12 +98,13 @@ if __name__ == "__main__":
     conn, user = _user()
     run_coach.run_for_user(conn, user)
     stype, level, values = calls["pushed"][0]
-    assert stype == "recovery" and values == training.ACTIVE_RECOVERY_VALUES, calls
+    assert stype == "recovery" and values == {
+        **training.ACTIVE_RECOVERY_VALUES, "duration_min": 30}, calls  # the cap
     assert calls["retired"] == [], calls
     assert calls["week"], "the week ahead is planned every morning"
     assert calls["calendar"][0].startswith("RECUPERATION"), calls
     # The event title says it too: never "Tapis" above a walk.
-    assert calls["titles"][0].startswith("Marche active 35 min"), calls
+    assert calls["titles"][0].startswith("Marche active 30 min"), calls
     assert "annulé" in calls["titles"][0], calls
     session = calls["payloads"][0]["today_session"]
     assert session["type"] == "recovery", session

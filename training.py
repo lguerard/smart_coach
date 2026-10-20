@@ -251,12 +251,16 @@ RECOVERY_GENTLE, RECOVERY_ACTIVE = "gentle", "active"
 ACTIVE_RECOVERY_PER_WEEK = 1
 
 
-def recovery_values(kind: Optional[str]) -> dict:
+def recovery_values(kind: Optional[str], cap_min: Optional[int] = None) -> dict:
     """Walk targets for a recovery day of ``kind`` (gentle by default,
-    which is also what rows logged before kinds existed were)."""
-    return dict(
+    which is also what rows logged before kinds existed were), never
+    longer than the person's session cap."""
+    values = dict(
         ACTIVE_RECOVERY_VALUES if kind == RECOVERY_ACTIVE else RECOVERY_VALUES
     )
+    if cap_min:
+        values["duration_min"] = min(values["duration_min"], cap_min)
+    return values
 
 
 def active_recoveries_recent(
@@ -1836,7 +1840,7 @@ def _render_session(
     if tier == TIER_REST:
         return {}, describe_tier_fr(TIER_REST, title, reasons)
     if tier == TIER_RECOVERY:
-        values = recovery_values(recovery_kind)
+        values = recovery_values(recovery_kind, session_cap_min(conn, user_id))
         return values, describe_tier_fr(TIER_RECOVERY, title, reasons, values)
     if session_type is None:
         return {}, None
@@ -2589,8 +2593,12 @@ if __name__ == "__main__":
     assert get_level(pc, pu, "treadmill") == 0
     assert plan["tier"] == TIER_RECOVERY, plan
     assert plan["recovery_kind"] == RECOVERY_ACTIVE, plan
-    assert plan["values"] == ACTIVE_RECOVERY_VALUES, plan
+    # Never longer than the session cap (30 min by default): the walk
+    # is 35 min only for someone whose sessions may last that long.
+    assert plan["values"] == {**ACTIVE_RECOVERY_VALUES, "duration_min": 30}, plan
     assert plan["values"]["incline_pct"] > 0
+    assert recovery_values(RECOVERY_ACTIVE, 45)["duration_min"] == 35
+    assert recovery_values(None, 15)["duration_min"] == 15
     assert "marche active en pente" in plan["description"], plan
     assert plan["description"].startswith("RECUPERATION"), plan
     assert "niveau deja au minimum" in plan["description"], plan
@@ -2607,7 +2615,7 @@ if __name__ == "__main__":
     pc.commit()
     entry = pc.execute("SELECT * FROM coach_log WHERE user_id = ?", (pu,)).fetchone()
     assert plan_from_log(pc, pu, D, _template(pc, pu, 0), entry)["values"] == (
-        ACTIVE_RECOVERY_VALUES
+        plan["values"]
     )
     # One active recovery a week: the next red floor day this week
     # trains at level 0 instead of walking again.
