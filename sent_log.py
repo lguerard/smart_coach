@@ -19,7 +19,7 @@ KINDS_FR = {
     "morning": "Message du matin", "replan": "Séance changée",
     "achievement": "Succès", "sleep": "Question du matin",
     "afternoon": "Point de 16 h", "evening": "Soir", "rating": "Note de séance",
-    "error": "Erreur",
+    "progress": "Plus lourd ou plus long", "error": "Erreur",
 }
 
 

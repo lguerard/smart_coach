@@ -6,8 +6,9 @@ cannot log in. Each link instead carries a signature: an HMAC of what
 it does (rate the session of that day, with that rating) under a
 random secret kept per user in the database. A link can do exactly
 that one thing and nothing else, cannot be altered, and stops working
-after ``MAX_AGE_DAYS``. Two kinds: "rate" (the evening's session) and
-"sleep" (the morning's "how did you sleep").
+after ``MAX_AGE_DAYS``. Three kinds: "rate" (the evening's session),
+"sleep" (the morning's "how did you sleep") and "progress" (after a
+session too easy: heavier or longer next time, progression_choice).
 
 The web app (POST /quick/rate/...) checks it; the worker, which sends
 the notifications, signs it -- both read the same secret from the
@@ -25,7 +26,8 @@ import db
 
 RATINGS = ("easy", "right", "hard")
 SLEEP_RATINGS = ("good", "ok", "bad")
-VALUES = {"rate": RATINGS, "sleep": SLEEP_RATINGS}
+PROGRESS_CHOICES = ("longer", "heavier")
+VALUES = {"rate": RATINGS, "sleep": SLEEP_RATINGS, "progress": PROGRESS_CHOICES}
 MAX_AGE_DAYS = 3
 
 
@@ -64,6 +66,15 @@ def sleep_url(
     """Absolute URL of the one-tap "how did you sleep" link."""
     return (f"{base_url.rstrip('/')}/quick/sleep/{user_id}/{date}/{rating}/"
             f"{sign(conn, user_id, date, rating, 'sleep')}")
+
+
+def progress_url(
+    conn: sqlite3.Connection, user_id: int, base_url: str, date: str,
+    choice: str,
+) -> str:
+    """Absolute URL of the one-tap "heavier or longer" link."""
+    return (f"{base_url.rstrip('/')}/quick/progress/{user_id}/{date}/{choice}/"
+            f"{sign(conn, user_id, date, choice, 'progress')}")
 
 
 def verify(
@@ -116,6 +127,13 @@ if __name__ == "__main__":
     assert not verify(conn, uid, "2026-10-17", "bad", night_sig, "2026-10-17")
     assert not verify(conn, uid, "2026-10-17", "easy", sig, "2026-10-17", "sleep")
     assert not verify(conn, uid, "2026-10-17", "good", night_sig, "2026-10-17", "sleep")
+    # The "heavier or longer" link: its own kind too.
+    up = progress_url(conn, uid, "https://coach.example", "2026-10-17", "heavier")
+    assert f"/quick/progress/{uid}/2026-10-17/heavier/" in up, up
+    assert verify(conn, uid, "2026-10-17", "heavier", up.rsplit("/", 1)[1],
+                  "2026-10-17", "progress")
+    assert not verify(conn, uid, "2026-10-17", "longer", up.rsplit("/", 1)[1],
+                      "2026-10-17", "progress")
     # The secret stays the same once made.
     assert url == rate_url(conn, uid, "https://coach.example", "2026-10-17", "easy")
     print("quick_links.py: all checks passed")

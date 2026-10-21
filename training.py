@@ -987,13 +987,18 @@ def recent_feedback(
         limit (int): How many to look back on.
 
     Returns:
-        list[str]: ``"easy"`` / ``"right"`` / ``"hard"``, newest first.
+        list[str]: ``"easy"`` / ``"right"`` / ``"hard"``, newest first;
+        for a loaded session, only those given since the kettlebell last
+        went up (``BELL_CHANGED_KEY``).
     """
+    since = (db.get_setting(conn, user_id, BELL_CHANGED_KEY)
+             if session_type in LOADED_TYPES else "")
     return [
         row["rating"] for row in conn.execute(
             "SELECT rating FROM session_feedback WHERE user_id = ? AND "
-            "session_type = ? ORDER BY local_date DESC LIMIT ?",
-            (user_id, session_type, limit),
+            "session_type = ? AND (? = '' OR created_at > ?) "
+            "ORDER BY local_date DESC LIMIT ?",
+            (user_id, session_type, since, since, limit),
         )
     ]
 
@@ -2009,6 +2014,9 @@ LOADED_TYPES = ("kettlebell", "lower_body", "upper_body")
 # sessions with it are doable (kettlebell: 7 tours back to 5).
 HEAVIER_BELL_LEVEL_DROP = {"kettlebell": 5, "lower_body": 3, "upper_body": 3}
 HEAVIER_BELL_REFERENCE_STEP = 1 / 3
+# When the kettlebell last went up (UTC ISO): ratings of loaded
+# sessions given before it no longer count.
+BELL_CHANGED_KEY = "kettlebell_changed_at"
 
 
 def next_bell_kg(kg: float) -> float:
@@ -2058,6 +2066,24 @@ def lower_levels_for_heavier_bell(
     Returns:
         dict: session type -> (old level, new level), for those changed.
     """
+    changed = heavier_bell_levels(conn, user_id, old_kg, new_kg)
+    for session_type, (_, after) in changed.items():
+        set_level(conn, user_id, session_type, after)
+    if changed:
+        # Ratings given with the old bell say nothing about the new one:
+        # a "too easy" at 6 kg must not also lengthen the first sessions
+        # at 8 (recent_feedback skips them).
+        db.set_setting(conn, user_id, BELL_CHANGED_KEY,
+                       dt.datetime.now(dt.timezone.utc).isoformat())
+        conn.commit()
+    return changed
+
+
+def heavier_bell_levels(
+    conn: sqlite3.Connection, user_id: int, old_kg: float, new_kg: float,
+) -> dict:
+    """What :func:`lower_levels_for_heavier_bell` would do, without
+    doing it: session type -> (old level, new level)."""
     if not old_kg or not new_kg or new_kg <= old_kg:
         return {}
     scale = min(1.0, (new_kg - old_kg) / old_kg / HEAVIER_BELL_REFERENCE_STEP)
@@ -2067,7 +2093,6 @@ def lower_levels_for_heavier_bell(
         before = get_level(conn, user_id, session_type)
         after = max(LEVEL_MIN, before - drop)
         if after != before:
-            set_level(conn, user_id, session_type, after)
             changed[session_type] = (before, after)
     return changed
 

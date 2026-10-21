@@ -91,7 +91,33 @@
     </div>
     {% endif %}
 
-{% if heavier_bell %}
+{% if progress_offer %}
+    {% set po = progress_offer %}
+    <div class="card p-4 text-sm" id="progression" style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);">
+      <p class="card-title">{{ icon('kettlebell', 16) }} Trop facile : plus lourd ou plus long ?</p>
+      <p class="text-xs mt-1" style="color: var(--text-secondary);">
+        Ta séance {{ po.label | lower }} du {{ po.date[8:10] }}/{{ po.date[5:7] }} était trop facile.
+        Deux façons de monter pour la prochaine{% if po.longer %} ; sans réponse, elle sera plus longue{% endif %}.
+      </p>
+      <form method="post" action="/progression" class="grid gap-2 mt-3 {{ 'sm:grid-cols-2' if po.longer }}">
+        <input type="hidden" name="date" value="{{ po.date }}">
+        <input type="hidden" name="type" value="{{ po.type }}">
+        {% if po.longer %}
+        <button name="choice" value="longer" class="btn py-2" style="display: block; height: auto; text-align: left; white-space: normal;">
+          <span class="font-semibold block">Plus longue</span>
+          <span class="text-xs font-normal block mt-0.5" style="color: var(--text-secondary);">{{ po.longer.text }}, même kettlebell de {{ '%g' % po.heavier.from_kg }} kg</span>
+        </button>
+        {% endif %}
+        <button name="choice" value="heavier" class="btn py-2" style="display: block; height: auto; text-align: left; white-space: normal;">
+          <span class="font-semibold block">Plus lourde : {{ '%g' % po.heavier.to_kg }} kg</span>
+          <span class="text-xs font-normal block mt-0.5" style="color: var(--text-secondary);">Pour toutes les séances avec kettlebell, si tu as ce poids ; les niveaux redescendent{% if po.heavier.levels %} ({{ po.heavier.levels | join(', ') }}){% endif %} pour démarrer en douceur.</span>
+        </button>
+      </form>
+      <p class="text-xs mt-2" style="color: var(--muted);">Plus lourd fait davantage travailler le muscle ; plus long, surtout l'endurance.</p>
+    </div>
+    {% endif %}
+
+{% if heavier_bell and not progress_offer %}
     <div class="card p-4 text-sm" style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);">
       <p class="card-title">{{ icon('kettlebell', 16) }} Tu plafonnes à {{ '%g' % heavier_bell.current }} kg</p>
       <p class="text-xs mt-1" style="color: var(--text-secondary);">

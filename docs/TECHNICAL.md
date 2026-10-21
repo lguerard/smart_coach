@@ -276,7 +276,20 @@ bell, Today, the Programme page and the morning message suggest the
 next one (+2 kg up to 16 kg: 6 -> 8 -> 10 ..., then 20, 24, 32).
 Saving a heavier bell in Réglages lowers those levels so the new weight
 starts gently: kettlebell -5 and circuits -3 for a third more weight
-(6 -> 8, 12 -> 16), proportionally less for a smaller step.
+(6 -> 8, 12 -> 16), proportionally less for a smaller step. Ratings
+of loaded sessions given before the bell went up no longer count
+(`kettlebell_changed_at`, `training.recent_feedback`): a "too easy" at
+6 kg must not also lengthen the first sessions at 8.
+
+Heavier or longer (`progression_choice.py`): once a loaded session is
+rated too easy, Today (and, when it was rated from the notification, a
+second notification with two signed buttons, kind "progress") offers
+both ways up for the next session: longer (the next level, shown as
+what it changes, e.g. "30 -> 35 s d'effort"; not offered when the
+session cap leaves it the same) or heavier (the next bell for every
+session, levels lowered as above). The offer stands until the next
+session of that type is planned; unanswered, the level goes up as
+before.
 
 Meals (`/repas`, `meals.py`): a photo of the plate gives an estimate
 per food and in total (calories, protein, carbs, fat); a photo of a

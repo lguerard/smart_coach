@@ -65,6 +65,7 @@ import llm
 import metrics
 import muscles
 import progress
+import progression_choice
 import training
 import training_load
 from ingest import garmin_api
@@ -696,6 +697,7 @@ def home(request: Request) -> HTMLResponse:
             "period": period, "bonus_workouts": bonus_workouts,
             "steady_sessions": training.STEADY_SESSIONS,
             "heavier_bell": training.heavier_bell_hint(conn, user_id),
+            "progress_offer": progression_choice.offer(conn, user_id, date),
             "yesterday_session": yesterday_session,
             "recovery_fig": recovery_fig, "tired": tired,
             "level_reason": (
@@ -777,7 +779,8 @@ def _rated_type(conn: sqlite3.Connection, user_id: int, date: str):
 
 
 @app.post("/quick/rate/{user_id}/{date}/{rating}/{signature}")
-def quick_rate(user_id: int, date: str, rating: str, signature: str):
+def quick_rate(user_id: int, date: str, rating: str, signature: str,
+               background: BackgroundTasks):
     """A notification button: rate that day's session, no login needed.
 
     The signature (quick_links) only allows exactly this rating for
@@ -801,8 +804,57 @@ def quick_rate(user_id: int, date: str, rating: str, signature: str):
          dt.datetime.now(dt.timezone.utc).isoformat()),
     )
     conn.commit()
+    if rating == "easy":
+        # A loaded session: the next notification asks heavier or longer.
+        background.add_task(_send_progress_offer, user_id)
     label = {"easy": "trop facile", "right": "au bon niveau", "hard": "trop dure"}[rating]
     return PlainTextResponse(f"Note : {label}. Merci !")
+
+
+def _send_progress_offer(user_id: int) -> None:
+    import run_checkin
+
+    conn = db.connect()
+    try:
+        progression_choice.send_offer(
+            conn, user_id, today_str(conn, user_id),
+            run_checkin.public_url(conn, user_id),
+            db.get_setting(conn, user_id, "ntfy_topic") or None)
+    except Exception as error:  # noqa: BLE001 -- the rating is saved anyway
+        print(f"progress offer for user {user_id} failed: {error}")
+    finally:
+        conn.close()
+
+
+@app.post("/quick/progress/{user_id}/{date}/{choice}/{signature}")
+def quick_progress(user_id: int, date: str, choice: str, signature: str):
+    """A notification button: heavier or longer after a session too easy
+    (signed link, quick_links, kind "progress")."""
+    conn = get_conn()
+    today = today_str(conn, user_id)
+    if not quick_links.verify(conn, user_id, date, choice, signature,
+                              today=today, action="progress"):
+        return PlainTextResponse("Lien invalide ou expire.", status_code=403)
+    pending = progression_choice.offer(conn, user_id, today)
+    note = pending and progression_choice.choose(
+        conn, user_id, today, date, pending["type"], choice)
+    if not note:
+        return PlainTextResponse("Choix deja fait ou plus d'actualite.", status_code=404)
+    return PlainTextResponse(note)
+
+
+@app.post("/progression")
+async def progression(request: Request):
+    """Today's card: heavier or longer after a session too easy."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    note = progression_choice.choose(
+        conn, user_id, today_str(conn, user_id), str(form.get("date", "")),
+        str(form.get("type", "")), str(form.get("choice", "")))
+    return RedirectResponse(
+        "/?" + urlencode({"note": note or "Ce choix n'est plus d'actualité."}),
+        status_code=303)
 
 
 @app.post("/quick/sleep/{user_id}/{date}/{rating}/{signature}")
