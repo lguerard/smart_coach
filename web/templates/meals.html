@@ -34,6 +34,45 @@
   {% if note %}<p class="text-sm mt-2" style="color: var(--accent-text);">{{ note }}</p>{% endif %}
 </div>
 
+{% if mfp_goal %}
+{% set g = mfp_goal %}
+<div class="card p-4" id="objectif-mfp">
+  <div class="flex items-center justify-between gap-2">
+    <h2 class="card-title">{{ icon('target', 16) }} Objectif à mettre dans MyFitnessPal</h2>
+    {% if not g.stale %}<span class="badge" style="--badge: var(--green);">{{ icon('check', 12) }}à jour</span>
+    {% else %}<span class="badge" style="--badge: var(--orange);">{{ 'à mettre à jour' if g.saved else 'pas encore reporté' }}</span>{% endif %}
+  </div>
+  <p class="text-xs mt-1" style="color: var(--text-secondary);">
+    MyFitnessPal ne peut pas recevoir l'objectif automatiquement : recopie-le
+    dans <strong>Plus › Objectifs › calories et macronutriments</strong>, pour
+    que ses barres et le coach visent la même chose.
+  </p>
+  <div class="grid grid-cols-4 gap-2 mt-3">
+    {% for key, label, unit, color in [('kcal', 'Calories', '', 'orange'), ('protein_g', 'Protéines', 'g', 'accent'), ('carbs_g', 'Glucides', 'g', 'blue'), ('fat_g', 'Lipides', 'g', 'yellow')] %}
+    <div class="metric" style="--metric-color: var(--{{ color }});">
+      <p class="caption">{{ label }}</p>
+      <p class="metric-value" style="font-size: 1.15rem;">{{ g[key] }}<span class="metric-unit">{{ unit }}</span></p>
+      {% if g.saved and g.saved[key] != g[key] %}<p class="text-[10px] num" style="color: var(--muted);">avant {{ g.saved[key] }}</p>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="mt-3 p-2.5 rounded-lg text-xs" style="background: var(--surface-2);">
+    <p class="caption mb-1">Version gratuite · en pourcentages</p>
+    <p><span class="num font-semibold" style="color: var(--text-primary);">Glucides {{ g.split.carbs_pct }} % · Lipides {{ g.split.fat_pct }} % · Protéines {{ g.split.protein_pct }} %</span></p>
+    <p class="mt-0.5" style="color: var(--muted);">MyFitnessPal affichera alors environ {{ g.split.carbs_g }} g de glucides, {{ g.split.fat_g }} g de lipides et {{ g.split.protein_g }} g de protéines (il compte par pas de 5 %). Avec Premium, mets directement les grammes ci-dessus.</p>
+  </div>
+  <div class="flex flex-wrap items-center justify-between gap-2 mt-3">
+    <p class="text-xs" style="color: var(--muted);">
+      {% if g.saved and not g.stale %}Reporté le {{ g.saved.date[8:10] }}/{{ g.saved.date[5:7] }}.{% endif %}
+      Les calories suivent ta dépense des 7 derniers jours : la notification du soir te prévient quand il faut le changer.
+    </p>
+    {% if g.stale %}
+    <form method="post" action="/repas/objectif-mfp"><button class="btn btn-primary btn-sm">{{ icon('check', 13) }} C'est fait dans MyFitnessPal</button></form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 {% for m in meals %}
 {% set a = m.analysis %}
 <div class="card p-4">

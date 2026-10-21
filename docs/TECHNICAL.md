@@ -297,6 +297,22 @@ sum of that meal's entries) match loses its own row: the meal counts
 once. Each diary meal matches one estimate (`diary_uuids`); "Pas le
 même repas" undoes a wrong match and keeps it from matching again.
 
+The day's targets cannot be sent to MyFitnessPal either (Health
+Connect carries no goals), so the Repas page shows them as typed into
+its goals (`mfp_goals.py`): grams for Premium, and for the free
+version the closest split in 5 % steps (protein short of its target
+weighs double). "C'est fait dans MyFitnessPal" stores what was typed
+(`mfp_goal` setting); once the calorie target has moved 100 kcal, or
+protein or fat 5 g, the evening check-in says what to type, once per
+new target. MyFitnessPal writes the diary to Health Connect only when
+it syncs, one record per meal stamped 08:00 UTC whatever the real time,
+and Health Connect's scheduled export runs when Android picks (no time
+can be set): a dinner logged at 22:00 but not synced before the export
+reaches the coach a day late, so the morning review counts the day
+short until the next export replaces it. For anyone with a food diary
+the evening check-in reminds to open MyFitnessPal once after the last
+meal (`remind_mfp_sync`, Settings).
+
 Sleep, read beyond the watch's score (`sleep_analysis.py`, page
 Sommeil): the night's series are kept in `sleep_samples` -- heart rate
 from Garmin's sleep payload (`garmin_api.sleep_series`, also SpO2,

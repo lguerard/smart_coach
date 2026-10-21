@@ -214,22 +214,50 @@ def evening_checkin(
         metrics.local_tz(conn, user_id)
     ).date().isoformat()
     rating_prompt(conn, user, today)
+    lines = []
     avg_sleep = _recent_avg_sleep_hours(conn, user_id, today)
     if (
-        avg_sleep is None
-        or avg_sleep >= metrics.SLEEP_TARGET_HOURS - SLEEP_DEBT_HOURS_ALERT
+        avg_sleep is not None
+        and avg_sleep < metrics.SLEEP_TARGET_HOURS - SLEEP_DEBT_HOURS_ALERT
     ):
-        return
+        debt = round(metrics.SLEEP_TARGET_HOURS - avg_sleep, 1)
+        lines.append(
+            f"Dette de sommeil ~{debt}h sur les {SLEEP_DEBT_WINDOW_DAYS} "
+            "derniers jours -- couche-toi tot ce soir."
+            if language == "fr" else
+            f"~{debt}h sleep debt over the last {SLEEP_DEBT_WINDOW_DAYS} "
+            "days -- get to bed early tonight."
+        )
+    lines += _food_diary_lines(conn, user_id, today)
+    if lines:
+        notify.notify("\n".join(lines), title="Smart Coach", topic=ntfy_topic)
 
-    debt = round(metrics.SLEEP_TARGET_HOURS - avg_sleep, 1)
-    message = (
-        f"Dette de sommeil ~{debt}h sur les {SLEEP_DEBT_WINDOW_DAYS} "
-        "derniers jours -- couche-toi tot ce soir."
-        if language == "fr" else
-        f"~{debt}h sleep debt over the last {SLEEP_DEBT_WINDOW_DAYS} "
-        "days -- get to bed early tonight."
-    )
-    notify.notify(message, title="Smart Coach", topic=ntfy_topic)
+
+def _food_diary_lines(
+    conn: sqlite3.Connection, user_id: int, today: str,
+) -> list[str]:
+    """Evening lines for someone who logs meals in MyFitnessPal.
+
+    MyFitnessPal hands the diary to Health Connect only when it syncs
+    (opening the app does it), and Health Connect's nightly export runs
+    at a time Android picks: a dinner logged but never synced before the
+    export reaches the coach a day late, and the morning review counts
+    the day short. Hence the reminder, unless ``remind_mfp_sync`` is
+    "0"; plus the goal to retype when the coach's targets have moved.
+    """
+    import mfp_goals
+
+    if not mfp_goals.logs_food(conn, user_id, today):
+        return []
+    lines = []
+    if db.get_setting(conn, user_id, "remind_mfp_sync") != "0":
+        lines.append("Après ton dernier repas, ouvre MyFitnessPal une fois : "
+                     "il envoie ta journée à Health Connect avant l'export "
+                     "de la nuit, sinon le bilan de demain sera incomplet.")
+    drift = mfp_goals.drift_line(conn, user_id, today)
+    if drift:
+        lines.append(drift)
+    return lines
 
 
 RATING_LABELS = (("easy", "Trop facile"), ("right", "Bien"), ("hard", "Trop dure"))
@@ -504,6 +532,26 @@ if __name__ == "__main__" and sys.argv[1:] == ["--selfcheck"]:
     evening_checkin(conn, user, "2026-07-13")
     assert len(sent) == 1, sent
     assert "Dette de sommeil" in sent[0][0], sent
+    assert "MyFitnessPal" not in sent[0][0], sent  # no food diary yet
+
+    # Meals come from MyFitnessPal: the same notification reminds to
+    # open it so the day reaches Health Connect before the export.
+    sent.clear()
+    conn.execute(
+        "INSERT INTO nutrition (uuid, user_id, start_utc, end_utc, "
+        "local_date, meal_type, calories, protein_g) VALUES ('n1', ?, 'x', "
+        "'x', '2026-07-12', 3, 600, 30)", (uid,))
+    conn.commit()
+    evening_checkin(conn, user, "2026-07-13")
+    assert len(sent) == 1 and "Dette de sommeil" in sent[0][0], sent
+    assert "ouvre MyFitnessPal" in sent[0][0], sent
+    sent.clear()
+    db.set_setting(conn, uid, "remind_mfp_sync", "0")
+    evening_checkin(conn, user, "2026-07-13")
+    assert "ouvre MyFitnessPal" not in sent[0][0], sent
+    db.set_setting(conn, uid, "remind_mfp_sync", "1")
+    conn.execute("DELETE FROM nutrition WHERE uuid = 'n1'")
+    conn.commit()
 
 
     # Desk break in the afternoon message: a step gap on a weekday

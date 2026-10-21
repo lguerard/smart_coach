@@ -784,6 +784,10 @@ DEFAULT_SETTINGS = {
     "desk_job": "1",
     # "1": the morning check-in asks how the night was (sleep_feedback).
     "ask_sleep": "1",
+    # "1": for someone logging meals in MyFitnessPal, the evening
+    # check-in reminds to open it so the day reaches Health Connect
+    # before the nightly export (run_checkin._food_diary_lines).
+    "remind_mfp_sync": "1",
     # Morning message: "texte" (written by the model from the review of
     # yesterday, the changes and tonight) or "fiche" (the same points,
     # assembled without a model).

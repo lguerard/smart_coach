@@ -48,6 +48,7 @@ import bonus
 import custom_moves
 import done_sessions
 import meals
+import mfp_goals
 import session_history
 import sleep_analysis
 import sleep_feedback
@@ -1761,6 +1762,10 @@ async def save_settings(request: Request, background: BackgroundTasks):
         conn, user_id, "ask_sleep", "1" if "ask_sleep" in form else "0",
     )
     db.set_setting(
+        conn, user_id, "remind_mfp_sync",
+        "1" if "remind_mfp_sync" in form else "0",
+    )
+    db.set_setting(
         conn, user_id, "trust_device_tdee",
         "1" if "trust_device_tdee" in form else "0",
     )
@@ -1989,9 +1994,20 @@ def meals_page(request: Request) -> HTMLResponse:
             "meals": meals.recent(conn, user_id),
             "mfp_text": meals.mfp_text,
             "remaining": progress.remaining_today(conn, user_id, date),
+            "mfp_goal": mfp_goals.goal(conn, user_id, date),
             "today": date, "note": request.query_params.get("note"),
         },
     )
+
+
+@app.post("/repas/objectif-mfp")
+def meals_goal_typed(request: Request):
+    """The person typed today's targets into MyFitnessPal's goals."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    if not mfp_goals.mark_typed(conn, user_id, today_str(conn, user_id)):
+        return _meals_redirect("Objectif pas encore calculable.")
+    return _meals_redirect("Noté : tu seras prévenu quand il bougera.")
 
 
 @app.post("/repas/upload")
