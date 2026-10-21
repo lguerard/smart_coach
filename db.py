@@ -657,6 +657,22 @@ CREATE TABLE IF NOT EXISTS sleep_feedback (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- Every notification pushed to the phone (sent_log.py), failed ones
+-- too (ok = 0), for the Messages page.
+CREATE TABLE IF NOT EXISTS sent_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    sent_utc TEXT NOT NULL,
+    local_date TEXT NOT NULL,
+    local_time TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    text TEXT NOT NULL,
+    ok INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS sent_messages_user_date
+    ON sent_messages (user_id, local_date);
+
 CREATE TABLE IF NOT EXISTS meal_estimates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),

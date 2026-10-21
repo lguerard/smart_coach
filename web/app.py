@@ -49,6 +49,7 @@ import custom_moves
 import done_sessions
 import meals
 import mfp_goals
+import sent_log
 import session_history
 import sleep_analysis
 import sleep_feedback
@@ -1978,6 +1979,19 @@ def sleep_page(request: Request) -> HTMLResponse:
         night["day_label"] = date_label_fr(night["date"])
     return templates.TemplateResponse(
         request, "sleep.html", {"report": report},
+    )
+
+
+@app.get("/messages", response_class=HTMLResponse)
+def messages_page(request: Request) -> HTMLResponse:
+    """Every notification of the last 30 days, newest day first."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    return templates.TemplateResponse(
+        request, "messages.html", {
+            "days": sent_log.history(conn, user_id, 30, today_str(conn, user_id)),
+            "day_label": date_label_fr,
+        },
     )
 
 

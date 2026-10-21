@@ -26,8 +26,8 @@ import db
 import gcal
 import llm
 import metrics
-import notify
 import progress
+import sent_log
 import session_history
 import training
 import watch_sync
@@ -224,7 +224,8 @@ def run_for_user(conn, user: dict, note: str | None = None) -> None:
         name = definition["name_fr" if language == "fr" else "name_en"]
         desc = definition["desc_fr" if language == "fr" else "desc_en"]
         title = "Succes debloque !" if language == "fr" else "Achievement Unlocked!"
-        notify.notify(
+        sent_log.send(
+            conn, user_id, "achievement",
             f"{definition['icon']} {name} -- {desc}", title=title,
             topic=ntfy_topic,
         )
@@ -233,7 +234,8 @@ def run_for_user(conn, user: dict, note: str | None = None) -> None:
     # numbers reach the phone even if the LLM phrases around them.
     header = progress.format_plan_header(payload["today_targets"], language)
     body = f"{note}\n\n{message}" if note else message
-    notify.notify(
+    sent_log.send(
+        conn, user_id, "replan" if note else "morning",
         f"{header}\n{body}" if header else body, topic=ntfy_topic,
     )
     print(f"{username}: {message}")
@@ -297,7 +299,8 @@ def main() -> None:
         except Exception as error:
             try:
                 ntfy_topic = db.get_setting(conn, user["id"], "ntfy_topic") or None
-                notify.notify(
+                sent_log.send(
+                    conn, user["id"], "error",
                     f"Coach failed for {username}: {error}",
                     title="Smart Coach ERROR", topic=ntfy_topic,
                 )

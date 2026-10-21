@@ -313,6 +313,12 @@ short until the next export replaces it. For anyone with a food diary
 the evening check-in reminds to open MyFitnessPal once after the last
 meal (`remind_mfp_sync`, Settings).
 
+Every notification goes through `sent_log.send`, which pushes it and
+keeps a copy in `sent_messages` (kind, local time, text; a failed push
+too, marked as not sent). The Messages page lists the last 30 days by
+day; days from before the log show the morning message kept in
+`coach_log`.
+
 Sleep, read beyond the watch's score (`sleep_analysis.py`, page
 Sommeil): the night's series are kept in `sleep_samples` -- heart rate
 from Garmin's sleep payload (`garmin_api.sleep_series`, also SpO2,

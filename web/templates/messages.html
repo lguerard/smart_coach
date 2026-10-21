@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Messages - Smart Coach{% endblock %}
+{% block content %}
+
+<div class="card p-4">
+  <h1 class="card-title text-base">{{ icon('message', 18) }} Messages envoyés</h1>
+  <p class="text-xs mt-1" style="color: var(--text-secondary);">
+    Tout ce que le coach a envoyé sur ton téléphone ces 30 derniers jours :
+    le message du matin, les questions, les points de 16 h et du soir.
+    Les jours d'avant cet historique gardent seulement leur message du matin.
+  </p>
+</div>
+
+{% if not days %}
+<div class="card p-5 text-sm text-center" style="color: var(--muted);">
+  Aucun message pour l'instant.
+</div>
+{% endif %}
+
+{% for day in days %}
+<div class="card p-4">
+  <h2 class="card-title mb-2">{{ day_label(day.date)|capitalize }}</h2>
+  <ul class="divide-y" style="border-color: var(--border);">
+    {% for m in day.messages %}
+    <li class="py-2.5" style="border-color: var(--border);">
+      <div class="flex items-center justify-between gap-2 mb-1">
+        <span class="caption">{{ m.label }}{% if m.title not in ('Smart Coach', '') %} · {{ m.title }}{% endif %}</span>
+        <span class="text-xs num shrink-0" style="color: var(--muted);">
+          {% if not m.ok %}<span style="color: var(--critical);">non envoyé</span>{% if m.time %} · {% endif %}{% endif %}{{ m.time or '' }}
+        </span>
+      </div>
+      <p class="text-sm leading-relaxed whitespace-pre-line" style="{{ '' if m.kind in ('morning', 'replan') else 'color: var(--text-secondary);' }}">{{ m.text }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endfor %}
+{% endblock %}

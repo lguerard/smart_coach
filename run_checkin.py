@@ -18,6 +18,7 @@ import desk
 import metrics
 import notify
 import progress
+import sent_log
 
 # By this point in the afternoon, expect roughly this fraction of the
 # daily hydration/step targets -- a tunable starting point, same
@@ -191,7 +192,7 @@ def afternoon_checkin(
             else "4pm check-in: you have been sitting a long while."
         )
     message += desk_line
-    notify.notify(message, title="Smart Coach", topic=ntfy_topic)
+    sent_log.send(conn, user_id, "afternoon", message, topic=ntfy_topic)
 
 
 def evening_checkin(
@@ -230,7 +231,8 @@ def evening_checkin(
         )
     lines += _food_diary_lines(conn, user_id, today)
     if lines:
-        notify.notify("\n".join(lines), title="Smart Coach", topic=ntfy_topic)
+        sent_log.send(conn, user_id, "evening", "\n".join(lines),
+                      topic=ntfy_topic)
 
 
 def _food_diary_lines(
@@ -299,16 +301,17 @@ def rating_prompt(conn: sqlite3.Connection, user: dict, today: str) -> bool:
     text = (f"Comment etait ta seance {label.lower()} ce soir ? "
             "Ta note regle les prochaines : 'trop facile' la fait monter.")
     if not base:
-        notify.notify(text + " (Note-la dans Seances sur le site.)",
-                      title="Smart Coach", topic=ntfy_topic)
+        sent_log.send(conn, user_id, "rating",
+                      text + " (Note-la dans Seances sur le site.)",
+                      topic=ntfy_topic)
         return True
     actions = [
         {"action": "http", "label": label_fr, "method": "POST", "clear": True,
          "url": quick_links.rate_url(conn, user_id, base, today, rating)}
         for rating, label_fr in RATING_LABELS
     ]
-    notify.notify_with_actions(
-        text, actions, title="Smart Coach", topic=ntfy_topic,
+    sent_log.send(
+        conn, user_id, "rating", text, topic=ntfy_topic, actions=actions,
         click=f"{base.rstrip('/')}/sessions#notes",
     )
     return True
@@ -337,8 +340,9 @@ def sleep_prompt(conn: sqlite3.Connection, user: dict, today: str) -> bool:
             "la montre pour la seance du jour.")
     base = public_url(conn, user_id)
     if not base:
-        notify.notify(text + " (Reponds sur l'accueil du site.)",
-                      title="Smart Coach", topic=ntfy_topic)
+        sent_log.send(conn, user_id, "sleep",
+                      text + " (Reponds sur l'accueil du site.)",
+                      topic=ntfy_topic)
         return True
     actions = [
         {"action": "http", "label": sleep_feedback.BUTTON_FR[rating],
@@ -346,8 +350,8 @@ def sleep_prompt(conn: sqlite3.Connection, user: dict, today: str) -> bool:
          "url": quick_links.sleep_url(conn, user_id, base, today, rating)}
         for rating in sleep_feedback.RATINGS
     ]
-    notify.notify_with_actions(
-        text, actions, title="Smart Coach", topic=ntfy_topic,
+    sent_log.send(
+        conn, user_id, "sleep", text, topic=ntfy_topic, actions=actions,
         click=f"{base.rstrip('/')}/#sommeil",
     )
     return True

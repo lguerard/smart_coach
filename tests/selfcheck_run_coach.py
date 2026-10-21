@@ -183,6 +183,11 @@ if __name__ == "__main__":
     assert calls["sent"] and "Planning modifie : Kettlebell a la maison ce " \
         "soir au lieu de Tapis" in calls["sent"][-1], calls["sent"]
     assert _logged(conn, user["id"])["session_type"] == "kettlebell"
+    # Kept for the Messages page, as a replan.
+    kept = conn.execute(
+        "SELECT kind, text FROM sent_messages WHERE user_id = ? ORDER BY "
+        "id DESC LIMIT 1", (user["id"],)).fetchone()
+    assert kept["kind"] == "replan" and "Planning modifie" in kept["text"], dict(kept)
     assert run_coach.planned_change(conn, user["id"]) is None
     assert run_coach.replan_today(conn, user) is None  # once
 
