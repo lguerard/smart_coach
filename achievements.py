@@ -497,17 +497,9 @@ def _count_step_goal_days(
     step_goal = int(db.get_setting(conn, user_id, "step_goal") or 0)
     if not step_goal:
         return 0
-    count = 0
-    day = dt.date.fromisoformat(date) - dt.timedelta(days=1)
-    for _ in range(n):
-        total = conn.execute(
-            "SELECT SUM(count) AS total FROM steps WHERE user_id = ? "
-            "AND local_date = ?", (user_id, day.isoformat()),
-        ).fetchone()["total"]
-        if total is not None and total >= step_goal:
-            count += 1
-        day -= dt.timedelta(days=1)
-    return count
+    yesterday = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+    totals = metrics.steps_for_range(conn, user_id, yesterday, n)
+    return sum(1 for total in totals.values() if total >= step_goal)
 
 
 def _check_step_goal_week(

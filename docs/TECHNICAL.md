@@ -47,8 +47,13 @@ overview, see the [README](../README.md).
   apps write to it (Garmin Connect, MyFitnessPal, ...).
 
 Where the two overlap, `metrics.daily_wellness` picks per field.
-Health Connect wins on steps/resting HR/floors/distance/calories: it
-merges every app writing to the phone, not just the watch. But it
+Steps are Garmin's own daily total, the number Garmin Connect shows
+(`metrics.steps_for_range`): Health Connect's, rebuilt from several
+apps with the phone's app priority, drifted from it. Health Connect
+only fills a day with no Garmin total (watch not worn) or one under
+half of its own (a total frozen early that day). Health Connect wins
+on resting HR/floors/distance/calories: it merges every app writing to
+the phone, not just the watch. But it
 only syncs overnight, so it never has *today* — Garmin's rollup fills
 those in rather than leaving the current day blank on the dashboard.
 Intensity minutes invert that: the rollup's field names are the ones

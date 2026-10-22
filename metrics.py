@@ -255,6 +255,15 @@ def steps_for_range(
 ) -> dict[str, int]:
     """Daily step totals for a trailing window ending on ``end_date``.
 
+    Garmin's own daily total comes first: it is the number the person
+    sees in Garmin Connect, and the one they trust. Health Connect's
+    records are rebuilt here from several apps (the watch through
+    Garmin Connect, the phone's own counter, MyFitnessPal...) with the
+    app priority set on the phone, and that sum drifted from Garmin's
+    by hundreds of steps a day. Health Connect only fills a day Garmin
+    has no total for (watch not worn: the phone still counted), or one
+    under half of its own (a Garmin total frozen early that day).
+
     Parameters:
         conn (sqlite3.Connection): smart_coach db connection.
         user_id (int): Owning user.
@@ -263,7 +272,7 @@ def steps_for_range(
 
     Returns:
         dict[str, int]: ``{local_date: total_steps}``, missing days
-        simply absent (no HC data that day).
+        simply absent (no data that day).
     """
     start_date = (
         dt.date.fromisoformat(end_date) - dt.timedelta(days=days - 1)
@@ -273,7 +282,19 @@ def steps_for_range(
         "WHERE user_id = ? AND local_date BETWEEN ? AND ? "
         "GROUP BY local_date", (user_id, start_date, end_date),
     ).fetchall()
-    return {row["local_date"]: row["total"] for row in rows}
+    totals = {row["local_date"]: row["total"] for row in rows}
+    for row in conn.execute(
+        "SELECT local_date, total_steps FROM garmin_daily_summary WHERE "
+        "user_id = ? AND local_date BETWEEN ? AND ? AND total_steps > 0",
+        (user_id, start_date, end_date),
+    ):
+        phone = totals.get(row["local_date"])
+        # Except a total frozen early that day: rows fetched once at
+        # the morning ingest, before the days behind today were fetched
+        # again (garmin_api._upsert_recent), hold a few hundred steps.
+        if phone is None or phone <= 2 * row["total_steps"]:
+            totals[row["local_date"]] = row["total_steps"]
+    return totals
 
 
 def resting_hr_for_date(
@@ -799,10 +820,11 @@ def daily_wellness(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         date (str): ISO local date (today, in the run's timezone).
 
     Two sources overlap here and the tie-breaks differ by field:
-    Health Connect wins on steps/RHR/floors/distance/calories, since
-    it merges every app writing to the phone rather than just the
-    watch -- but it only syncs overnight, so Garmin's same-day rollup
-    fills those in for today rather than leaving the day blank.
+    steps are Garmin's own daily total (``steps_for_range``); Health
+    Connect wins on RHR/floors/distance/calories, since it merges every
+    app writing to the phone rather than just the watch -- but it only
+    syncs overnight, so Garmin's same-day rollup fills those in for
+    today rather than leaving the day blank.
     Intensity minutes go the other way: the rollup's names are the
     ones the Garmin client library models, so they beat the
     undocumented endpoint's guessed ones outright.
@@ -1364,7 +1386,7 @@ if __name__ == "__main__":
     # are still ~0 when it runs.
     yday = activity_yesterday(conn, uid, "2026-07-14")
     assert yday["date"] == "2026-07-13", yday
-    assert yday["steps"] == 4000, yday
+    assert yday["steps"] == 4321, yday  # Garmin's own total
     assert yday["hydration_ml"] == 500, yday
     # ...and it inherits the rollup fallback for a day HC never synced.
     assert activity_yesterday(conn, uid, "2026-07-15")["steps"] == 8200
@@ -1387,11 +1409,25 @@ if __name__ == "__main__":
     assert busy["body_battery_drained"] == 71, busy
     assert busy["body_battery_lowest"] == 9, busy
 
-    # HC stays authoritative where it has the day (it merges every app
-    # writing to the phone, not just the watch)...
+    # Steps are Garmin's own total even where HC has the day (the
+    # number Garmin Connect shows); HC stays authoritative on resting
+    # HR, which it merges from every app...
     wellness = daily_wellness(conn, uid, "2026-07-13")
-    assert wellness["steps_today"] == 4000, wellness
+    assert wellness["steps_today"] == 4321, wellness
+    assert steps_for_range(conn, uid, "2026-07-14", 2) == {
+        "2026-07-13": 4321, "2026-07-14": 8200}
     assert wellness["resting_hr"] == 54, wellness
+    # A day the watch was not worn (Garmin total 0): the phone's count.
+    conn.execute("UPDATE garmin_daily_summary SET total_steps = 0 WHERE "
+                 "user_id = ? AND local_date = '2026-07-13'", (uid,))
+    assert steps_for_range(conn, uid, "2026-07-13", 1) == {"2026-07-13": 4000}
+    # A total frozen at 07:15 (211 steps): the full day from HC instead.
+    conn.execute("UPDATE garmin_daily_summary SET total_steps = 211 WHERE "
+                 "user_id = ? AND local_date = '2026-07-13'", (uid,))
+    assert steps_for_range(conn, uid, "2026-07-13", 1) == {"2026-07-13": 4000}
+    conn.execute("UPDATE garmin_daily_summary SET total_steps = 4321 WHERE "
+                 "user_id = ? AND local_date = '2026-07-13'", (uid,))
+    conn.commit()
     # ...but intensity minutes come off the rollup regardless, since
     # those are the library-modelled field names.
     assert wellness["intensity_moderate_min"] == 25, wellness
