@@ -629,11 +629,41 @@ def _parse_nutrition(
         carbs, fat in kept
     ]
     _purge(conn, user_id, "nutrition", rejected)
-    return _upsert(
+    count = _upsert(
         conn, user_id, "nutrition",
         ["uuid", "start_utc", "end_utc", "local_date", "meal_type",
          "calories", "protein_g", "carbs_g", "fat_g"], data,
     )
+    dedupe_nutrition(conn, user_id)
+    return count
+
+
+def dedupe_nutrition(conn: sqlite3.Connection, user_id: int) -> int:
+    """Keep one generation of each diary meal, on every date.
+
+    ``_reconcile`` drops stale generations only inside the current
+    export's window. A day the export no longer reaches keeps whatever
+    earlier exports left there, and MyFitnessPal re-sends its meals
+    under fresh uuids: a real account kept two copies of every meal
+    up to the day the window moved past, 8 to 10 rows a day for 3 to 5
+    meals, and 3,230 kcal a day where 2,150 were logged. A diary meal
+    is one record per meal type and time (MyFitnessPal stamps them all
+    08:00 UTC), so rows sharing date, meal type, start and end are the
+    same meal: the one inserted last (highest rowid, the newest
+    generation) stays. The coach's own meal rows are left alone.
+
+    Returns:
+        int: Rows deleted.
+    """
+    deleted = conn.execute(
+        "DELETE FROM nutrition WHERE user_id = ? AND uuid NOT LIKE ? AND "
+        "rowid NOT IN (SELECT MAX(rowid) FROM nutrition WHERE user_id = ? "
+        "AND uuid NOT LIKE ? GROUP BY local_date, meal_type, start_utc, "
+        "end_utc)",
+        (user_id, APP_UUID_PREFIX + "%", user_id, APP_UUID_PREFIX + "%"),
+    ).rowcount
+    conn.commit()
+    return deleted
 
 
 def _parse_heart_rate_daily(
@@ -1027,6 +1057,32 @@ if __name__ == "__main__":
         ).fetchone()
         assert round(nutrition_row["calories"]) == 453, dict(nutrition_row)
         assert nutrition_row["protein_g"] == 18.4, dict(nutrition_row)
+
+        # A day outside the export's window kept two generations of the
+        # same diary meals: one of each stays, the newest; the coach's
+        # own meal row and a different meal the same day are kept.
+        for uuid, meal, kcal in (("old-a", 1, 600), ("old-b", 2, 650),
+                                 ("new-a", 1, 610), ("new-b", 2, 650)):
+            conn.execute(
+                "INSERT INTO nutrition (uuid, user_id, start_utc, end_utc, "
+                "local_date, meal_type, calories) VALUES (?, ?, "
+                "'2026-06-01T08:00:00+00:00', '2026-06-01T08:00:00+00:00', "
+                "'2026-06-01', ?, ?)", (uuid, uid, meal, kcal))
+        conn.execute(
+            "INSERT INTO nutrition (uuid, user_id, start_utc, end_utc, "
+            "local_date, meal_type, calories) VALUES ('smartcoach-meal-9', ?, "
+            "'2026-06-01T08:00:00+00:00', '2026-06-01T08:00:00+00:00', "
+            "'2026-06-01', 1, 610)", (uid,))
+        conn.commit()
+        assert dedupe_nutrition(conn, uid) == 2
+        kept = {r["uuid"]: r["calories"] for r in conn.execute(
+            "SELECT uuid, calories FROM nutrition WHERE local_date = "
+            "'2026-06-01'")}
+        assert kept == {"new-a": 610, "new-b": 650,
+                        "smartcoach-meal-9": 610}, kept
+        assert dedupe_nutrition(conn, uid) == 0
+        conn.execute("DELETE FROM nutrition WHERE local_date = '2026-06-01'")
+        conn.commit()
 
         # Isolation check: a second user's export (real Android UUIDs
         # are per-device cryptographically random, so two real phones

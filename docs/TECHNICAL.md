@@ -325,6 +325,10 @@ local time) and calories (within 25 % or 120 kcal, one entry or the
 sum of that meal's entries) match loses its own row: the meal counts
 once. Each diary meal matches one estimate (`diary_uuids`); "Pas le
 même repas" undoes a wrong match and keeps it from matching again.
+Days the current export no longer reaches are not reconciled, and kept
+two generations of every MyFitnessPal meal (8 to 10 rows a day for 3
+to 5 meals); after each import `parse_health_connect.dedupe_nutrition`
+keeps one row per date, meal type and time, the newest.
 
 The day's targets cannot be sent to MyFitnessPal either (Health
 Connect carries no goals), so the Repas page shows them as typed into
