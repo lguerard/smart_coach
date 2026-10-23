@@ -177,6 +177,17 @@ calendar event is retitled on those days. Protein and fat targets use
 the target weight when it is set below the current one
 (`progress.macro_weight_kg`).
 
+The calorie target starts from the lower of two expenditures: the
+watch's (7-day average of `total_calories_burned`) and the one the
+scale shows (`progress.observed_tdee`: over 28 days with at least 14
+days logged at 1000 kcal or more, the logged average minus the weight
+slope's energy, 7700 kcal/kg). The watch tends to count high and a
+diary to miss things; the observed figure needs neither to be right,
+since a deficit set from it is a deficit in the person's own logging.
+A cut never goes below 1500 kcal. When it applies, the Progrès page
+says so with its numbers, Sunday's message once, and the recalibration
+hint is not repeated on top.
+
 Kettlebell days use one of two 20/10 circuits
 (`training.KETTLEBELL_CIRCUITS`). A is the standing video workout (the
 waist pass both ways) with a deadlift, a one-arm row, the overhead
@@ -378,14 +389,16 @@ without much movement, not time sitting.
 
 Night as felt (`sleep_feedback.py`): at `CHECKIN_MORNING_TIME` the
 morning check-in asks "Comment as-tu dormi ?" with three signed
-buttons (Bien / Moyen / Mal, `quick_links` kind "sleep",
+buttons (Mal / Normal / Bien, `quick_links` kind "sleep",
 `/quick/sleep/...`), also on Today. The answer is `sleep_felt` in
 `metrics.daily_wellness` and the sleep vote follows it instead of the
 watch's score -- lying awake and still with a low heart rate reads as
 sleep to the watch. "Mal" holds the day: never green, no level step
 up, but it never cancels or lightens the session on its own (nights can
 be bad for weeks, and the sessions are what the goals need); it stays
-red only when the watch's score is red too. The
+red only when the watch's score is red too. "Normal" (stored "ok")
+is the usual night, not a middling one: the watch's score decides,
+never below yellow. The
 message never calls a bad night good; Tendances draws the answers over
 the score. Off with "ask_sleep" in Réglages.
 

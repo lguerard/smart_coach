@@ -98,7 +98,7 @@
       </svg>
       <span class="shrink-0 text-xs num text-right" style="width: 3.2rem;">
         {{ duration(n.sleep_min) }}
-        {% if n.felt %}<span class="inline-block w-2 h-2 rounded-full align-middle ml-0.5" title="{{ {'good': 'bien dormi', 'ok': 'nuit moyenne', 'bad': 'mal dormi'}[n.felt] }}"
+        {% if n.felt %}<span class="inline-block w-2 h-2 rounded-full align-middle ml-0.5" title="{{ {'good': 'bien dormi', 'ok': 'nuit normale', 'bad': 'mal dormi'}[n.felt] }}"
           style="background: var({{ '--good' if n.felt == 'good' else '--warning' if n.felt == 'ok' else '--critical' }});"></span>{% endif %}
         <br><span style="color: var(--muted);">{% if n.score is not none %}montre {{ n.score }}{% endif %}</span>
       </span>

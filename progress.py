@@ -360,6 +360,58 @@ def tdee_estimate(
 
 KCAL_PER_KG_BODY_MASS = 7700  # standard energy-balance heuristic
 
+# The expenditure the weight actually shows (observed_tdee): over four
+# weeks, at least this many logged days, each looking complete.
+OBSERVED_WINDOW_DAYS = 28
+OBSERVED_MIN_DAYS = 14
+OBSERVED_MIN_DAY_KCAL = 1000
+# A cut never goes below this, whatever the measures say.
+CALORIE_FLOOR_KCAL = 1500
+
+
+def observed_tdee(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> Optional[dict]:
+    """What the person really burns, from what they log and what the
+    scale does: average intake minus the energy of the weight change.
+
+    The watch's expenditure and the food diary can both be off -- the
+    watch tends to count high, a diary tends to miss things -- and a
+    target built from the watch alone can sit at maintenance for weeks
+    with the weight not moving. This measure needs neither to be right
+    on its own: if 2100 kcal a day are logged and the weight is flat,
+    the day costs about 2100 kcal *as logged*, and a deficit set from
+    it is a real one.
+
+    Returns:
+        dict | None: ``tdee_kcal``, ``intake_kcal`` (logged average),
+        ``weekly_kg`` (the weight's slope), ``days`` (days logged), or
+        None with fewer than ``OBSERVED_MIN_DAYS`` complete-looking days
+        or no weight trend over the window.
+    """
+    end = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+    start = (dt.date.fromisoformat(date)
+             - dt.timedelta(days=OBSERVED_WINDOW_DAYS)).isoformat()
+    days = [
+        row["kcal"] for row in conn.execute(
+            "SELECT SUM(calories) AS kcal FROM nutrition WHERE user_id = ? "
+            "AND local_date BETWEEN ? AND ? GROUP BY local_date "
+            "HAVING SUM(calories) >= ?",
+            (user_id, start, end, OBSERVED_MIN_DAY_KCAL),
+        )
+    ]
+    if len(days) < OBSERVED_MIN_DAYS:
+        return None
+    weekly = _weekly_rate_kg(conn, user_id, end, OBSERVED_WINDOW_DAYS)
+    if weekly is None:
+        return None
+    intake = sum(days) / len(days)
+    return {
+        "tdee_kcal": round(intake - weekly * KCAL_PER_KG_BODY_MASS / 7),
+        "intake_kcal": round(intake), "weekly_kg": round(weekly, 2),
+        "days": len(days),
+    }
+
 
 def macro_weight_kg(
     conn: sqlite3.Connection, user_id: int, weight_kg: float,
@@ -378,7 +430,10 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Today's calorie/protein/fat/carb/hydration targets.
 
     Calorie target = TDEE estimate + the daily calorie delta implied
-    by ``weekly_weight_change_kg`` (negative = cut, positive = bulk).
+    by ``weekly_weight_change_kg`` (negative = cut, positive = bulk),
+    the TDEE being the lower of the device's and the observed one
+    (:func:`observed_tdee`), and a cut never below
+    ``CALORIE_FLOOR_KCAL``.
     Protein/fat are bodyweight-ratio targets from Settings, applied to
     the target weight when one is set below the current weight: excess
     fat needs no protein, so 1.8 g/kg of a heavy body weight overshoots
@@ -402,12 +457,25 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     result: dict = {}
     tdee = tdee_estimate(conn, user_id, date, weight_kg)
     calorie_target = None
+    # The lower of the watch's expenditure and the one the weight shows
+    # (observed_tdee): when the weight does not move as planned, the
+    # target follows what the scale says, never the other way round.
+    observed = observed_tdee(conn, user_id, date)
+    if observed:
+        result["observed_tdee_kcal"] = observed["tdee_kcal"]
+        if tdee is None or observed["tdee_kcal"] < tdee:
+            if tdee is not None:
+                result["device_tdee_kcal"] = round(tdee)
+            tdee = observed["tdee_kcal"]
+            result["tdee_source"] = "observed"
     if tdee is not None:
         weekly_change = float(
             db.get_setting(conn, user_id, "weekly_weight_change_kg") or 0
         )
         daily_delta = weekly_change * KCAL_PER_KG_BODY_MASS / 7
         calorie_target = round(tdee + daily_delta)
+        if weekly_change < 0:
+            calorie_target = max(calorie_target, CALORIE_FLOOR_KCAL)
         result["tdee_estimate_kcal"] = round(tdee)
         result["calorie_target_kcal"] = calorie_target
 
@@ -1281,6 +1349,13 @@ def recalibration_check(
     if actual is None:
         return {"flagged": False}
     diff = actual - target
+    # The target already follows the weight (observed_tdee): suggesting
+    # an adjustment on top would count the same shortfall twice.
+    if macro_targets(conn, user_id, date).get("tdee_source") == "observed":
+        return {
+            "flagged": False, "adjusted": True,
+            "actual_weekly_kg": round(actual, 2), "target_weekly_kg": target,
+        }
     threshold = max(RECAL_ABS_THRESHOLD_KG, abs(target) * RECAL_REL_THRESHOLD)
     if abs(diff) < threshold:
         return {
@@ -1327,6 +1402,7 @@ def weekly_progress(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         ),
         "nutrition_yesterday": nutrition_gap(conn, user_id, date),
         "recalibration": recalibration_check(conn, user_id, date),
+        "observed_tdee": observed_tdee(conn, user_id, date),
     }
 
 
@@ -1610,6 +1686,51 @@ if __name__ == "__main__":
     assert macro_targets(conn, other_uid, end_date) == {} or \
         macro_targets(conn, other_uid, end_date).get("protein_target_g") \
         != targets["protein_target_g"]  # isolated (other user's weight differs)
+
+    # The expenditure the weight shows: 2200 kcal logged a day for four
+    # weeks and the weight flat means the day costs ~2200 as logged,
+    # whatever the watch says (2600): the target follows the scale.
+    obs = db.create_user(conn, "observed", "pw-123456")
+    db.set_setting(conn, obs, "weekly_weight_change_kg", "-0.4")
+    db.set_setting(conn, obs, "protein_target_g_per_kg", "1.6")
+    db.set_setting(conn, obs, "fat_target_g_per_kg", "0.8")
+    day0 = dt.date(2026, 9, 1)
+    for n in range(28):
+        day = (day0 + dt.timedelta(days=n)).isoformat()
+        conn.execute("INSERT INTO total_calories_burned VALUES (?, ?, ?, ?, ?, 2600)",
+                     (f"ob-t{n}", obs, day + "T00:00:00+00:00",
+                      day + "T23:59:00+00:00", day))
+        if n % 3:  # two days in three logged
+            conn.execute(
+                "INSERT INTO nutrition (uuid, user_id, start_utc, end_utc, "
+                "local_date, meal_type, calories, protein_g) VALUES "
+                "(?, ?, 'x', 'x', ?, 0, 2200, 100)", (f"ob-n{n}", obs, day))
+        if n % 2 == 0:
+            conn.execute("INSERT INTO weight VALUES (?, ?, ?, ?, 98.0)",
+                         (f"ob-w{n}", obs, day + "T06:00:00+00:00", day))
+    conn.commit()
+    when = (day0 + dt.timedelta(days=28)).isoformat()
+    seen = observed_tdee(conn, obs, when)
+    assert seen["tdee_kcal"] == 2200 and seen["weekly_kg"] == 0, seen
+    flat = macro_targets(conn, obs, when)
+    assert flat["tdee_source"] == "observed" and flat["device_tdee_kcal"] == 2600, flat
+    assert flat["calorie_target_kcal"] == 2200 - 440, flat
+    # Losing 0.5 kg a week on 2200 logged: the body burns ~2750, more
+    # than the watch says -- the watch's lower figure stays.
+    conn.execute("UPDATE weight SET kg = 98.0 - (julianday(local_date) - "
+                 "julianday('2026-09-01')) / 14.0 WHERE user_id = ?", (obs,))
+    conn.commit()
+    losing = macro_targets(conn, obs, when)
+    assert losing["observed_tdee_kcal"] > 2600 and "tdee_source" not in losing, losing
+    assert losing["calorie_target_kcal"] == 2600 - 440, losing
+    # Too few logged days: the watch alone, as before.
+    conn.execute("DELETE FROM nutrition WHERE user_id = ? AND local_date > "
+                 "'2026-09-12'", (obs,))
+    conn.commit()
+    assert observed_tdee(conn, obs, when) is None
+    # A cut never goes under the floor.
+    db.set_setting(conn, obs, "weekly_weight_change_kg", "-1.5")
+    assert macro_targets(conn, obs, when)["calorie_target_kcal"] == CALORIE_FLOOR_KCAL
 
     yesterday = yesterday_intake(conn, uid, end_date)
     assert yesterday["calories_kcal"] == 1900

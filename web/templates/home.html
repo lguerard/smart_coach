@@ -55,9 +55,9 @@
     <div class="card p-4" id="sommeil" {% if not sleep_felt %}style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);"{% endif %}>
       <form method="post" action="/sleep" class="flex flex-wrap items-center justify-between gap-2">
         <p class="text-sm font-semibold">{{ icon('moon', 15) }}
-          {% if sleep_felt %}Ta nuit : {{ {'good': 'bien dormi', 'ok': 'nuit moyenne', 'bad': 'mal dormi'}[sleep_felt] }}{% else %}Comment as-tu dormi ?{% endif %}</p>
+          {% if sleep_felt %}Ta nuit : {{ {'good': 'bien dormi', 'ok': 'nuit normale', 'bad': 'mal dormi'}[sleep_felt] }}{% else %}Comment as-tu dormi ?{% endif %}</p>
         <div class="seg" role="group" aria-label="Ta nuit">
-          {% for value, label in [("good", "Bien"), ("ok", "Moyen"), ("bad", "Mal")] %}
+          {% for value, label in [("bad", "Mal"), ("ok", "Normal"), ("good", "Bien")] %}
           <button name="rating" value="{{ value }}" aria-pressed="{{ 'true' if sleep_felt == value else 'false' }}">{{ label }}</button>
           {% endfor %}
         </div>

@@ -435,9 +435,9 @@ if __name__ == "__main__" and sys.argv[1:] == ["--selfcheck"]:
     assert sleep_prompt(conn, user, "2026-07-13")
     text, actions, click = buttons[-1]
     assert "dormi" in text and click == "https://coach.example/#sommeil", click
-    assert [a["label"] for a in actions] == ["Bien", "Moyen", "Mal"]
-    sig = actions[2]["url"].rsplit("/", 1)[1]
-    assert "/quick/sleep/" in actions[2]["url"] and quick_links.verify(
+    assert [a["label"] for a in actions] == ["Mal", "Normal", "Bien"]
+    sig = actions[0]["url"].rsplit("/", 1)[1]
+    assert "/quick/sleep/" in actions[0]["url"] and quick_links.verify(
         conn, uid, "2026-07-13", "bad", sig, "2026-07-13", "sleep")
     sleep_feedback.record(conn, uid, "2026-07-13", "bad")
     assert not sleep_prompt(conn, user, "2026-07-13")  # answered already

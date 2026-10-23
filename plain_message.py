@@ -234,8 +234,8 @@ SESSION_EN = {
     "upper_body": "Upper body", "calisthenics": "Calisthenics",
     "kettlebell": "Kettlebell",
 }
-FELT_FR = {"good": "bien dormi", "ok": "nuit moyenne", "bad": "mal dormi"}
-FELT_EN = {"good": "slept well", "ok": "average night", "bad": "slept badly"}
+FELT_FR = {"good": "bien dormi", "ok": "nuit normale", "bad": "mal dormi"}
+FELT_EN = {"good": "slept well", "ok": "normal night", "bad": "slept badly"}
 # Signal labels (training._all_votes) as the card says them.
 SIGNAL_FR = {
     "sommeil": "nuit", "recuperation": "récupération",
@@ -714,7 +714,7 @@ if __name__ == "__main__":
                     "sleep_trend": {"points": ["Sur les 11 dernières nuits, tu "
                                                "dors en moyenne 5 h 52 : couche-toi "
                                                "vers 22:33 ce soir.", "Autre point."]}})
-    assert trended == ("Cette nuit : nuit moyenne. Sur les 11 dernières nuits, "
+    assert trended == ("Cette nuit : nuit normale. Sur les 11 dernières nuits, "
                        "tu dors en moyenne 5 h 52 : couche-toi vers 22:33 ce "
                        "soir. Autre point."), trended
     assert card_or_none(None) is not None

@@ -1097,6 +1097,8 @@ def progress_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "progress.html", {
             "bundle": bundle,
+            "targets": progress.macro_targets(conn, user_id, date),
+            "observed": progress.observed_tdee(conn, user_id, date),
             "level_history": level_history,
             "history_types": history_types,
             "history_type": history_type,

@@ -864,6 +864,11 @@ def _sleep_vote(wellness: dict) -> Optional[str]:
     import sleep_feedback
 
     felt = wellness.get("sleep_felt")
+    if felt == "ok":
+        # A normal night: the watch decides, but a night the person
+        # calls normal is never a red one.
+        score = _score_vote(wellness.get("sleep_score"))
+        return "yellow" if score == "red" else score
     if felt in sleep_feedback.VOTE:
         vote = sleep_feedback.VOTE[felt]
         # A bad night the watch also scores red stays red: saying so
@@ -2397,6 +2402,10 @@ if __name__ == "__main__":
     # session on its own -- it takes two real red signals for that; a
     # good one counts green.
     assert _sleep_vote({"sleep_score": 85, "sleep_felt": "bad"}) == "yellow"
+    # A normal night: the watch's score decides, never below yellow.
+    assert _sleep_vote({"sleep_score": 85, "sleep_felt": "ok"}) == "green"
+    assert _sleep_vote({"sleep_score": 30, "sleep_felt": "ok"}) == "yellow"
+    assert _sleep_vote({"sleep_felt": "ok"}) is None
     assert compute_status({"sleep_score": 85, "sleep_felt": "bad",
                            "training_readiness_score": 90,
                            "resting_hr": 50}, 52) == "yellow"  # not green

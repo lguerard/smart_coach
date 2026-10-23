@@ -25,7 +25,7 @@ from typing import Optional
 import db
 
 RATINGS = ("easy", "right", "hard")
-SLEEP_RATINGS = ("good", "ok", "bad")
+SLEEP_RATINGS = ("bad", "ok", "good")
 PROGRESS_CHOICES = ("longer", "heavier")
 VALUES = {"rate": RATINGS, "sleep": SLEEP_RATINGS, "progress": PROGRESS_CHOICES}
 MAX_AGE_DAYS = 3

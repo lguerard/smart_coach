@@ -127,7 +127,7 @@ new Chart(document.getElementById('rhrChart'), {
 // What the person said, drawn as points over the watch's score.
 const sleepFelt = {{ sleep_felt|tojson }};
 const feltY = { good: 85, ok: 60, bad: 30 };
-const feltLabel = { good: 'bien dormi', ok: 'nuit moyenne', bad: 'mal dormi' };
+const feltLabel = { good: 'bien dormi', ok: 'nuit normale', bad: 'mal dormi' };
 const feltColor = { good: css.getPropertyValue('--good'),
   ok: css.getPropertyValue('--warning'), bad: css.getPropertyValue('--critical') };
 new Chart(document.getElementById('sleepChart'), {

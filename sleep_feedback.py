@@ -13,14 +13,18 @@ import datetime as dt
 import sqlite3
 from typing import Optional
 
-RATINGS = ("good", "ok", "bad")
-LABEL_FR = {"good": "bien dormi", "ok": "nuit moyenne", "bad": "mal dormi"}
-BUTTON_FR = {"good": "Bien", "ok": "Moyen", "bad": "Mal"}
+# Buttons in this order, worst first: Mal, Normal, Bien. "ok" is a
+# normal night -- the usual one, not a middling one -- so it says
+# nothing against the night: the watch's score decides, short of red.
+RATINGS = ("bad", "ok", "good")
+LABEL_FR = {"good": "bien dormi", "ok": "nuit normale", "bad": "mal dormi"}
+BUTTON_FR = {"good": "Bien", "ok": "Normal", "bad": "Mal"}
 # "bad" is a yellow vote that also keeps the day from being green
 # (training.compute_status) and the level from going up: it holds the
 # session, it never cancels it -- nights are often bad for a while, and
 # a walk every time would stop the progress the sessions are for.
-VOTE = {"good": "green", "ok": "yellow", "bad": "yellow"}
+# "ok" (None here) follows the watch's score, never below yellow.
+VOTE = {"good": "green", "ok": None, "bad": "yellow"}
 
 
 def record(

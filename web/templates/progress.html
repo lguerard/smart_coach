@@ -29,6 +29,33 @@
 </div>
 {% endif %}
 
+{% if targets.calorie_target_kcal %}
+<div class="card p-4">
+  <h2 class="font-semibold text-sm mb-1">Objectif calories : {{ targets.calorie_target_kcal }} kcal</h2>
+  {% if observed %}
+  <p class="text-xs" style="color: var(--text-secondary);">
+    Sur 4 semaines tu as noté en moyenne <strong>{{ observed.intake_kcal }} kcal</strong>
+    ({{ observed.days }} jours notés) et ton poids a bougé de
+    <strong>{{ '%+.2f'|format(observed.weekly_kg) }} kg par semaine</strong> :
+    ton corps dépense donc environ <strong>{{ observed.tdee_kcal }} kcal</strong> par jour,
+    tels que tu les notes.
+    {% if targets.tdee_source == 'observed' %}
+    {% if targets.device_tdee_kcal %}C'est moins que les {{ targets.device_tdee_kcal }} kcal comptés par la montre :
+    l'objectif part de ce chiffre-là, celui que ta balance confirme.{% else %}L'objectif part de ce chiffre-là.{% endif %}
+    {% else %}
+    La montre compte {{ targets.tdee_estimate_kcal }} kcal, un peu moins : l'objectif part du plus prudent des deux.
+    {% endif %}
+  </p>
+  {% else %}
+  <p class="text-xs" style="color: var(--text-secondary);">
+    À partir de la dépense comptée par la montre ({{ targets.tdee_estimate_kcal }} kcal).
+    Avec 14 jours de repas notés et des pesées sur 4 semaines, l'objectif suivra
+    aussi ce que ta balance montre.
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+
 {% set nutrition_y = bundle.nutrition_yesterday %}
 {% set gap = nutrition_y.gap %}
 {% if gap %}

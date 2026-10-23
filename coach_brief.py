@@ -351,6 +351,19 @@ def weekly_brief(payload: dict) -> dict:
         brief["recent_move"] = plateau["recent_move"]
     if (weekly.get("recalibration") or {}).get("flagged"):
         brief["recalibration"] = weekly["recalibration"]
+    # The calorie target follows the scale (progress.observed_tdee):
+    # said on Sundays with its numbers, since the budget line alone
+    # shows only a lower figure.
+    observed = weekly.get("observed_tdee")
+    targets = payload.get("today_targets") or {}
+    if observed and targets.get("tdee_source") == "observed":
+        brief["target_follows_weight"] = {
+            "logged_kcal": observed["intake_kcal"],
+            "weight_kg_per_week": observed["weekly_kg"],
+            "burns_kcal": observed["tdee_kcal"],
+            "watch_kcal": targets.get("device_tdee_kcal"),
+            "target_kcal": targets.get("calorie_target_kcal"),
+        }
     return brief
 
 
