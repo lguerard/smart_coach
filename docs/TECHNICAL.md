@@ -91,7 +91,14 @@ replaces it; an identical plan makes no Garmin call). Workouts are
 built from `training.session_values()` (a single timed step for
 treadmill, a repeat-group of rep/time steps for the circuits, with
 timed rest steps for the kettlebell intervals); days older than
-yesterday are deleted.
+yesterday are deleted. A replacement uploads the new workout before
+deleting the old one; when that delete failed on Garmin's side, both
+stayed on the day ("Tapis niveau 1" next to "Tapis niveau 3"), so
+after each week-ahead run and each "Envoyer sur la montre"
+`garmin_api.remove_strays` reads Garmin's calendar back and
+unschedules and deletes every "Smart Coach - " workout that is not the
+one tracked for its day (the person's own and the "Smart Coach TEST -"
+ones are left alone).
 Each rep step carries a `category`/`exerciseName` pair from Garmin's
 own exercise catalog (`garminconnect.exercises`), which is what drives
 the exercise name and muscle diagram on the watch — the free-text

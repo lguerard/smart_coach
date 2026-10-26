@@ -1656,13 +1656,18 @@ _PUSH_DONE = ("created", "updated", "removed")
 
 def push_summary(results: dict) -> str:
     """One French line on what the watch push changed."""
-    changed = sorted(d for d, outcome in results.items() if outcome in _PUSH_DONE)
+    strays = results.get("strays") or []
+    cleaned = (f" {len(strays)} ancienne{'s' if len(strays) > 1 else ''} "
+               f"version{'s' if len(strays) > 1 else ''} retirée"
+               f"{'s' if len(strays) > 1 else ''} du calendrier.") if strays else ""
+    changed = sorted(d for d, outcome in results.items()
+                     if d != "strays" and outcome in _PUSH_DONE)
     if not changed:
-        return "La montre était déjà à jour."
+        return "La montre était déjà à jour." + cleaned
     days = ", ".join(f"{d[8:10]}/{d[5:7]}" for d in changed)
     count = len(changed)
     return (f"Montre à jour : {count} séance{'s' if count > 1 else ''} "
-            f"envoyée{'s' if count > 1 else ''} ({days}). Synchronise la montre.")
+            f"envoyée{'s' if count > 1 else ''} ({days}).{cleaned} Synchronise la montre.")
 
 
 @app.post("/programme/push")

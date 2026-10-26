@@ -1554,8 +1554,68 @@ def workout_signature(kind: str, values: dict) -> str:
 def _delete_quietly(client: Garmin, workout_id: str) -> None:
     try:
         client.delete_workout(workout_id)
-    except Exception:  # noqa: BLE001 -- already gone on Garmin's side
-        pass
+    except Exception as error:  # noqa: BLE001 -- often already gone
+        # Said, not swallowed: a delete that failed left the old version
+        # on the watch next to the new one. remove_strays catches it.
+        print(f"garmin: delete_workout({workout_id}) failed: {error}",
+              file=sys.stderr)
+
+
+# Workouts this app puts on the calendar; the person's own and the
+# watch_test.py ones ("Smart Coach TEST - ") are never swept.
+OWN_WORKOUT_PREFIX = "Smart Coach - "
+
+
+def remove_strays(
+    conn: sqlite3.Connection, user_id: int, client: Garmin, today: str,
+    days: int = 7,
+) -> list[str]:
+    """Take off the calendar every Smart Coach workout that is not the
+    one tracked for its day.
+
+    A day's workout is replaced by uploading the new one and deleting
+    the old (``sync_planned_workout``). When that delete failed on
+    Garmin's side, or a run stopped between the two, the old version
+    stayed scheduled: "Tapis niveau 1" and "Tapis niveau 3" both on the
+    same morning after a level went up. Garmin's calendar is read back
+    for the days on the watch, and a Smart Coach workout scheduled on a
+    day where another one is tracked (or none) is unscheduled and
+    deleted.
+
+    Returns:
+        list[str]: ``"date title"`` of each workout removed.
+    """
+    start = dt.date.fromisoformat(today) - dt.timedelta(days=KEEP_PAST_DAYS)
+    end = dt.date.fromisoformat(today) + dt.timedelta(days=days - 1)
+    tracked = {
+        row["local_date"]: str(row["workout_id"]) for row in conn.execute(
+            "SELECT local_date, workout_id FROM garmin_planned_workouts "
+            "WHERE user_id = ? AND local_date BETWEEN ? AND ?",
+            (user_id, start.isoformat(), end.isoformat()),
+        )
+    }
+    months = sorted({(start.year, start.month), (end.year, end.month)})
+    removed = []
+    for year, month in months:
+        calendar = client.get_scheduled_workouts(year, month) or {}
+        for item in calendar.get("calendarItems") or []:
+            date = str(item.get("date") or "")
+            title = str(item.get("title") or "")
+            workout_id = item.get("workoutId")
+            if (item.get("itemType") != "workout" or not workout_id
+                    or not title.startswith(OWN_WORKOUT_PREFIX)
+                    or not start.isoformat() <= date <= end.isoformat()
+                    or tracked.get(date) == str(workout_id)):
+                continue
+            if item.get("id"):
+                try:
+                    client.unschedule_workout(item["id"])
+                except Exception as error:  # noqa: BLE001
+                    print(f"garmin: unschedule({item['id']}) failed: {error}",
+                          file=sys.stderr)
+            _delete_quietly(client, str(workout_id))
+            removed.append(f"{date} {title}")
+    return removed
 
 
 def sync_planned_workout(
@@ -1676,7 +1736,8 @@ def push_programme(
     Returns:
         dict: ISO date -> outcome (``unchanged`` / ``created`` /
         ``updated`` / ``removed`` / ``none`` / ``no_log`` /
-        ``user_deleted``).
+        ``user_deleted``), and ``strays`` (``remove_strays``) when an
+        old version was found still on the calendar.
     """
     import training
     import watch_sync
@@ -1703,6 +1764,13 @@ def push_programme(
         results[date] = sync_planned_workout(
             conn, user_id, client, date, session_type, level, values,
         )
+    try:
+        strays = remove_strays(conn, user_id, client, today)
+    except Exception as error:  # noqa: BLE001
+        print(f"garmin: stray check skipped: {error}", file=sys.stderr)
+        strays = []
+    if strays:
+        results["strays"] = strays
     return results
 
 
@@ -1786,7 +1854,12 @@ def plan_week_ahead(
             conn, user_id, client, date, session_type, level, values,
         ) == "created":
             created.append(date)
-    return {"created": created, "removed": removed}
+    try:
+        strays = remove_strays(conn, user_id, client, today, days)
+    except Exception as error:  # noqa: BLE001 -- the week is planned anyway
+        print(f"garmin: stray check skipped: {error}", file=sys.stderr)
+        strays = []
+    return {"created": created, "removed": removed, "strays": strays}
 
 
 if __name__ == "__main__":
@@ -2364,7 +2437,25 @@ if __name__ == "__main__":
             return {}
 
         def delete_workout(self, workout_id):
+            if getattr(self, "fail_delete", False):
+                raise RuntimeError("Garmin 500")
             self.deleted.append(workout_id)
+
+        def get_scheduled_workouts(self, year, month):
+            """The calendar as Garmin returns it: what was scheduled and
+            not deleted or unscheduled since."""
+            names = {1001 + i: w["workoutName"] for i, w in enumerate(self.uploaded)}
+            gone = {str(x) for x in self.deleted
+                    + getattr(self, "unscheduled", [])}
+            return {"calendarItems": [
+                {"id": workout_id, "itemType": "workout", "date": date,
+                 "title": names.get(workout_id, ""), "workoutId": workout_id}
+                for workout_id, date in self.scheduled
+                if str(workout_id) not in gone
+                and date.startswith(f"{year}-{month:02d}")]}
+
+        def unschedule_workout(self, scheduled_id):
+            self.unscheduled = getattr(self, "unscheduled", []) + [scheduled_id]
 
     fake_watch = _FakeWorkoutGarmin()
     # One day: created, then the same decision is a no-op (no Garmin
@@ -2462,5 +2553,36 @@ if __name__ == "__main__":
     assert "updated" in pushed.values(), pushed
     again = push_programme(conn, uid, fake_watch, "2026-07-20")
     assert set(again.values()) <= {"unchanged", "no_log"}, again
+
+    # THE REPORTED CASE: a level went up, the new version was uploaded
+    # but deleting the old one failed on Garmin's side -- both stayed
+    # on the morning. The calendar is read back and the old one goes.
+    day = next(r["local_date"] for r in conn.execute(
+        "SELECT local_date FROM garmin_planned_workouts WHERE user_id = ? "
+        "AND local_date > '2026-07-20' ORDER BY local_date", (uid,)))
+    kind = conn.execute("SELECT kind FROM garmin_planned_workouts WHERE "
+                        "user_id = ? AND local_date = ?", (uid, day)).fetchone()["kind"]
+    old_id = int(conn.execute("SELECT workout_id FROM garmin_planned_workouts "
+                              "WHERE user_id = ? AND local_date = ?",
+                              (uid, day)).fetchone()["workout_id"])
+    fake_watch.fail_delete = True
+    assert sync_planned_workout(
+        conn, uid, fake_watch, day, kind, 9,
+        training.session_values(kind, 9, date=day)) == "updated"
+    fake_watch.fail_delete = False
+    on_day = [i for i in fake_watch.get_scheduled_workouts(
+        int(day[:4]), int(day[5:7]))["calendarItems"] if i["date"] == day]
+    assert len(on_day) == 2, on_day  # the duplicate, as on the watch
+    strays = remove_strays(conn, uid, fake_watch, "2026-07-20")
+    assert len(strays) == 1 and strays[0].startswith(day), strays
+    assert str(old_id) in fake_watch.deleted and old_id in fake_watch.unscheduled
+    on_day = [i for i in fake_watch.get_scheduled_workouts(
+        int(day[:4]), int(day[5:7]))["calendarItems"] if i["date"] == day]
+    assert len(on_day) == 1 and "niveau 9" in on_day[0]["title"], on_day
+    assert remove_strays(conn, uid, fake_watch, "2026-07-20") == []
+    # The person's own workouts and the TEST ones are never touched.
+    fake_watch.uploaded.append({"workoutName": "Mon footing"})
+    fake_watch.scheduled.append((1001 + len(fake_watch.uploaded) - 1, day))
+    assert remove_strays(conn, uid, fake_watch, "2026-07-20") == []
 
     print("garmin_api.py: all checks passed (no live Garmin call made)")
