@@ -392,11 +392,9 @@ def help_brief(
     help_: dict = {}
     if point.get("topic") == "food" and date:
         kind = point.get("kind")
-        if kind == "protein_short":
-            help_["food"] = aids.food_help(
-                point["gap_g"], date, language, office=has_desk,
-            )
-        elif kind == "calories_over":
+        # No list of foods for a protein gap any more: the person found
+        # it unnecessary -- the figures in review say enough.
+        if kind == "calories_over":
             help_["lighter_dinner"] = aids.lighter_dinner(
                 point["over_kcal"], language,
             )
@@ -455,6 +453,22 @@ def review_brief(payload: dict) -> dict:
             "proteines" if point["kind"] in ("protein_short", "on_track")
             else "calories" if point["kind"] == "calories_over" else "eau")
     review["food"] = food
+
+    # Where the day stands: calories eaten (when the log is credible)
+    # against what the watch says was burned. The person asked for the
+    # two figures, not advice on how to eat more protein.
+    energy = {}
+    eaten = (day.get("actual") or {}).get("calories_kcal")
+    if eaten is not None and point["kind"] not in (
+            "not_synced", "log_partial", "older_day"):
+        energy["eaten_kcal"] = round(eaten)
+    burned = (payload.get("activity_yesterday") or {}).get("calories_burned")
+    if burned:
+        energy["burned_kcal"] = round(burned)
+    if "eaten_kcal" in energy and "burned_kcal" in energy:
+        energy["balance_kcal"] = energy["eaten_kcal"] - energy["burned_kcal"]
+    if energy:
+        review["energy"] = energy
 
     steps = (payload.get("movement_yesterday") or {}).get("steps") or {}
     if steps.get("value") is not None:
@@ -791,8 +805,9 @@ if __name__ == "__main__":
                           "when": "apres le dejeuner"},
                      ]})
     helped = build_brief(short)
-    assert helped["help"]["food"]["items"], helped
-    assert helped["help"]["food"]["covers_gap"], helped
+    # A protein gap is said with its figures, with no list of foods.
+    assert "food" not in helped.get("help", {}), helped
+    assert helped["review"]["food"]["kind"] == "protein_short", helped
     assert "desk" not in helped
     assert "next_step" not in helped, helped  # the evening buttons ask
     plain = build_brief(_payload())
@@ -818,10 +833,21 @@ if __name__ == "__main__":
     assert "next_step" not in build_brief(_payload(
         today_session={"type": "off_system", "note": "x"},
     ))
-    # English help comes back in English.
-    assert build_brief({**short, "language": "en"})["help"]["food"][
-        "items"
-    ][0]["name"] != helped["help"]["food"]["items"][0]["name"]
+    # Calories eaten against burned (per the watch), and the gap.
+    energy = build_brief(_payload(
+        weekly_progress=_food(gap={"protein_g": 38.0},
+                              actual={"protein_g": 57, "calories_kcal": 1850}),
+        activity_yesterday={"calories_burned": 2400},
+    ))["review"]["energy"]
+    assert energy == {"eaten_kcal": 1850, "burned_kcal": 2400,
+                      "balance_kcal": -550}, energy
+    # A partial log: the burned figure only, never a balance.
+    partial = build_brief(_payload(
+        weekly_progress={"nutrition_yesterday": {
+            "log_looks_incomplete": True, "actual": {"calories_kcal": 600}}},
+        activity_yesterday={"calories_burned": 2400},
+    ))["review"]["energy"]
+    assert partial == {"burned_kcal": 2400}, partial
 
     # A circuit reaches the brief as named moves, its level reason and
     # the next rung -- not as slot keys and the variant catalogue.

@@ -382,11 +382,14 @@ shows getting up, not the time spent awake lying down again.
 Morning message (Réglages "Message du matin"): three short paragraphs.
 (1) Yesterday reviewed with a conclusion -- the session planned and done,
 its length and rating (`day_review.yesterday_training`), protein and
-calories eaten against the target, steps against the goal, and a
-verdict with what went well and what was missing
-(`coach_brief.review_brief`; a food log the export never reached is
-said as such, never turned into a miss), then the fix for today and the
-night as the person said it. (2) What changes tonight and why: tonight
+calories eaten against the target, calories eaten against those burned
+per the watch and the gap (`review.energy`, the eaten figure only when
+the log is credible), steps against the goal, and a verdict with what
+went well and what was missing (`coach_brief.review_brief`; a food log
+the export never reached is said as such, never turned into a miss),
+then the night as the person said it. A protein gap gets no list of
+foods to eat (the person found it unnecessary); a calorie excess still
+gets its lighter dinner. (2) What changes tonight and why: tonight
 against the last session of the same type
 (`day_review.since_last_session`: level, tours, effort time, length,
 the bell's weight, moves stepped up, added or removed) and the level

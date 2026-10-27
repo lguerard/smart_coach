@@ -401,6 +401,18 @@ def _review_block(brief: dict, fr: bool) -> str:
     eaten = [x for x in eaten if x]
     if eaten:
         sentences.append("Côté assiette : " + ", ".join(eaten) + ".")
+    energy = review.get("energy") or {}
+    if energy.get("eaten_kcal") is not None and energy.get("burned_kcal"):
+        balance = energy["balance_kcal"]
+        sentences.append(
+            f"Calories : {_num(energy['eaten_kcal'])} mangées, "
+            f"{_num(energy['burned_kcal'])} brûlées selon la montre, soit "
+            + (f"{_num(-balance)} de moins que dépensé." if balance < 0
+               else f"{_num(balance)} de plus que dépensé." if balance > 0
+               else "autant que dépensé."))
+    elif energy.get("burned_kcal"):
+        sentences.append(f"{_num(energy['burned_kcal'])} kcal brûlées selon "
+                         "la montre.")
     elif food.get("kind") in ("not_synced", "log_partial"):
         sentences.append("Tes repas d'hier ne sont pas encore tous arrivés : "
                          "pas de bilan alimentaire.")
@@ -718,4 +730,12 @@ if __name__ == "__main__":
                        "tu dors en moyenne 5 h 52 : couche-toi vers 22:33 ce "
                        "soir. Autre point."), trended
     assert card_or_none(None) is not None
+    # Calories eaten against burned, said as where the day stands.
+    stood = card({"language": "fr", "review": {
+        "food": {"kind": "on_track"},
+        "energy": {"eaten_kcal": 1850, "burned_kcal": 2400,
+                   "balance_kcal": -550}}})
+    assert ("Calories : 1 850 mangées, 2 400 brûlées selon la montre, soit "
+            "550 de moins que dépensé.") in stood, stood
+    assert "Pour rattraper" not in stood, stood
     print("plain_message.py: all checks passed")
