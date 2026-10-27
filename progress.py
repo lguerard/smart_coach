@@ -17,6 +17,7 @@ from typing import Optional
 
 import db
 import metrics
+import waist
 from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
 
 # Tunable thresholds -- starting points, same "retune against real
@@ -1371,6 +1372,46 @@ def recalibration_check(
     }
 
 
+def week_review(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
+    """The seven days before ``date``, food against target, day by day.
+
+    Said on Sundays: whether the week stayed under the calorie target
+    on most days or only on some -- an average alone hides a weekend
+    that undoes five careful days. A day logged under
+    ``OBSERVED_MIN_DAY_KCAL`` looks partial and is left out.
+
+    Returns:
+        dict: ``logged_days``, ``under_days`` (logged days at or under
+        that day's target), ``avg_kcal`` and ``avg_target_kcal`` over
+        the logged days (absent with none), ``over_days`` (dates over
+        target), ``days`` (7).
+    """
+    logged, under, over, targets = [], 0, [], []
+    for offset in range(7, 0, -1):
+        day = (dt.date.fromisoformat(date) - dt.timedelta(days=offset)).isoformat()
+        kcal = conn.execute(
+            "SELECT SUM(calories) AS kcal FROM nutrition WHERE user_id = ? "
+            "AND local_date = ?", (user_id, day),
+        ).fetchone()["kcal"]
+        if kcal is None or kcal < OBSERVED_MIN_DAY_KCAL:
+            continue
+        target = macro_targets(conn, user_id, day).get("calorie_target_kcal")
+        logged.append(kcal)
+        if target:
+            targets.append(target)
+            if kcal <= target:
+                under += 1
+            else:
+                over.append(day)
+    out = {"days": 7, "logged_days": len(logged), "under_days": under,
+           "over_days": over}
+    if logged:
+        out["avg_kcal"] = round(sum(logged) / len(logged))
+    if targets:
+        out["avg_target_kcal"] = round(sum(targets) / len(targets))
+    return out
+
+
 def weekly_progress(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Bundle all trend signals for the LLM payload and Progress page.
 
@@ -1403,6 +1444,8 @@ def weekly_progress(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         "nutrition_yesterday": nutrition_gap(conn, user_id, date),
         "recalibration": recalibration_check(conn, user_id, date),
         "observed_tdee": observed_tdee(conn, user_id, date),
+        "week_review": week_review(conn, user_id, date),
+        "waist": waist.trend(conn, user_id, date),
     }
 
 
@@ -1728,6 +1771,15 @@ if __name__ == "__main__":
                  "'2026-09-12'", (obs,))
     conn.commit()
     assert observed_tdee(conn, obs, when) is None
+    # The week reviewed on Sunday: logged days against each day's target.
+    week = week_review(conn, obs, "2026-09-15")
+    assert week["logged_days"] == 4 and week["under_days"] == 0, week  # 2200 > target
+    assert week["avg_kcal"] == 2200 and week["over_days"][0] == "2026-09-08", week
+    db.set_setting(conn, obs, "weekly_weight_change_kg", "0.5")  # a bulk: over the target
+    assert week_review(conn, obs, "2026-09-15")["under_days"] == 4
+    db.set_setting(conn, obs, "weekly_weight_change_kg", "-0.4")
+    assert week_review(conn, obs, "2026-08-01") == {
+        "days": 7, "logged_days": 0, "under_days": 0, "over_days": []}
     # A cut never goes under the floor.
     db.set_setting(conn, obs, "weekly_weight_change_kg", "-1.5")
     assert macro_targets(conn, obs, when)["calorie_target_kcal"] == CALORIE_FLOOR_KCAL

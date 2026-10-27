@@ -657,6 +657,15 @@ CREATE TABLE IF NOT EXISTS sleep_feedback (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- Waist circumference entered by hand on the Corps page (waist.py).
+CREATE TABLE IF NOT EXISTS waist_measurements (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    cm REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
+);
+
 -- Every notification pushed to the phone (sent_log.py), failed ones
 -- too (ok = 0), for the Messages page.
 CREATE TABLE IF NOT EXISTS sent_messages (

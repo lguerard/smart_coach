@@ -29,6 +29,68 @@
 <div class="card p-4"><p class="text-sm" style="color: var(--yellow);">{{ note }}</p></div>
 {% endif %}
 
+<div class="card p-5 space-y-3" id="taille">
+  <div class="flex items-center justify-between gap-2">
+    <h2 class="font-semibold text-sm">Tour de taille</h2>
+    {% if waist_trend %}
+    <span class="badge" style="--badge: var({{ '--green' if waist_trend.reading in ('fat_loss', 'recomposition') else '--orange' if waist_trend.reading in ('fat_gain', 'waist_up') else '--muted' }});">
+      {{ '%+.1f'|format(waist_trend.change_cm) | replace('.', ',') }} cm en {{ waist_trend.days }} j
+    </span>
+    {% endif %}
+  </div>
+  <p class="text-xs" style="color: var(--text-secondary);">
+    Une fois par semaine, le matin à jeun, au niveau du nombril, le mètre
+    bien à plat sans serrer. La balance ne distingue pas le gras de l'eau et
+    du muscle ; le tour de taille, si.
+  </p>
+  {% if waist_trend %}
+  <p class="text-sm">
+    Mesure du {{ waist_trend.latest_date[8:10] }}/{{ waist_trend.latest_date[5:7] }}, comparée à {{ waist_trend.days }} jours plus tôt :
+    {{ waist_reading[waist_trend.reading] }}{% if waist_trend.weight_change_kg is not none %}
+    (poids {{ '%+.1f'|format(waist_trend.weight_change_kg) | replace('.', ',') }} kg sur la même période){% endif %}.
+  </p>
+  {% elif waist_history %}
+  <p class="text-xs" style="color: var(--muted);">Encore une mesure dans 2 à 4 semaines pour voir la tendance.</p>
+  {% endif %}
+  <form method="post" action="/body/waist" class="flex flex-wrap items-end gap-2">
+    <label class="text-xs grid gap-1">Date
+      <input type="date" name="date" value="{{ today }}" max="{{ today }}"
+        class="rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border); background: var(--surface-1);">
+    </label>
+    <label class="text-xs grid gap-1">Tour de taille (cm)
+      <input type="number" name="cm" step="0.1" min="50" max="200" inputmode="decimal" required
+        value="{{ waist_history[0].cm if waist_history else '' }}"
+        class="w-28 rounded-lg border px-2 py-1.5 text-sm num" style="border-color: var(--border); background: var(--surface-1);">
+    </label>
+    <button class="btn btn-primary btn-sm">Enregistrer</button>
+  </form>
+  {% if waist_history %}
+  <table class="w-full text-sm">
+    <thead><tr class="text-xs" style="color: var(--muted);">
+      <th class="text-left font-normal py-1">Date</th>
+      <th class="text-right font-normal py-1">Taille</th>
+      <th class="text-right font-normal py-1">Poids</th>
+      <th></th>
+    </tr></thead>
+    <tbody>
+      {% for m in waist_history %}
+      <tr style="border-top: 1px solid var(--border);">
+        <td class="py-1.5">{{ m.date[8:10] }}/{{ m.date[5:7] }}/{{ m.date[2:4] }}</td>
+        <td class="py-1.5 text-right num">{{ ('%.1f'|format(m.cm)) | replace('.', ',') }} cm</td>
+        <td class="py-1.5 text-right num" style="color: var(--text-secondary);">{{ (('%.1f'|format(m.weight_kg)) | replace('.', ',')) ~ ' kg' if m.weight_kg is not none else '–' }}</td>
+        <td class="py-1.5 text-right">
+          <form method="post" action="/body/waist" onsubmit="return confirm('Supprimer cette mesure ?');">
+            <input type="hidden" name="date" value="{{ m.date }}"><input type="hidden" name="delete" value="1">
+            <button class="text-xs link" style="color: var(--muted);">suppr.</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
 {% if focus_fig %}
 <div class="card p-5">
   <h2 class="font-semibold text-sm mb-2">À développer, d'après ta dernière analyse</h2>

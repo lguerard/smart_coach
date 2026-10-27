@@ -353,6 +353,16 @@ short until the next export replaces it. For anyone with a food diary
 the evening check-in reminds to open MyFitnessPal once after the last
 meal (`remind_mfp_sync`, Settings).
 
+Waist (`waist.py`, Corps page): entered by hand, once a week. The
+latest measure is compared with the one closest to four weeks before
+it (two to six), with the weight over the same span: both down is fat
+loss, waist down with the weight up or flat is muscle and water
+("recomposition"), both up is fat. Sunday's message carries that
+reading, and the week's food against the target
+(`progress.week_review`: days logged at 1000 kcal or more, how many at
+or under that day's target, the average against the average target),
+in both the written message and the plain card.
+
 Every notification goes through `sent_log.send`, which pushes it and
 keeps a copy in `sent_messages` (kind, local time, text; a failed push
 too, marked as not sent). The Messages page lists the last 30 days by

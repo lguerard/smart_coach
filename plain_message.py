@@ -543,6 +543,10 @@ def card(brief: dict) -> str:
     if session_lines:
         blocks.append("\n".join(session_lines))
 
+    weekly = _weekly_block(brief.get("weekly") or {}, fr)
+    if weekly:
+        blocks.append(weekly)
+
     care = (brief.get("help") or {}).get("care")
     if care:
         blocks.append(
@@ -553,6 +557,40 @@ def card(brief: dict) -> str:
     if brief.get("next_step") and brief.get("angle") != "train":
         blocks.append(brief["next_step"])
     return "\n\n".join(b.strip() for b in blocks if b.strip())
+
+
+def _dec(value: float, sign: bool = False) -> str:
+    """1.5 -> "1,5" (French decimal comma), with its sign if asked."""
+    return (f"{value:+.1f}" if sign else f"{value:.1f}").replace(".", ",")
+
+
+def _weekly_block(weekly: dict, fr: bool) -> str:
+    """Sunday: the week's food against the target, the weight and the
+    waist read together."""
+    if not fr or not weekly:
+        return ""
+    import waist
+
+    lines = []
+    week = weekly.get("week_review") or {}
+    if week.get("logged_days"):
+        under, logged = week["under_days"], week["logged_days"]
+        line = (f"📅 Ta semaine : {under} jour{'s' if under > 1 else ''} sous "
+                f"l'objectif sur {logged} noté{'s' if logged > 1 else ''}")
+        if week.get("avg_kcal") and week.get("avg_target_kcal"):
+            line += (f", {_num(week['avg_kcal'])} kcal en moyenne pour "
+                     f"{_num(week['avg_target_kcal'])} visées")
+        lines.append(line + ".")
+    trend = weekly.get("weight_trend") or {}
+    if trend.get("delta") is not None and trend.get("current_avg") is not None:
+        lines.append(f"Poids : {_dec(trend['delta'], True)} kg sur la semaine "
+                     f"({_dec(trend['current_avg'])} kg en moyenne).")
+    size = weekly.get("waist") or {}
+    if size:
+        lines.append(f"Tour de taille : {_dec(size['change_cm'], True)} cm en "
+                     f"{size['days']} jours ({_dec(size['latest_cm'])} cm) : "
+                     f"{waist.READING_FR[size['reading']]}.")
+    return " ".join(lines)
 
 
 def card_or_none(brief: Optional[dict]) -> Optional[str]:
@@ -738,4 +776,16 @@ if __name__ == "__main__":
     assert ("Calories : 1 850 mangées, 2 400 brûlées selon la montre, soit "
             "550 de moins que dépensé.") in stood, stood
     assert "Pour rattraper" not in stood, stood
+    # Sunday: the week against the target, the weight, the waist.
+    sunday = card({"language": "fr", "weekly": {
+        "week_review": {"logged_days": 6, "under_days": 2, "avg_kcal": 2150,
+                        "avg_target_kcal": 1980},
+        "weight_trend": {"delta": 0.2, "current_avg": 98.4},
+        "waist": {"latest_cm": 110.5, "change_cm": -2.0, "days": 28,
+                  "weight_change_kg": 0.9, "reading": "recomposition"}}})
+    assert ("📅 Ta semaine : 2 jours sous l'objectif sur 6 notés, 2 150 kcal "
+            "en moyenne pour 1 980 visées.") in sunday, sunday
+    assert "Poids : +0,2 kg sur la semaine (98,4 kg en moyenne)." in sunday, sunday
+    assert "Tour de taille : -2,0 cm en 28 jours (110,5 cm) : le tour de taille " \
+        "baisse" in sunday, sunday
     print("plain_message.py: all checks passed")

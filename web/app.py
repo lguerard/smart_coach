@@ -54,6 +54,7 @@ import session_history
 import sleep_analysis
 import sleep_feedback
 import quick_links
+import waist
 import watch_sync
 import bodymap
 import coach_payload
@@ -2144,12 +2145,39 @@ def body_page(request: Request) -> HTMLResponse:
                 equipment=exercise_library.equipment_for(conn, user_id),
             ),
             "poses": body.POSES,
+            "waist_history": waist.history(conn, user_id, 12),
+            "waist_trend": waist.trend(conn, user_id, today_str(conn, user_id)),
+            "waist_reading": waist.READING_FR,
+            "today": today_str(conn, user_id),
             "note": request.query_params.get("note"),
             "username": request.session.get("username"),
         },
     )
     response.headers.update(_PRIVATE_HEADERS)
     return response
+
+
+@app.post("/body/waist")
+async def body_waist(request: Request):
+    """Record a waist measure (cm) for a day, today by default."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    date = str(form.get("date") or today_str(conn, user_id))
+    try:
+        dt.date.fromisoformat(date)
+    except ValueError:
+        date = today_str(conn, user_id)
+    if str(form.get("delete") or "") == "1":
+        waist.delete(conn, user_id, date)
+        note = "Mesure supprimée."
+    elif waist.record(conn, user_id, date, form.get("cm") or ""):
+        note = "Tour de taille enregistré."
+    else:
+        note = (f"Tour de taille non enregistré : entre {waist.MIN_CM:g} "
+                f"et {waist.MAX_CM:g} cm.")
+    return RedirectResponse("/body?note=" + urllib.parse.quote(note) + "#taille",
+                            status_code=303)
 
 
 @app.post("/body/upload")

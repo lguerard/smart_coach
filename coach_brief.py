@@ -354,6 +354,18 @@ def weekly_brief(payload: dict) -> dict:
     # The calorie target follows the scale (progress.observed_tdee):
     # said on Sundays with its numbers, since the budget line alone
     # shows only a lower figure.
+    # The week's food, day by day against the target, and the waist
+    # read with the weight (progress.week_review, waist.trend).
+    week = weekly.get("week_review") or {}
+    if week.get("logged_days"):
+        brief["week_review"] = {k: week[k] for k in (
+            "logged_days", "under_days", "avg_kcal", "avg_target_kcal",
+        ) if k in week}
+    waist_trend = weekly.get("waist")
+    if waist_trend:
+        brief["waist"] = {k: waist_trend[k] for k in (
+            "latest_cm", "change_cm", "days", "weight_change_kg", "reading",
+        )}
     observed = weekly.get("observed_tdee")
     targets = payload.get("today_targets") or {}
     if observed and targets.get("tdee_source") == "observed":
@@ -781,6 +793,21 @@ if __name__ == "__main__":
     ))["weekly"]
     assert week["weight_trend"]["delta"] == -0.8, week
     assert week["plateau"] is True and week["weight_per_week"] == -0.3, week
+    # The week's food against the target and the waist ride along.
+    reviewed = build_brief(_payload(date="2026-10-04", weekly_progress={
+        **sunday_progress,
+        "week_review": {"days": 7, "logged_days": 6, "under_days": 2,
+                        "avg_kcal": 2150, "avg_target_kcal": 1980,
+                        "over_days": ["2026-09-28"]},
+        "waist": {"latest_cm": 110.5, "latest_date": "2026-10-03",
+                  "change_cm": -2.0, "days": 28, "weight_change_kg": 0.9,
+                  "reading": "recomposition"},
+    }))["weekly"]
+    assert reviewed["week_review"] == {"logged_days": 6, "under_days": 2,
+                                       "avg_kcal": 2150,
+                                       "avg_target_kcal": 1980}, reviewed
+    assert reviewed["waist"]["reading"] == "recomposition", reviewed
+    assert "week_review" not in week and "waist" not in week, week
     # A real recent move cancels the plateau reading.
     moved = {**sunday_progress, "plateau": {
         "plateau": True, "recent_move": {"direction": "up", "change": 0.6},
