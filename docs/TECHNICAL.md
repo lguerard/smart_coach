@@ -183,7 +183,14 @@ lowered level, even several in a row (the deload guardrail handles
 streaks); only a red day with the level already at its floor becomes
 an active uphill walk (5 km/h, 5 %, 35 min or the session cap if shorter), at most once per rolling
 week (`training.tier_after_guardrail`, `coach_log.recovery_kind`). The
-calendar event is retitled on those days. Protein and fat targets use
+calendar event is retitled on those days. The coach's call is advice:
+on a day it cancelled (rest), replaced (a walk) or lightened (a lower
+level than last time), Today offers to send the planned session anyway
+(`day_actions.anyway_offer` / `send_anyway`, table `day_overrides`, at
+the current level or last time's). `garmin_api.refresh_today` then puts
+that session on the watch, and every later push from the site keeps it;
+"Revenir au choix du coach" removes it. The coach's own decision
+(`coach_log`) is never rewritten. Protein and fat targets use
 the target weight when it is set below the current one
 (`progress.macro_weight_kg`).
 

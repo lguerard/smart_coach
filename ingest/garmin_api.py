@@ -1693,14 +1693,25 @@ def refresh_today(
 ) -> str:
     """Today's workout rebuilt from this morning's decision (coach_log:
     same tier, same level) with the current code and the person's
-    current programme, replaced on the watch only if it differs.
+    current programme, replaced on the watch only if it differs -- or
+    the planned session when the person chose to do it anyway
+    (``day_actions.send_anyway``).
 
     Returns:
         str: ``sync_planned_workout``'s outcome, or ``"no_log"`` when the
         morning run has not logged today yet (nothing is changed).
     """
+    import day_actions
     import training
 
+    # "Faire quand meme": the planned session, whatever the coach said.
+    anyway = day_actions.anyway_for(conn, user_id, today)
+    if anyway:
+        return sync_planned_workout(
+            conn, user_id, client, today, anyway["session_type"],
+            anyway["level"], training.user_session_values(
+                conn, user_id, anyway["session_type"], anyway["level"], today),
+        )
     entry = conn.execute(
         "SELECT * FROM coach_log WHERE user_id = ? AND local_date = ? "
         "ORDER BY id DESC LIMIT 1", (user_id, today),
@@ -2553,6 +2564,25 @@ if __name__ == "__main__":
     assert "updated" in pushed.values(), pushed
     again = push_programme(conn, uid, fake_watch, "2026-07-20")
     assert set(again.values()) <= {"unchanged", "no_log"}, again
+
+    # "Do it anyway" on a rest day: the planned session goes on the watch
+    # for today, and a push from the site keeps it there.
+    import day_actions
+
+    conn.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, 'x', '2026-07-20', "
+        "'red', 'lower_body', 3, 'm', 'rest')", (uid,))
+    conn.commit()
+    assert refresh_today(conn, uid, fake_watch, "2026-07-20") in ("none", "removed")
+    assert day_actions.send_anyway(conn, uid, "2026-07-20")
+    assert refresh_today(conn, uid, fake_watch, "2026-07-20") == "created"
+    sent = conn.execute("SELECT kind FROM garmin_planned_workouts WHERE "
+                        "user_id = ? AND local_date = '2026-07-20'", (uid,)).fetchone()
+    assert sent["kind"] == "lower_body", dict(sent)
+    assert push_programme(conn, uid, fake_watch, "2026-07-20")["2026-07-20"] == "unchanged"
+    day_actions.cancel_anyway(conn, uid, "2026-07-20")
+    assert refresh_today(conn, uid, fake_watch, "2026-07-20") == "removed"
 
     # THE REPORTED CASE: a level went up, the new version was uploaded
     # but deleting the old one failed on Garmin's side -- both stayed

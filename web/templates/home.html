@@ -196,6 +196,34 @@
         {% if tier == 'train' %}{{ description.split(': ', 1)[1].split(' (statut')[0] }}{% else %}{{ description }}{% endif %}
       </p>
       {% endif %}
+      {% if anyway %}
+      <div class="mt-3 p-3 rounded-lg text-sm flex flex-wrap items-center justify-between gap-2" style="background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));">
+        <span>{{ icon('check', 14) }} Tu fais quand même ta séance : <strong>{{ session_label_fr_map.get(anyway.session_type, anyway.session_type) }} niveau {{ anyway.level }}</strong>.</span>
+        <div class="flex flex-wrap gap-2">
+          <form method="post" action="/today/anyway">
+            <input type="hidden" name="action" value="send">
+            <button class="btn btn-sm" title="Si la montre ne l'a pas reçue">{{ icon('refresh', 13) }} Renvoyer sur la montre</button>
+          </form>
+          <form method="post" action="/today/anyway">
+            <input type="hidden" name="action" value="cancel">
+            <button class="btn btn-sm">Revenir au choix du coach</button>
+          </form>
+        </div>
+      </div>
+      {% elif anyway_offer %}
+      <div class="mt-3 p-3 rounded-lg text-sm" style="background: var(--surface-2);">
+        <p style="color: var(--text-secondary);">
+          {% if anyway_offer.kind == 'lighter' %}Le coach a allégé la séance (niveau {{ anyway_offer.coach_level }} au lieu de {{ anyway_offer.level }}).
+          {% else %}Le coach conseille {{ 'du repos' if anyway_offer.kind == 'rest' else 'une marche' }} aujourd'hui.{% endif %}
+          Tu te sens bien et tu veux faire ta séance normale quand même ?
+        </p>
+        <form method="post" action="/today/anyway" class="mt-2">
+          <input type="hidden" name="action" value="send">
+          <button class="btn btn-sm">{{ icon('refresh', 13) }} Envoyer {{ anyway_offer.label | lower }} niveau {{ anyway_offer.level }} sur la montre</button>
+        </form>
+        <p class="text-xs mt-1.5" style="color: var(--muted);">Le conseil du coach ne change pas. Si tu te sens malade ou fiévreux, mieux vaut te reposer.</p>
+      </div>
+      {% endif %}
       {% if cal_note %}
       <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
       {% endif %}

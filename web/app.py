@@ -741,6 +741,8 @@ def home(request: Request) -> HTMLResponse:
             "new_achievements_today": new_today, "in_deload": in_deload,
             "cal_note": request.query_params.get("cal_note"),
             "pushed": request.query_params.get("pushed"),
+            "anyway_offer": day_actions.anyway_offer(conn, user_id, date),
+            "anyway": day_actions.anyway_for(conn, user_id, date),
             "username": request.session.get("username"),
         },
     )
@@ -978,6 +980,34 @@ async def declare_sick(request: Request):
         return RedirectResponse("/", status_code=303)
     training.set_sick(conn, user_id, today_str(conn, user_id), days)
     return RedirectResponse("/", status_code=303)
+
+
+@app.post("/today/anyway")
+async def today_anyway(request: Request):
+    """Today's "do it anyway": the planned session on the watch despite
+    the coach cancelling or lightening it (action=send), or back to the
+    coach's call (action=cancel). The coach's decision is left as is."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    date = today_str(conn, user_id)
+    if form.get("action") == "cancel":
+        day_actions.cancel_anyway(conn, user_id, date)
+        done = "Retour au choix du coach."
+    else:
+        offer = day_actions.send_anyway(conn, user_id, date)
+        if offer is None:
+            return RedirectResponse("/?" + urlencode(
+                {"pushed": "Rien à envoyer en plus aujourd'hui."}), status_code=303)
+        done = f"{offer['label']} niveau {offer['level']} gardée pour aujourd'hui."
+    try:
+        client = garmin_api.get_client(request.session.get("username", ""))
+        outcome = garmin_api.refresh_today(conn, user_id, client, date)
+        done += (" La montre a déjà la bonne séance." if outcome == "unchanged"
+                 else " Montre à jour : synchronise-la.")
+    except Exception as error:  # noqa: BLE001 -- shown, never a 500
+        done += f" Envoi à la montre impossible : {error}"
+    return RedirectResponse("/?" + urlencode({"pushed": done}), status_code=303)
 
 
 @app.post("/today/level")

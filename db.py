@@ -657,6 +657,18 @@ CREATE TABLE IF NOT EXISTS sleep_feedback (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- "Faire quand meme" on Today: the planned session sent to the watch
+-- on a day the coach cancelled or lightened it (day_actions.py). The
+-- coach's own decision (coach_log) is left as it was.
+CREATE TABLE IF NOT EXISTS day_overrides (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    session_type TEXT NOT NULL,
+    level INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
+);
+
 -- Waist circumference entered by hand on the Corps page (waist.py).
 CREATE TABLE IF NOT EXISTS waist_measurements (
     user_id INTEGER NOT NULL REFERENCES users(id),

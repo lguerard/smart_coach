@@ -100,6 +100,90 @@ def set_today_level(
             "level": level, "note": note}
 
 
+def anyway_offer(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> Optional[dict]:
+    """The session the person may still do on a day the coach cancelled
+    (rest), replaced (a recovery walk) or lightened (a lower level than
+    last time), or None.
+
+    The coach's call stands -- it is not re-made or overridden -- but it
+    is a recommendation: the person may feel fine and want the planned
+    session anyway, and before this the watch then had nothing to follow.
+
+    Returns:
+        dict | None: ``kind`` (``rest`` / ``recovery`` / ``lighter``),
+        ``session_type``, ``label``, ``level`` (the one to send: the
+        current level, or last time's for a lightened day) and
+        ``coach_level`` (the coach's, for a lightened day).
+    """
+    entry = coach_entry(conn, user_id, date)
+    if not entry or not entry["session_type"]:
+        return None
+    session_type = entry["session_type"]
+    tier = entry["tier"] or training.TIER_TRAIN
+    base = {"session_type": session_type,
+            "label": training.SESSION_LABEL_FR.get(session_type, session_type)}
+    if tier in (training.TIER_REST, training.TIER_RECOVERY):
+        return {**base, "kind": tier,
+                "level": training.get_level(conn, user_id, session_type)}
+    last = conn.execute(
+        "SELECT level FROM coach_log WHERE user_id = ? AND session_type = ? "
+        "AND local_date < ? AND COALESCE(tier, 'train') = 'train' AND "
+        "level IS NOT NULL ORDER BY local_date DESC, id DESC LIMIT 1",
+        (user_id, session_type, date),
+    ).fetchone()
+    if last and entry["level"] is not None and last["level"] > entry["level"]:
+        return {**base, "kind": "lighter", "level": last["level"],
+                "coach_level": entry["level"]}
+    return None
+
+
+def anyway_for(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> Optional[sqlite3.Row]:
+    """The session sent "anyway" for that day, if one was."""
+    return conn.execute(
+        "SELECT session_type, level FROM day_overrides WHERE user_id = ? AND "
+        "local_date = ?", (user_id, date),
+    ).fetchone()
+
+
+def send_anyway(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> Optional[dict]:
+    """Keep the planned session for the day despite the coach's call;
+    the watch push (``garmin_api.refresh_today``) then sends it.
+
+    Returns:
+        dict | None: The ``anyway_offer`` taken, or None when there is
+        nothing to send anyway that day.
+    """
+    offer = anyway_offer(conn, user_id, date)
+    if offer is None:
+        return None
+    conn.execute(
+        "INSERT INTO day_overrides (user_id, local_date, session_type, level, "
+        "created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id, local_date) "
+        "DO UPDATE SET session_type = excluded.session_type, "
+        "level = excluded.level, created_at = excluded.created_at",
+        (user_id, date, offer["session_type"], offer["level"],
+         dt.datetime.now(dt.timezone.utc).isoformat()),
+    )
+    conn.commit()
+    return offer
+
+
+def cancel_anyway(conn: sqlite3.Connection, user_id: int, date: str) -> bool:
+    """Back to the coach's call for the day."""
+    deleted = conn.execute(
+        "DELETE FROM day_overrides WHERE user_id = ? AND local_date = ?",
+        (user_id, date),
+    ).rowcount
+    conn.commit()
+    return bool(deleted)
+
+
 def declare_done(
     conn: sqlite3.Connection, user_id: int, date: str, choice: str,
     today: str,
@@ -198,4 +282,25 @@ if __name__ == "__main__":
         raise AssertionError("a future day must be refused")
     except ValueError:
         pass
+    # "Do it anyway": a rest day offers the planned session at its level.
+    training.set_level(conn, other, "lower_body", 5)
+    offer = anyway_offer(conn, other, today)
+    assert offer == {"session_type": "lower_body", "label": "Muscu bas du corps",
+                     "kind": "rest", "level": 5}, offer
+    assert send_anyway(conn, other, today) == offer
+    assert dict(anyway_for(conn, other, today)) == {"session_type": "lower_body",
+                                                    "level": 5}
+    assert coach_entry(conn, other, today)["tier"] == "rest"  # the coach's call stays
+    assert cancel_anyway(conn, other, today) and anyway_for(conn, other, today) is None
+    # A lightened day offers last time's level; a normal one offers nothing.
+    conn.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, 'x', '2026-10-18', "
+        "'green', 'lower_body', 7, 'm', 'train')", (uid,))
+    conn.commit()
+    lighter = anyway_offer(conn, uid, today)  # today's level is 5, last time 7
+    assert lighter["kind"] == "lighter" and lighter["level"] == 7, lighter
+    assert lighter["coach_level"] == 5, lighter
+    set_today_level(conn, uid, "a", today, 7)
+    assert anyway_offer(conn, uid, today) is None and send_anyway(conn, uid, today) is None
     print("day_actions.py: all checks passed")
