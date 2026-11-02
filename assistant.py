@@ -154,10 +154,16 @@ FR_SYSTEM_PROMPT = (
     "DONNEES : tu ne sais rien sans tes outils. Avant de parler de ses "
     "chiffres, appelle les outils utiles (bilan = la vue d'ensemble du "
     "jour, deja triee ; aujourdhui = statut, seance du soir, budget ; "
-    "puis sommeil, tendances, seances, programme, repas, progres, ou "
-    "donnees pour le reste : corps, activites, charge, recuperation, "
-    "sante, mouvement, messages, trophees, meteo, reglages, synchro, "
-    "calendrier). Chaque chiffre de ta reponse vient d'un resultat "
+    "puis sommeil, tendances, seances, entrainements (ce que la montre a "
+    "enregistre : duree, calories, frequence cardiaque, zones), coeur "
+    "(frequence cardiaque au repos, sur la journee, la nuit, pendant le "
+    "sport, VFC), programme, repas, progres, ou donnees pour le reste : "
+    "corps, activites, charge, recuperation, sante, mouvement, messages, "
+    "trophees, meteo, reglages, synchro, calendrier ; et donnees_brutes "
+    "pour lire n'importe quelle table telle quelle). Tu as acces a TOUTES "
+    "ses donnees smart_coach, sauf les photos du Corps : ne dis jamais "
+    "que tu n'y as pas acces, appelle l'outil ; si aucun outil de "
+    "synthese ne repond, lis la table avec donnees_brutes. Chaque chiffre de ta reponse vient d'un resultat "
     "d'outil, tel quel : n'invente jamais un chiffre, un seuil, une "
     "quantite d'aliment. Une donnee absente, not_synced ou log_partial : "
     "dis que tu ne sais pas, n'en tire rien.\n"
@@ -193,9 +199,15 @@ EN_SYSTEM_PROMPT = (
     "DATA: you know nothing without your tools. Before talking about "
     "their numbers, call the useful tools (bilan = the day's overview, "
     "already sorted; aujourdhui = status, tonight's session, budget; "
-    "then sommeil, tendances, seances, programme, repas, progres, or "
-    "donnees for the rest: body, activities, load, recovery, health, "
-    "movement, messages, trophies, weather, settings, sync, calendar). "
+    "then sommeil, tendances, seances, entrainements (what the watch "
+    "recorded: duration, calories, heart rate, zones), coeur (heart rate "
+    "at rest, over the day, at night, during exercise, HRV), programme, "
+    "repas, progres, or donnees for the rest: body, activities, load, "
+    "recovery, health, movement, messages, trophies, weather, settings, "
+    "sync, calendar; and donnees_brutes to read any table as-is). You "
+    "have access to ALL their smart_coach data except the Corps photos: "
+    "never say you cannot access it, call the tool; when no summary tool "
+    "answers, read the table with donnees_brutes. "
     "Every figure in your answer comes from a tool result, as-is: never "
     "invent a figure, a threshold or a food quantity. Missing data, "
     "not_synced or log_partial: say you do not know, draw nothing.\n"
@@ -258,6 +270,69 @@ def _fn(name: str, description: str, properties: dict | None = None,
     }}
 
 
+# Every table of the account the chat may read row by row (donnees_brutes):
+# name -> (date expression, order column). Left out on purpose: users,
+# passkeys and settings (password hashes, keys, the link secret -- the
+# safe settings are in donnees/reglages) and body_photos (the Corps
+# photos and their analyses are never read by the assistant).
+RAW_TABLES = {
+    "poids": ("weight", "local_date", "time_utc"),
+    "graisse": ("body_fat", "local_date", "time_utc"),
+    "masse_maigre": ("lean_body_mass", "local_date", "time_utc"),
+    "tour_de_taille": ("waist_measurements", "local_date", "local_date"),
+    "fc_repos": ("resting_heart_rate", "local_date", "time_utc"),
+    "fc_journee": ("heart_rate_daily", "local_date", "local_date"),
+    "vfc": ("garmin_hrv", "local_date", "local_date"),
+    "vo2max": ("garmin_vo2max", "local_date", "local_date"),
+    "stress": ("garmin_stress", "local_date", "local_date"),
+    "body_battery": ("garmin_body_battery", "local_date", "local_date"),
+    "respiration": ("garmin_respiration", "local_date", "local_date"),
+    "spo2": ("garmin_spo2", "local_date", "local_date"),
+    "disponibilite": ("garmin_training_readiness", "local_date", "local_date"),
+    "resume_garmin": ("garmin_daily_summary", "local_date", "local_date"),
+    "minutes_intensives": ("garmin_intensity_minutes", "local_date", "local_date"),
+    "cycle": ("garmin_menstrual_cycle", "local_date", "local_date"),
+    "badges_garmin": ("garmin_badges", "earned_date", "earned_date"),
+    "pas": ("steps", "local_date", "start_utc"),
+    "distance": ("distance", "local_date", "start_utc"),
+    "denivele": ("elevation_gained", "local_date", "start_utc"),
+    "etages": ("floors_climbed", "local_date", "start_utc"),
+    "calories_actives": ("active_calories", "local_date", "start_utc"),
+    "calories_totales": ("total_calories_burned", "local_date", "start_utc"),
+    "metabolisme_base": ("basal_metabolic_rate", "local_date", "time_utc"),
+    "hydratation": ("hydration", "local_date", "start_utc"),
+    "hydratation_garmin": ("garmin_hydration", "local_date", "local_date"),
+    "repas": ("nutrition", "local_date", "start_utc"),
+    "estimations_repas": ("meal_estimates", "local_date", "created_at"),
+    "entrainements": ("exercise_sessions", "local_date", "start_utc"),
+    "fc_entrainements": ("exercise_hr_samples", "date(epoch_utc)", "epoch_utc"),
+    "parcours_gps": ("exercise_route_points", "date(epoch_utc)", "epoch_utc"),
+    "nuits": ("sleep_sessions", "local_date", "start_utc"),
+    "phases_sommeil": ("sleep_stages", "date(stage_start_utc)", "stage_start_utc"),
+    "mesures_nuit": ("sleep_samples", "date(ts_utc)", "ts_utc"),
+    "ressenti_nuits": ("sleep_feedback", "local_date", "local_date"),
+    "decisions_du_coach": ("coach_log", "local_date", "id"),
+    "notes_seances": ("session_feedback", "local_date", "local_date"),
+    "seances_declarees": ("session_done", "local_date", "local_date"),
+    "niveaux": ("levels", None, "session_type"),
+    "semaines_allegees": ("deload_events", "date(triggered_at)", "triggered_at"),
+    "charge": ("training_load", "local_date", "local_date"),
+    "mes_mouvements": ("custom_moves", None, "id"),
+    "mouvements_retires": ("removed_moves", None, "slot"),
+    "quantites_fixees": ("slot_overrides", None, "slot"),
+    "modifs_montre": ("watch_edits", "local_date", "id"),
+    "seances_sur_la_montre": ("garmin_planned_workouts", "local_date", "local_date"),
+    "messages": ("sent_messages", "local_date", "id"),
+    "trophees": ("achievements", "date(unlocked_at)", "unlocked_at"),
+    "xp": ("xp_ledger", "date", "id"),
+    "synchros": ("ingest_runs", "date(ran_at)", "ran_at"),
+    "couverture_export": ("hc_export_coverage", None, "table_name"),
+}
+# Columns that only link rows or carry machine state: dropped to save
+# the context (never data the person would ask about).
+RAW_HIDDEN = {"user_id", "uuid", "parent_uuid", "exercise_uuid", "signature",
+              "shape", "diary_uuids", "workout_id", "values_json"}
+
 READ_TOOLS = [
     _fn("bilan", "Today's decision-ready overview, the same one the "
         "morning message is written from: body signals, tonight's "
@@ -278,6 +353,21 @@ READ_TOOLS = [
     _fn("seances", "Recent sessions per day: planned, done, skipped or "
         "replaced, minutes, rating, level.",
         {"jours": {"type": "integer", "description": "1-28, default 14"}}),
+    _fn("entrainements", "The workouts the watch RECORDED (Garmin): "
+        "date, start time, type, duration, calories, average and max "
+        "heart rate, time in each heart-rate zone, effort felt, and the "
+        "session that was planned. With jour, one workout in detail with "
+        "its heart-rate curve. Use for any question about a workout, an "
+        "activity or the heart rate during exercise.",
+        {"jours": {"type": "integer", "description": "1-60, default 14"},
+         "jour": {"type": "string",
+                  "description": "optional: aujourdhui, hier or YYYY-MM-DD"}}),
+    _fn("coeur", "Everything about the heart: resting heart rate (trend "
+        "and personal baseline), heart-rate variability (HRV), heart "
+        "rate over the day (min/average/max), during the night, during "
+        "recent workouts, max heart rate and the zone limits in bpm. "
+        "Use for any question about heart rate, pulse, cardio, HRV.",
+        {"jours": {"type": "integer", "description": "7-90, default 14"}}),
     _fn("programme", "The week plan, the level per session type, what "
         "makes each go up, lighter weeks, the progression rules."),
     _fn("repas", "What was eaten that day, meal by meal, against the "
@@ -286,6 +376,17 @@ READ_TOOLS = [
                   "description": "aujourdhui, hier or YYYY-MM-DD"}}),
     _fn("progres", "Weight, body fat, calorie balance, protein, plateau "
         "and recalibration analysis, week review, waist."),
+    _fn("donnees_brutes", "Raw rows of ANY table of the account, for "
+        "what no other tool answers (newest first, at most 50). Names "
+        "say what they hold: poids, fc_repos, fc_journee, "
+        "fc_entrainements (bpm samples), entrainements, nuits, "
+        "phases_sommeil, mesures_nuit, repas, pas, vo2max, stress, "
+        "messages, decisions_du_coach...",
+        {"table": {"type": "string", "enum": list(RAW_TABLES)},
+         "du": {"type": "string", "description": "YYYY-MM-DD, default 7 days ago"},
+         "au": {"type": "string", "description": "YYYY-MM-DD, default today"},
+         "limite": {"type": "integer", "description": "1-50, default 30"}},
+        ("table",)),
     _fn("donnees", "Any other data domain, summarised.",
         {"domaine": {"type": "string", "enum": list(DOMAINS)},
          "jours": {"type": "integer", "description": "window, default 7"}},
@@ -324,15 +425,19 @@ WRITE_NAMES = {tool["function"]["name"] for tool in WRITE_TOOLS}
 TOOL_LABELS = {
     "fr": {"bilan": "Bilan du jour", "aujourdhui": "Aujourd'hui",
            "sommeil": "Sommeil", "tendances": "Tendances",
-           "seances": "Séances", "programme": "Programme", "repas": "Repas",
+           "seances": "Séances", "entrainements": "Entraînements",
+           "coeur": "Cœur", "programme": "Programme", "repas": "Repas",
            "progres": "Progrès", "donnees": "Données",
+           "donnees_brutes": "Données brutes",
            "noter_nuit": "Nuit notée", "regler_niveau": "Niveau du soir",
            "declarer_malade": "Maladie", "declarer_seance": "Séance notée",
            "regler_objectif": "Objectif"},
     "en": {"bilan": "Today's overview", "aujourdhui": "Today",
            "sommeil": "Sleep", "tendances": "Trends",
-           "seances": "Sessions", "programme": "Programme", "repas": "Meals",
+           "seances": "Sessions", "entrainements": "Workouts",
+           "coeur": "Heart", "programme": "Programme", "repas": "Meals",
            "progres": "Progress", "donnees": "Data",
+           "donnees_brutes": "Raw data",
            "noter_nuit": "Night logged", "regler_niveau": "Tonight's level",
            "declarer_malade": "Illness", "declarer_seance": "Session logged",
            "regler_objectif": "Goal"},
@@ -737,6 +842,171 @@ def tool_seances(conn, ctx, args) -> dict:
                 for t in sorted(training.scheduled_types(conn, uid))}}
 
 
+def _zone_bounds(max_hr: Optional[int]) -> Optional[list]:
+    """Z1..Z5 lower bounds in bpm for a max heart rate."""
+    if not max_hr:
+        return None
+    return [{"zone": f"Z{i + 2}", "a_partir_de_bpm": round(max_hr * b)}
+            for i, b in enumerate(metrics.HR_ZONE_BOUNDS_PCT)]
+
+
+def _workouts(conn, uid: int, start: str, end: str, tz) -> list[dict]:
+    """The recorded workouts between two local dates, newest first."""
+    max_hr = metrics.estimated_max_hr(conn, uid)
+    rows = conn.execute(
+        "SELECT uuid, local_date, start_utc, end_utc, exercise_type, title, "
+        "label_override, rpe FROM exercise_sessions WHERE user_id = ? AND "
+        "local_date BETWEEN ? AND ? ORDER BY start_utc DESC LIMIT 40",
+        (uid, start, end)).fetchall()
+    out = []
+    for row in rows:
+        hr = conn.execute(
+            "SELECT AVG(bpm) AS avg, MAX(bpm) AS max, MIN(bpm) AS min, "
+            "COUNT(*) AS n FROM exercise_hr_samples WHERE user_id = ? AND "
+            "exercise_uuid = ?", (uid, row["uuid"])).fetchone()
+        kcal = conn.execute(
+            "SELECT SUM(kcal) AS kcal FROM active_calories WHERE user_id = ? "
+            "AND start_utc < ? AND end_utc > ?",
+            (uid, row["end_utc"], row["start_utc"])).fetchone()["kcal"]
+        begin = dt.datetime.fromisoformat(row["start_utc"])
+        if begin.tzinfo is None:
+            begin = begin.replace(tzinfo=dt.timezone.utc)
+        item = {
+            "uuid": row["uuid"], "date": row["local_date"],
+            "heure": begin.astimezone(tz).strftime("%H:%M"),
+            "type": (row["label_override"] or metrics.EXERCISE_TYPE_LABELS.get(
+                row["exercise_type"], "autre")).replace("_", " "),
+            "titre": row["title"] or None,
+            "duree_min": metrics.session_duration_min(row),
+            "kcal_actives": round(kcal) if kcal is not None else None,
+            "effort_ressenti_rpe": row["rpe"],
+        }
+        if hr and hr["n"]:
+            item.update(fc_moyenne=round(hr["avg"]), fc_max=hr["max"],
+                        fc_min=hr["min"])
+            zones = metrics.hr_zone_pct(conn, uid, row["uuid"], max_hr) if max_hr else []
+            if zones:
+                item["temps_par_zone_pct"] = {f"Z{i + 1}": z for i, z in enumerate(zones)}
+        else:
+            item["fc"] = "pas de frequence cardiaque enregistree pour cette activite"
+        out.append({k: v for k, v in item.items() if v is not None})
+    return out
+
+
+def _hr_curve(conn, uid: int, uuid: str, step_min: int = 5) -> list[dict]:
+    """A workout's heart rate averaged per ``step_min`` minutes."""
+    rows = conn.execute(
+        "SELECT epoch_utc, bpm FROM exercise_hr_samples WHERE user_id = ? AND "
+        "exercise_uuid = ? ORDER BY epoch_utc", (uid, uuid)).fetchall()
+    if not rows:
+        return []
+    first = dt.datetime.fromisoformat(rows[0]["epoch_utc"])
+    buckets: dict[int, list[int]] = {}
+    for row in rows:
+        minute = (dt.datetime.fromisoformat(row["epoch_utc"]) - first).total_seconds() / 60
+        buckets.setdefault(int(minute // step_min), []).append(row["bpm"])
+    return [{"minute": k * step_min, "fc_moyenne": round(sum(v) / len(v)),
+             "fc_max": max(v)} for k, v in sorted(buckets.items())][:24]
+
+
+def tool_entrainements(conn, ctx, args) -> dict:
+    uid, today = ctx["user_id"], ctx["today"]
+    tz = metrics.local_tz(conn, uid)
+    max_hr = metrics.estimated_max_hr(conn, uid)
+    common = {"fc_max_estimee": max_hr, "zones": _zone_bounds(max_hr),
+              "lecture_zones": "Z1 tres facile, Z2 endurance, Z3 tempo, "
+                               "Z4 seuil, Z5 maximum (bornes : % de la FC max "
+                               "estimee 220 - age)"}
+    if args.get("jour"):
+        day = _day(args, "jour", today, 90)
+        workouts = _workouts(conn, uid, day, day, tz)
+        for workout in workouts:
+            workout["courbe_fc_par_5_min"] = _hr_curve(conn, uid, workout["uuid"])
+        plan = conn.execute(
+            "SELECT session_type, level, tier FROM coach_log WHERE user_id = ? "
+            "AND local_date = ? ORDER BY id DESC LIMIT 1", (uid, day)).fetchone()
+        rating = conn.execute(
+            "SELECT rating FROM session_feedback WHERE user_id = ? AND "
+            "local_date = ?", (uid, day)).fetchone()
+        return {"jour": day, **common,
+                "prevu": ({"seance": training.SESSION_LABEL_FR.get(
+                    plan["session_type"], plan["session_type"]),
+                    "niveau": plan["level"], "tier": plan["tier"]}
+                    if plan and plan["session_type"] else None),
+                "note_de_seance": rating["rating"] if rating else None,
+                "entrainements": [{k: v for k, v in w.items() if k != "uuid"}
+                                  for w in workouts]
+                or "aucun entrainement enregistre ce jour-la"}
+    days = _int(args, "jours", 14, 1, 60)
+    workouts = _workouts(conn, uid, _plus(today, -(days - 1)), today, tz)
+    with_hr = [w for w in workouts if "fc_moyenne" in w]
+    return {
+        "jours": days, **common,
+        "total": {"nombre": len(workouts),
+                  "minutes": sum(w["duree_min"] for w in workouts),
+                  "kcal_actives": sum(w.get("kcal_actives", 0) for w in workouts),
+                  "fc_moyenne_des_seances": (round(sum(w["fc_moyenne"] for w in with_hr)
+                                                   / len(with_hr)) if with_hr else None)},
+        "entrainements": [{k: v for k, v in w.items() if k != "uuid"}
+                          for w in workouts],
+    }
+
+
+def tool_coeur(conn, ctx, args) -> dict:
+    uid, today = ctx["user_id"], ctx["today"]
+    days = _int(args, "jours", 14, 7, 90)
+    dates = _dates(today, days)
+    resting = _series_summary(
+        {d: metrics.resting_hr_for_date(conn, uid, d) for d in dates}, "bpm", 1, 0)
+    base = training.rhr_baseline(conn, uid, today)
+    hrv = conn.execute(
+        "SELECT local_date, last_night_avg, weekly_avg, status FROM garmin_hrv "
+        "WHERE user_id = ? AND local_date BETWEEN ? AND ? ORDER BY local_date "
+        "DESC", (uid, dates[0], today)).fetchall()
+    day_rows = conn.execute(
+        "SELECT local_date, min_bpm, avg_bpm, max_bpm FROM heart_rate_daily "
+        "WHERE user_id = ? AND local_date BETWEEN ? AND ? ORDER BY local_date "
+        "DESC LIMIT 7", (uid, dates[0], today)).fetchall()
+    summary = metrics.garmin_daily_summary(conn, uid, _plus(today, -1))
+    nights = []
+    for k in range(3):
+        night = sleep_analysis.night(conn, uid, _plus(today, -k))
+        if night and night.get("has_hr"):
+            nights.append({"nuit_finie_le": _plus(today, -k),
+                           "fc_de_base": night.get("hr_base"),
+                           "fc_min": night.get("hr_min"),
+                           "reveils_avec_pic_fc": [
+                               {"a": w["at"], "pic_bpm": w.get("peak_bpm")}
+                               for w in night.get("wakes") or []
+                               if w.get("peak_bpm")][:5]})
+    tz = metrics.local_tz(conn, uid)
+    workouts = [w for w in _workouts(conn, uid, dates[0], today, tz)
+                if "fc_moyenne" in w][:6]
+    max_hr = metrics.estimated_max_hr(conn, uid)
+    return {
+        "jours": days,
+        "fc_repos": {**resting, **({"base_personnelle": round(base, 1)} if base else {}),
+                     "lecture": "plus basse = mieux recupere ; 5 bpm ou plus "
+                                "au-dessus de la base = fatigue ou maladie possible"},
+        "vfc": [{"date": r["local_date"], "nuit_ms": _r(r["last_night_avg"], 0),
+                 "moyenne_7j_ms": _r(r["weekly_avg"], 0), "statut": r["status"]}
+                for r in hrv[:7]] or "pas de VFC enregistree",
+        "journee": ([{"date": r["local_date"], "min": r["min_bpm"],
+                      "moyenne": _r(r["avg_bpm"], 0), "max": r["max_bpm"]}
+                     for r in day_rows]
+                    or ({"hier_min": summary.get("min_hr"),
+                         "hier_max": summary.get("max_hr")}
+                        if summary.get("max_hr") else "pas de donnee")),
+        "nuits": nights or "pas de frequence cardiaque de nuit enregistree",
+        "pendant_les_entrainements": [
+            {k: w[k] for k in ("date", "type", "duree_min", "fc_moyenne",
+                               "fc_max", "temps_par_zone_pct") if k in w}
+            for w in workouts] or "aucun entrainement avec frequence cardiaque",
+        "fc_max_estimee": max_hr, "zones": _zone_bounds(max_hr),
+        "rappel": "pas un avis medical",
+    }
+
+
 def tool_programme(conn, ctx, args) -> dict:
     uid, today = ctx["user_id"], ctx["today"]
     names = _WEEKDAYS["fr"]
@@ -993,8 +1263,59 @@ def _domain(conn, ctx, domain: str, days: int) -> dict:
     raise ToolError(f"domaine must be one of {list(DOMAINS)}")
 
 
+def tool_donnees_brutes(conn, ctx, args) -> dict:
+    uid, today = ctx["user_id"], ctx["today"]
+    name = _choice(args, "table", RAW_TABLES)
+    table, day_expr, order = RAW_TABLES[name]
+    limit = _int(args, "limite", 30, 1, 50)
+    start = _day({"d": args.get("du") or _plus(today, -6)}, "d", today, 3650)
+    end = _day({"d": args.get("au") or today}, "d", today, 3650)
+    if start > end:
+        start, end = end, start
+    columns = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")
+               if r[1] not in RAW_HIDDEN]
+    where, params = "user_id = ?", [uid]
+    if day_expr:
+        where += f" AND {day_expr} BETWEEN ? AND ?"
+        params += [start, end]
+    total = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}",
+                         params).fetchone()[0]
+    rows = conn.execute(
+        f"SELECT {', '.join(columns)} FROM {table} WHERE {where} "
+        f"ORDER BY {order} DESC LIMIT ?", (*params, limit)).fetchall()
+
+    def cell(value):
+        if isinstance(value, str) and len(value) > 300:
+            return value[:300] + "…"
+        return _r(value) if isinstance(value, float) else value
+    return {"table": name, **({"du": start, "au": end} if day_expr else {}),
+            "lignes_dans_la_periode": total, "colonnes": columns,
+            "lignes": [[cell(v) for v in row] for row in rows],
+            **({"note": f"{total - len(rows)} lignes plus anciennes non "
+                        "montrees : resserre du/au ou utilise un outil de "
+                        "synthese"} if total > len(rows) else {})}
+
+
+# What a model asks for in other words: sent to the right tool instead
+# of an error it may give up on.
+DOMAIN_ALIASES = {
+    "coeur": "coeur", "cardio": "coeur", "frequence_cardiaque": "coeur",
+    "fc": "coeur", "heart": "coeur", "vfc": "coeur", "hrv": "coeur",
+    "entrainements": "entrainements", "entrainement": "entrainements",
+    "workouts": "entrainements", "seances": "entrainements",
+    "activities": "activites", "activite": "activites", "sport": "activites",
+    "sommeil": "sommeil", "sleep": "sommeil", "repas": "repas",
+    "nutrition": "repas", "poids": "corps", "body": "corps",
+}
+
+
 def tool_donnees(conn, ctx, args) -> dict:
-    domain = _choice(args, "domaine", DOMAINS)
+    raw = str(args.get("domaine") or "").strip().lower().replace(" ", "_")
+    target = DOMAIN_ALIASES.get(raw, raw)
+    if target in READERS and target != "donnees":
+        return {"domaine": raw, **READERS[target](conn, ctx, {
+            k: v for k, v in args.items() if k != "domaine"})}
+    domain = _choice({"domaine": target}, "domaine", DOMAINS)
     days = _int(args, "jours", 7, 1, 90)
     return {"domaine": domain, **_domain(conn, ctx, domain, days)}
 
@@ -1097,8 +1418,10 @@ def write_regler_objectif(conn, ctx, args, undo=False):
 READERS: dict[str, Callable] = {
     "bilan": tool_bilan, "aujourdhui": tool_aujourdhui,
     "sommeil": tool_sommeil, "tendances": tool_tendances,
-    "seances": tool_seances, "programme": tool_programme,
+    "seances": tool_seances, "entrainements": tool_entrainements,
+    "coeur": tool_coeur, "programme": tool_programme,
     "repas": tool_repas, "progres": tool_progres, "donnees": tool_donnees,
+    "donnees_brutes": tool_donnees_brutes,
 }
 WRITERS: dict[str, Callable] = {
     "noter_nuit": write_noter_nuit, "regler_niveau": write_regler_niveau,

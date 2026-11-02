@@ -72,6 +72,10 @@ def call(uid, name, args=None, undo=False):
 READ_CALLS = [
     ("bilan", {}), ("aujourdhui", {}), ("sommeil", {"jours": 7}),
     ("seances", {"jours": 14}), ("programme", {}), ("repas", {}),
+    ("entrainements", {"jours": 14}), ("entrainements", {"jour": "hier"}),
+    ("coeur", {"jours": 14}),
+    *[("donnees_brutes", {"table": t, "du": "2026-01-01"})
+      for t in assistant.RAW_TABLES],
     ("repas", {"jour": "hier"}), ("progres", {}),
     *[("tendances", {"metrique": m, "jours": 30}) for m in assistant.METRICS],
     *[("donnees", {"domaine": d, "jours": 14}) for d in assistant.DOMAINS],
@@ -117,6 +121,28 @@ for secret in ("ntfy_topic", "rclone_remote", "calendar_name", "password"):
     assert secret not in settings_a, secret
 assert out_a[("donnees", '{"domaine": "synchro", "jours": 14}')]["garmin"]
 assert out_a[("bilan", "{}")]["session"], out_a[("bilan", "{}")]
+
+# Workouts with their heart rate, and the heart on its own.
+workouts_a = out_a[("entrainements", '{"jours": 14}')]
+first_w = workouts_a["entrainements"][0]
+assert first_w["fc_moyenne"] and first_w["fc_max"] and first_w["temps_par_zone_pct"], first_w
+assert workouts_a["fc_max_estimee"] == 180 and workouts_a["zones"][0]["a_partir_de_bpm"] == 108
+one_day = out_a[("entrainements", '{"jour": "hier"}')]
+assert isinstance(one_day["entrainements"], str) or \
+    one_day["entrainements"][0]["courbe_fc_par_5_min"], one_day
+heart_a = out_a[("coeur", '{"jours": 14}')]
+assert heart_a["fc_repos"]["base_personnelle"] and heart_a["vfc"][0]["nuit_ms"], heart_a
+assert heart_a["journee"][0]["max"] == 150 and heart_a["pendant_les_entrainements"], heart_a
+# Any table, row by row; secrets and the Corps photos are not tables it reads.
+raw_weight = out_a[("donnees_brutes", '{"table": "poids", "du": "2026-01-01"}')]
+assert raw_weight["colonnes"] == ["time_utc", "local_date", "kg"], raw_weight
+assert raw_weight["lignes_dans_la_periode"] == 31 and len(raw_weight["lignes"]) == 30
+for hidden in ("users", "passkeys", "settings", "body_photos"):
+    assert hidden not in {t for t, *_ in assistant.RAW_TABLES.values()}, hidden
+assert not call(A, "donnees_brutes", {"table": "users"})["ok"]
+# A domain asked for in other words lands on the right tool.
+assert "fc_repos" in json.loads(call(A, "donnees", {"domaine": "coeur"})["result"])
+assert "entrainements" in json.loads(call(A, "donnees", {"domaine": "workouts"})["result"])
 
 # --- 2. Scoping: A's tools never show B's figures, and back ----------------
 blob_a = " ".join(outputs[A].values())

@@ -780,13 +780,24 @@ Same split as the morning message -- code decides, the model writes:
   wrapper over the functions the pages already use, scoped to the
   logged-in account (the `user_id` comes from the session, never from
   the model), returning compact JSON capped at about 2,500 characters:
-  summaries (min/max/average/direction, the code's own verdicts), not
-  raw rows. A tool error goes back to the model as `{"error": ...}`.
+  summaries (min/max/average/direction, the code's own verdicts), with
+  raw rows only through `donnees_brutes`. A tool error goes back to the
+  model as `{"error": ...}`; a `donnees` domain asked for in other words
+  ("coeur", "workouts", "sport"...) is routed to the right tool rather
+  than refused.
 - Read tools: `bilan` (the morning message's own decision-ready brief,
   `coach_payload` + `coach_brief`), `aujourdhui` (status and every
   signal behind it with the thresholds, tonight's session, illness
   signs, budget), `sommeil`, `tendances` (weight, resting HR, HRV,
-  steps, calories, protein, sleep score), `seances`, `programme`
+  steps, calories, protein, sleep score), `seances`, `entrainements`
+  (what the watch recorded: time, type, duration, active calories,
+  average/max heart rate, time per zone from the 220-age max, effort
+  felt; with `jour`, one workout with its heart rate per 5 minutes and
+  the session planned), `coeur` (resting HR and its baseline, HRV,
+  heart rate over the day, at night, during recent workouts, the zone
+  limits), `donnees_brutes` (any of the account's tables, newest rows
+  first, at most 50, linking columns dropped; `users`, `passkeys`,
+  `settings` and `body_photos` are not among them), `programme`
   (levels and the progression rules), `repas` (with protein ideas
   sized by `aids.food_help`), `progres` (plateau, recalibration), and
   `donnees` for the rest: body, activities, training load, muscle

@@ -23,6 +23,9 @@ def seed(conn, uid: int, today: str, scale: float = 1.0, tag: str = "a") -> None
         u = f"{tag}-{day}"
         conn.execute("INSERT INTO weight VALUES (?, ?, ?, ?, ?)",
                      (f"w-{u}", uid, noon, day, round((80.0 - 0.04 * (30 - k)) * scale, 2)))
+        conn.execute("INSERT INTO heart_rate_daily VALUES (?, ?, ?, ?, ?, ?)",
+                     (uid, day, round(72 * scale, 1), round(50 * scale),
+                      round(150 * scale), 1000))
         conn.execute("INSERT INTO resting_heart_rate VALUES (?, ?, ?, ?, ?)",
                      (f"r-{u}", uid, noon, day, round((54 + (k % 4)) * scale)))
         conn.execute("INSERT INTO garmin_hrv VALUES (?, ?, ?, ?, ?)",
@@ -77,6 +80,13 @@ def seed(conn, uid: int, today: str, scale: float = 1.0, tag: str = "a") -> None
                     (f"e-{u}", uid, s0.isoformat(),
                      (s0 + dt.timedelta(minutes=round(30 * scale))).isoformat(),
                      day, 79, training.SESSION_LABEL_FR[planned]))
+                # The watch's heart rate every minute of the workout.
+                for minute in range(0, round(30 * scale), 1):
+                    conn.execute(
+                        "INSERT INTO exercise_hr_samples VALUES (?, ?, ?, ?)",
+                        (f"e-{u}", uid,
+                         (s0 + dt.timedelta(minutes=minute)).isoformat(),
+                         round((110 + minute * 2) * scale)))
                 conn.execute(
                     "INSERT INTO session_feedback VALUES (?, ?, ?, ?, 'x')",
                     (uid, day, planned, "right"))
