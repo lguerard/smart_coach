@@ -24,6 +24,9 @@ services:
     env_file: .env
     environment:
       TZ: ${TZ:-Europe/Paris}
+    # The coach chat needs to reach Ollama (ASSISTANT_OLLAMA_URL). If it
+    # lives in another compose project, join its network from a
+    # docker-compose.override.yml -- docs/TECHNICAL.md "Assistant chat".
     ports:
       # LAN default. For a public deployment bind localhost only
       # (WEB_BIND=127.0.0.1:8080 in .env) and let caddy be the sole

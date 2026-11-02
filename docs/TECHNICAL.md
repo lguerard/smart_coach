@@ -19,6 +19,9 @@ overview, see the [README](../README.md).
 - Claude Code installed and logged in (`claude -p`, subscription
   auth, no API key) — or set `LLM_PROVIDER=anthropic_api` +
   `ANTHROPIC_API_KEY` to use the Anthropic API instead
+- Optional, for the in-app chat: an [Ollama](https://ollama.com)
+  server the web container can reach, serving a tool-calling model
+  (`gemma4:12b` by default) -- see "Assistant chat" below
 - The ntfy app on your phone, subscribed to a secret topic
 - A Google account with a target calendar (any name, e.g. "Sport" —
   set it per user in Settings > "Calendrier Google"; created
@@ -523,6 +526,12 @@ web container (always on)
   web/app.py               FastAPI reads the same db read-mostly;
                             Home's "Regenerate" button re-runs only
                             the LLM phrasing step, live
+  assistant.py             the in-app coach chat (every page's
+                            floating button): POST /assistant/chat,
+                            answered by the LOCAL model through
+                            Ollama, with read tools over the same
+                            module functions and a few undoable
+                            writes -- see "Assistant chat" below
 ```
 
 ## Setup
@@ -743,6 +752,102 @@ verdict — body battery and stress are all it will have. Allow ~15-30
 minutes after waking for the watch to sync. An unparseable value falls
 back to the default rather than writing a crontab cron would reject.
 
+## Assistant chat
+
+Every page has a floating button that opens a chat with the coach
+("Pourquoi je suis en jaune aujourd'hui ?", "Je m'entraîne ce soir ou
+je me repose ?"). Unlike the morning message, it runs on a **local
+model** through Ollama: the questions, the answers and every figure
+the tools read stay on your network. Nothing is sent to Anthropic or
+any other service.
+
+### Configuration
+
+| Variable | Default | What it is |
+|---|---|---|
+| `ASSISTANT_OLLAMA_URL` | *(empty)* | Ollama's base URL as seen from the web container, e.g. `http://ollama:11434`. Empty disables the chat: the panel says so and `/assistant/chat` answers 503. |
+| `ASSISTANT_MODEL` | `gemma4:12b` | Any Ollama model with tool calling. |
+| `ASSISTANT_NUM_CTX` | `8192` | Context size sent with every request. **Keep it equal to the `num_ctx` every other app sends to the same Ollama**: a different value makes Ollama reload the model for that context size, evicting it for the other apps (and them for you). |
+
+Every request also sends `think: false`, `stream: true` and the tools.
+Only the web container needs these variables.
+
+### How it answers
+
+Same split as the morning message -- code decides, the model writes:
+
+- The model never sees the database. It gets **tools**, each a thin
+  wrapper over the functions the pages already use, scoped to the
+  logged-in account (the `user_id` comes from the session, never from
+  the model), returning compact JSON capped at about 2,500 characters:
+  summaries (min/max/average/direction, the code's own verdicts), not
+  raw rows. A tool error goes back to the model as `{"error": ...}`.
+- Read tools: `bilan` (the morning message's own decision-ready brief,
+  `coach_payload` + `coach_brief`), `aujourdhui` (status and every
+  signal behind it with the thresholds, tonight's session, illness
+  signs, budget), `sommeil`, `tendances` (weight, resting HR, HRV,
+  steps, calories, protein, sleep score), `seances`, `programme`
+  (levels and the progression rules), `repas` (with protein ideas
+  sized by `aids.food_help`), `progres` (plateau, recalibration), and
+  `donnees` for the rest: body, activities, training load, muscle
+  recovery, health, movement, past messages, achievements, weather,
+  settings, sync freshness, calendar.
+- Write tools, only the edits the dashboard already offers, through the
+  very same functions: `noter_nuit` (how the night felt), `regler_niveau`
+  (tonight's level, calendar included), `declarer_malade`,
+  `declarer_seance` ("J'ai fait : ..."), `regler_objectif` (a few
+  numeric goals, range-checked). Each shows an action chip with
+  **Annuler**, which puts the previous value back. Nothing is ever
+  deleted, and nothing changes unless asked.
+- Body photos, passwords, tokens, the ntfy topic and the Drive remote
+  are never reachable from the chat, and the Google Calendar itself is
+  not read (the week plan is).
+- At most 5 model calls per question, the last one without tools so it
+  has to answer. History is trimmed to the context (about 4 characters
+  per token, oldest first); a single question too long for it gets 413.
+- One answer at a time per account, 180 s deadline, an error in the
+  user's language past it. The GPU is shared and serial: a chat may wait
+  behind another app's job, and a cold model load takes about 10 s --
+  the panel says "busy" after 8 s with no word. The stop button closes
+  the request, which closes the Ollama call.
+- The conversation lives in the browser only (localStorage, per
+  account, cleared on logout) and is sent back with each question.
+
+Protocol: `POST /assistant/chat` with `{"messages": [{"role", "content"}...]}`
+answers NDJSON, one event per line: `status`, `tool` (a tool is
+running), `card` (a source consulted), `action` (a write, with its
+`undo`), `delta` (answer text), `error`, `done`. `POST /assistant/undo`
+replays an action's `undo`.
+
+### Reaching a shared Ollama in another compose project
+
+If Ollama runs in another compose project on the same host, join its
+Docker network from the web service. Do not edit `docker-compose.yml`
+for this -- an `external` network that does not exist breaks
+`docker compose up` for everyone else. Use an override file next to it,
+which compose merges automatically:
+
+```yaml
+# docker-compose.override.yml
+services:
+  smart_coach-web:
+    networks: [default, ollama_shared]
+networks:
+  ollama_shared:
+    external: true   # created by the stack that runs Ollama
+```
+
+```bash
+# .env
+ASSISTANT_OLLAMA_URL=http://ollama:11434   # the Ollama container's name on that network
+```
+
+Check it from the web container:
+`docker compose exec smart_coach-web python -c "import httpx; print(httpx.get('http://ollama:11434/api/tags').status_code)"`.
+Ollama on the host itself instead: `http://host.docker.internal:11434`
+with `extra_hosts: ["host.docker.internal:host-gateway"]` in the same
+override.
+
 ## Adding a user
 
 Every account gets its own data, settings, weekly plan, calendar
@@ -811,6 +916,10 @@ docker compose run --rm smart_coach-worker python tests/run_all.py
 ```
 
 Every module's plain-assert self-check, no framework.
+`tests/selfcheck_assistant.py` covers the chat end to end without a
+model: every tool on a seeded account, the scoping between two
+accounts, the writes and their undo, the tool loop against a fake
+Ollama, and the web endpoints.
 
 ## Troubleshooting
 
