@@ -2,6 +2,9 @@ fastapi
 garminconnect
 garmin-auth
 requests
+# Async client for the assistant's local Ollama (assistant.py); also
+# what FastAPI's TestClient needs for the web self-check.
+httpx
 uvicorn[standard]
 jinja2
 python-multipart

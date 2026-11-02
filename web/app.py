@@ -31,6 +31,7 @@ import webauthn
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import (
     HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
+    StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -43,9 +44,11 @@ from webauthn.helpers.structs import (
 )
 
 import achievements
+import assistant
 import body
 import bonus
 import custom_moves
+import day_actions
 import done_sessions
 import meals
 import mfp_goals
@@ -61,7 +64,6 @@ import coach_payload
 import db
 import desk
 import exercise_library
-import gcal
 import llm
 import metrics
 import muscles
@@ -86,15 +88,26 @@ def _ui_context(request: Request) -> dict:
     rendered before login get the default; the login page itself reuses
     the last accent the browser saw (base.html caches it locally).
     """
-    accent = ACCENTS[0]
+    accent, language = ACCENTS[0], "fr"
     user_id = request.session.get("user_id") if "session" in request.scope else None
     if user_id:
         conn = db.connect()
         try:
             accent = db.get_setting(conn, user_id, "accent") or accent
+            language = db.get_setting(conn, user_id, "language") or language
         finally:
             conn.close()
-    return {"accent": accent if accent in ACCENTS else ACCENTS[0]}
+    return {
+        "accent": accent if accent in ACCENTS else ACCENTS[0],
+        # The chat panel (base.html -> _assistant.html): its language,
+        # whether a local model is configured, and whose conversation
+        # the browser keeps.
+        "assistant": {
+            "enabled": assistant.enabled(), "user_id": user_id,
+            "lang": language if language in ("fr", "en") else "fr",
+            "disabled_text": assistant.text(language, "disabled"),
+        },
+    }
 
 
 templates = Jinja2Templates(
@@ -118,6 +131,9 @@ async def require_login(request: Request, call_next):
     if request.url.path.startswith(_PUBLIC_PREFIXES):
         return await call_next(request)
     if not request.session.get("user_id"):
+        if request.url.path.startswith("/assistant/"):
+            # fetch() would follow a redirect to the login page's HTML.
+            return JSONResponse({"error": "login"}, status_code=401)
         return RedirectResponse("/login")
     return await call_next(request)
 
@@ -186,10 +202,7 @@ def latest_coach_entry(
     conn: sqlite3.Connection, user_id: int, date: str,
 ) -> sqlite3.Row | None:
     """Today's coach_log row, if the daily cron has already run."""
-    return conn.execute(
-        "SELECT * FROM coach_log WHERE user_id = ? AND local_date = ? "
-        "ORDER BY id DESC LIMIT 1", (user_id, date),
-    ).fetchone()
+    return day_actions.coach_entry(conn, user_id, date)
 
 
 def last_ingest_status(conn: sqlite3.Connection, user_id: int) -> list[dict]:
@@ -769,14 +782,7 @@ async def submit_feedback(request: Request):
 
 def _rated_type(conn: sqlite3.Connection, user_id: int, date: str):
     """The session type a rating for ``date`` belongs to, or None."""
-    plan = conn.execute(
-        "SELECT session_type, tier FROM coach_log WHERE user_id = ? AND "
-        "local_date = ? ORDER BY id DESC LIMIT 1", (user_id, date),
-    ).fetchone()
-    return done_sessions.actual_type(
-        conn, user_id, date, plan["session_type"] if plan else None,
-        plan["tier"] if plan else None,
-    )
+    return day_actions.rated_type(conn, user_id, date)
 
 
 @app.post("/quick/rate/{user_id}/{date}/{rating}/{signature}")
@@ -894,29 +900,14 @@ async def declare_done(request: Request):
     form = await request.form()
     date, choice = str(form.get("date", "")), str(form.get("session_type", ""))
     try:
-        if choice == "planned":
-            done_sessions.clear(conn, user_id, date)
-        else:
-            done_sessions.declare(
-                conn, user_id, date, choice, today=today_str(conn, user_id),
-            )
+        day_actions.declare_done(
+            conn, user_id, date, choice, today_str(conn, user_id),
+        )
     except ValueError as error:
         return RedirectResponse(
             "/sessions?" + urlencode({"error": str(error)}) + "#notes",
             status_code=303,
         )
-    rated = _rated_type(conn, user_id, date)
-    if rated:
-        conn.execute(
-            "UPDATE session_feedback SET session_type = ? WHERE user_id = ? "
-            "AND local_date = ?", (rated, user_id, date),
-        )
-    else:
-        conn.execute(
-            "DELETE FROM session_feedback WHERE user_id = ? AND local_date = ?",
-            (user_id, date),
-        )
-    conn.commit()
     return RedirectResponse("/sessions#notes", status_code=303)
 
 
@@ -1000,54 +991,131 @@ async def edit_today_level(request: Request):
     """
     conn = get_conn()
     user_id = current_user_id(request)
-    date = today_str(conn, user_id)
-    entry = latest_coach_entry(conn, user_id, date)
-    # A rest or recovery day has no level to edit: the form is not shown
-    # for it, and a crafted post must not turn the rest back into a
-    # session behind the coach's back.
-    if (
-        not entry or not entry["session_type"]
-        or (entry["tier"] or training.TIER_TRAIN) != training.TIER_TRAIN
-    ):
-        return RedirectResponse(url="/", status_code=303)
     form = await request.form()
     try:
         level = int(form.get("level", ""))
     except (TypeError, ValueError):
         return RedirectResponse(url="/", status_code=303)
-    level = max(training.LEVEL_MIN, min(training.LEVEL_MAX, level))
-
-    session_type = entry["session_type"]
-    training.set_level(conn, user_id, session_type, level)
-    conn.execute(
-        "UPDATE coach_log SET level = ?, level_reason = ? WHERE id = ? "
-        "AND user_id = ?",
-        (level, f"niveau regle a la main a {level}", entry["id"], user_id),
+    # A rest or recovery day has no level to edit (day_actions.
+    # editable_level): the form is not shown for it, and a crafted post
+    # gets nothing done.
+    done = day_actions.set_today_level(
+        conn, user_id, request.session["username"], today_str(conn, user_id),
+        level,
     )
-    conn.commit()
-
-    values = training.user_session_values(
-        conn, user_id, session_type, level, date,
-    )
-    description = training.format_description_fr(
-        session_type, level, values, entry["status"],
-    )
-    note = None
-    calendar_name = db.get_setting(conn, user_id, "calendar_name")
-    day = dt.date.fromisoformat(date)
-    if not calendar_name:
-        note = "Calendrier non configure (reglez calendar_name)."
-    else:
-        try:
-            gcal.push_description(
-                request.session["username"], calendar_name, day,
-                training.schedule_for_user(conn, user_id)[day.weekday()],
-                description, duration_min=values.get("duration_min"),
-            )
-        except Exception as error:
-            note = f"Calendrier non mis a jour: {error}"
+    note = done and done["note"]
     url = "/" if not note else "/?cal_note=" + urllib.parse.quote(note)
     return RedirectResponse(url=url, status_code=303)
+
+
+# --- Assistant (local model) ---
+# The chat runs on the local Ollama (assistant.py): nothing it reads
+# leaves the server. Stateless here -- the browser keeps the
+# conversation and sends it back -- except the one-answer-per-account
+# slot.
+
+def _assistant_language(user_id: int) -> str:
+    conn = get_conn()
+    try:
+        language = db.get_setting(conn, user_id, "language") or "fr"
+    finally:
+        conn.close()
+    return language if language in ("fr", "en") else "fr"
+
+
+async def _assistant_json(request: Request):
+    """The JSON body, or a ready error response (415 / 413 / 400)."""
+    if "application/json" not in request.headers.get("content-type", ""):
+        # A cross-site form cannot send this content type without a
+        # preflight: the chat's writes are not reachable from elsewhere.
+        return None, JSONResponse({"error": "json only"}, status_code=415)
+    raw = await request.body()
+    if len(raw) > assistant.MAX_BODY_BYTES:
+        return None, JSONResponse(
+            {"error": assistant.text(
+                _assistant_language(current_user_id(request)), "too_long")},
+            status_code=413)
+    try:
+        return json.loads(raw or b"{}"), None
+    except ValueError:
+        return None, JSONResponse({"error": "invalid json"}, status_code=400)
+
+
+@app.post("/assistant/chat")
+async def assistant_chat(request: Request):
+    """Ask the coach: streams NDJSON events (assistant.chat_events).
+
+    One line per event -- ``status``, ``tool``, ``card``, ``action``,
+    ``delta``, ``error``, ``done``. Closing the request (the stop
+    button) closes the Ollama call with it.
+    """
+    user_id = current_user_id(request)
+    language = _assistant_language(user_id)
+    if not assistant.enabled():
+        return JSONResponse({"error": assistant.text(language, "disabled")},
+                            status_code=503)
+    data, error = await _assistant_json(request)
+    if error:
+        return error
+    try:
+        history = assistant.clean_history(data.get("messages"))
+    except assistant.TooLong:
+        return JSONResponse({"error": assistant.text(language, "too_long")},
+                            status_code=413)
+    except (ValueError, AttributeError):
+        return JSONResponse({"error": "messages"}, status_code=400)
+    try:
+        assistant.trim(
+            assistant.system_prompt(language, request.session.get("username", ""),
+                                    dt.date.today().isoformat()),
+            history, assistant.TOOLS)
+    except assistant.TooLong:
+        return JSONResponse({"error": assistant.text(language, "too_long")},
+                            status_code=413)
+    if not assistant.try_acquire(user_id):
+        return JSONResponse({"error": assistant.text(language, "busy")},
+                            status_code=429)
+    username = request.session.get("username", "")
+
+    async def lines():
+        try:
+            async for event in assistant.chat_events(
+                user_id, username, history,
+                is_disconnected=request.is_disconnected,
+            ):
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+        finally:
+            assistant.release(user_id)
+
+    from starlette.background import BackgroundTask
+
+    return StreamingResponse(
+        lines(), media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        # Also freed if the stream never started (client gone at once).
+        background=BackgroundTask(assistant.release, user_id),
+    )
+
+
+@app.post("/assistant/undo")
+async def assistant_undo(request: Request):
+    """The action chip's "Annuler": the same write tool with the value
+    it replaced (assistant.WRITERS), for this account only."""
+    user_id = current_user_id(request)
+    data, error = await _assistant_json(request)
+    if error:
+        return error
+    name, args = data.get("tool"), data.get("args")
+    if name not in assistant.WRITERS or not isinstance(args, dict):
+        return JSONResponse({"error": "unknown action"}, status_code=400)
+    result = await run_in_threadpool(
+        assistant.run_tool, user_id, request.session.get("username", ""),
+        name, args, undo=True)
+    if not result["ok"]:
+        return JSONResponse({"ok": False, "error": json.loads(result["result"])},
+                            status_code=400)
+    return JSONResponse({"ok": True, "label": assistant.action_label(
+        name, result["data"], _assistant_language(user_id))})
 
 
 # --- Progress ---
