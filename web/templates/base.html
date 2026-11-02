@@ -169,6 +169,7 @@
       ];
     })();
   </script>
+  {% if request.session.get("user_id") %}{% include "_assistant.html" %}{% endif %}
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -240,11 +240,16 @@
     <div class="card p-5">
       <div class="flex items-center justify-between mb-3">
         <h2 class="card-title">{{ icon('message', 16) }} Message du coach</h2>
+        <div class="flex items-center gap-2">
+        <button type="button" data-assistant-open class="btn btn-sm" title="Poser une question au coach (modèle local)">
+          {{ icon('message', 14) }}<span>{{ 'Demander au coach' if assistant.lang != 'en' else 'Ask the coach' }}</span>
+        </button>
         <button
           hx-post="/regenerate" hx-target="#coach-message" hx-swap="outerHTML"
           hx-indicator="#regen-spinner" class="btn btn-sm" title="Réécrire le message">
           {{ icon('refresh', 14) }}<span class="hidden sm:inline">Réécrire</span>
         </button>
+        </div>
       </div>
       {% include "_message.html" %}
       <p id="regen-spinner" class="htmx-indicator text-xs mt-2" style="color: var(--muted);">
@@ -453,6 +458,13 @@
         seulement — les autres n'ont pas de donnée aujourd'hui.
         {% endif %}
       </p>
+      {% if assistant.enabled and entry and entry.status %}
+      {% set colour = {'green': 'vert', 'yellow': 'jaune', 'red': 'rouge'}.get(entry.status, entry.status) %}
+      <button type="button" class="text-xs link mt-2" data-assistant-open
+              data-assistant-question="Pourquoi je suis en {{ colour }} aujourd'hui ?">
+        {{ icon('message', 12) }} Pourquoi {{ colour }} ? Demander au coach
+      </button>
+      {% endif %}
     </div>
     {% endif %}
 
