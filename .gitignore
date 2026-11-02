@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 data/
 .env
+# Host-specific compose additions (e.g. joining the shared Ollama network,
+# docs/TECHNICAL.md "Assistant chat"): kept out of the repo.
+docker-compose.override.yml

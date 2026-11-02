@@ -296,6 +296,46 @@ def delete(conn: sqlite3.Connection, user_id: int, meal_id: int) -> None:
     conn.commit()
 
 
+MEAL_LABEL = {BREAKFAST: "petit-dejeuner", LUNCH: "dejeuner",
+              DINNER: "diner", SNACK: "collation"}
+
+
+def day_summary(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
+    """What one day's food diary holds, meal by meal, for the assistant.
+
+    Returns:
+        dict: ``meals`` -- ``{meal, kcal, protein_g, entries}`` per meal
+        type logged (``autre`` when the diary gave none) -- and
+        ``estimates``: that day's photo estimates (``kind``, ``foods``,
+        ``kcal``, ``protein_g``, ``in_day``: counted in the day).
+    """
+    meals_out = [
+        {"meal": MEAL_LABEL.get(row["meal_type"], "autre"),
+         "kcal": round(row["kcal"] or 0), "protein_g": round(row["protein_g"] or 0),
+         "entries": row["n"]}
+        for row in conn.execute(
+            "SELECT meal_type, SUM(calories) AS kcal, SUM(protein_g) AS "
+            "protein_g, COUNT(*) AS n FROM nutrition WHERE user_id = ? AND "
+            "local_date = ? GROUP BY meal_type ORDER BY meal_type",
+            (user_id, date),
+        )
+    ]
+    estimates = []
+    for row in conn.execute(
+        "SELECT kind, analysis, added FROM meal_estimates WHERE user_id = ? "
+        "AND local_date = ? ORDER BY id", (user_id, date),
+    ):
+        analysis = json.loads(row["analysis"])
+        total = analysis.get("total") or {}
+        estimates.append({
+            "kind": row["kind"],
+            "foods": [item.get("name") for item in analysis.get("items") or []][:5],
+            "kcal": total.get("kcal"), "protein_g": total.get("protein_g"),
+            "in_day": row["added"] != NOT_ADDED,
+        })
+    return {"meals": meals_out, "estimates": estimates}
+
+
 if __name__ == "__main__":
     import io
     import tempfile
@@ -396,4 +436,9 @@ if __name__ == "__main__":
         "carbs_g": 0, "fat_g": 0}, "confidence": "low", "best_choice": "",
         "advice": ""})
     assert not add_to_day(conn, uid, unusable["id"])
+    # The day meal by meal, this account only.
+    summary = day_summary(conn, uid, day)
+    assert {m["meal"] for m in summary["meals"]} >= {"dejeuner"}, summary
+    assert summary["estimates"][0]["foods"] == ["poulet roti", "riz"], summary
+    assert day_summary(conn, other, day) == {"meals": [], "estimates": []}
     print("meals.py: all checks passed (no live model call made)")

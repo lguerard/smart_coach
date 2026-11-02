@@ -32,6 +32,11 @@ just you, your numbers, and a plan.
   of ignoring your life. A quick check mid-afternoon and again in
   the evening nudges you only when you're actually falling behind on
   hydration, steps or sleep — silent the rest of the time.
+- **Answers your questions.** A chat on every page lets you ask the
+  coach why today is yellow, how you slept this week or whether to
+  train tonight, and helps you decide from your own numbers. It runs
+  on a local model on your server, so those questions and your health
+  data never leave it.
 - **Shows the big picture.** A dashboard you can pin to your home
   screen tracks progress, trends, sessions and achievements — and
   lets you tweak tonight's plan with one tap.

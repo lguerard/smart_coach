@@ -39,13 +39,35 @@ lui-même pour suivre sa morphologie.
 - L'utilisateur peut supprimer une photo, ou toutes, à tout moment : le
   fichier chiffré et son analyse sont effacés immédiatement.
 
+## Assistant (chat « Ton coach »)
+
+Le chat disponible sur chaque page répond avec un **modèle de langage
+local** (Ollama), installé sur le serveur de l'utilisateur ou sur son
+réseau, et non avec un service en ligne.
+
+- Les questions, les réponses et toutes les données de santé que
+  l'assistant consulte pour répondre (sommeil, séances, repas, poids,
+  fréquence cardiaque...) restent sur ce serveur : rien n'est envoyé à
+  Anthropic ni à aucun autre tiers.
+- L'assistant ne lit que les données du compte connecté. Il n'a accès
+  ni aux photos corporelles, ni aux mots de passe et jetons, ni à
+  l'agenda Google lui-même.
+- Il ne modifie quelque chose (ressenti de la nuit, niveau du soir,
+  maladie déclarée, séance faite, objectif) que sur demande, avec un
+  bouton « Annuler », et ne supprime jamais rien.
+- La conversation n'est pas stockée sur le serveur : elle reste dans le
+  navigateur de l'utilisateur et est effacée à la déconnexion.
+- Si aucun modèle local n'est configuré, le chat est simplement
+  désactivé.
+
 ## Stockage et partage
 
 - Toutes les données restent dans la base de données locale du serveur
   auto-hébergé par l'utilisateur. Rien n'est envoyé à un service tiers
   autre que ceux explicitement configurés par l'utilisateur lui-même
   (Google Calendar, l'API Garmin Connect, et le fournisseur de modèle
-  de langage choisi pour générer le message).
+  de langage choisi pour générer le message). Le chat, lui, n'utilise
+  qu'un modèle local (voir ci-dessus).
 - Aucune donnée n'est vendue, partagée avec des annonceurs, ou utilisée
   à des fins autres que le fonctionnement de cette instance personnelle.
 - Le jeton d'accès Google Calendar est stocké localement sur le serveur
