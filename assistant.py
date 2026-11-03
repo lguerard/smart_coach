@@ -887,8 +887,12 @@ def _workouts(conn, uid: int, start: str, end: str, tz) -> list[dict]:
             zones = metrics.hr_zone_pct(conn, uid, row["uuid"], max_hr) if max_hr else []
             if zones:
                 item["temps_par_zone_pct"] = {f"Z{i + 1}": z for i, z in enumerate(zones)}
+        elif row["uuid"].startswith("garmin-"):
+            item["fc"] = ("la montre n'a envoye aucune frequence cardiaque "
+                          "pour cette activite")
         else:
-            item["fc"] = "pas de frequence cardiaque enregistree pour cette activite"
+            item["fc"] = ("activite venue de Health Connect : sa frequence "
+                          "cardiaque est reprise de Garmin au prochain import")
         out.append({k: v for k, v in item.items() if v is not None})
     return out
 

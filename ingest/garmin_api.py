@@ -390,6 +390,21 @@ def upsert_activities(
         if _overlaps_other(
             conn, user_id, "exercise_sessions", start_utc, end_utc, uuid,
         ):
+            # The same session already came in another way (Health
+            # Connect history): it is not inserted twice, but it gets
+            # the watch's heart rate, which only Garmin carries. Without
+            # this, every such session had none -- the chat said "the
+            # watch sent no heart rate" for a workout recorded with it.
+            other = conn.execute(
+                "SELECT uuid FROM exercise_sessions WHERE user_id = ? AND "
+                "uuid != ? AND start_utc < ? AND end_utc > ? ORDER BY "
+                "start_utc LIMIT 1", (user_id, uuid, end_utc, start_utc),
+            ).fetchone()
+            hr_added, route_added = _ingest_activity_details(
+                conn, user_id, client, act["activityId"], other["uuid"],
+            )
+            hr_count += hr_added
+            route_count += route_added
             continue
         row = (
             uuid, start_utc, end_utc,
@@ -2148,13 +2163,21 @@ if __name__ == "__main__":
                 "duration": 3000.0,
             }]
 
-    dup_sessions, _, _ = upsert_activities(
+    dup_sessions, dup_hr, _ = upsert_activities(
         conn, uid, _OverlapGarmin(), tz, 3650,
     )
     assert dup_sessions == 0, dup_sessions
     assert conn.execute(
         "SELECT COUNT(*) AS n FROM exercise_sessions",
     ).fetchone()["n"] == before
+    # ...but the session already there gets the watch's heart rate (the
+    # chat said "no heart rate" for a workout recorded with it).
+    assert dup_hr == 2, dup_hr
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM exercise_hr_samples WHERE "
+        "exercise_uuid = 'hc-old'").fetchone()["n"] == 2
+    # Once only: the next run does not fetch it again.
+    assert upsert_activities(conn, uid, _OverlapGarmin(), tz, 3650)[1] == 0
 
     # Sleep: one real night in the window, stages mapped to HC ints.
     sleep_sessions, sleep_stages = upsert_sleep(
