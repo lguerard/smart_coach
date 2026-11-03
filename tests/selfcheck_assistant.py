@@ -130,6 +130,9 @@ assert workouts_a["fc_max_estimee"] == 180 and workouts_a["zones"][0]["a_partir_
 one_day = out_a[("entrainements", '{"jour": "hier"}')]
 assert isinstance(one_day["entrainements"], str) or \
     one_day["entrainements"][0]["courbe_fc_par_5_min"], one_day
+# The sessions list carries what the watch recorded, heart rate included.
+done_day = next(r for r in sessions_a["par_jour"] if r.get("enregistre_par_la_montre"))
+assert done_day["enregistre_par_la_montre"][0]["fc_moyenne"], done_day
 heart_a = out_a[("coeur", '{"jours": 14}')]
 assert heart_a["fc_repos"]["base_personnelle"] and heart_a["vfc"][0]["nuit_ms"], heart_a
 assert heart_a["journee"][0]["max"] == 150 and heart_a["pendant_les_entrainements"], heart_a

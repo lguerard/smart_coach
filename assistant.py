@@ -351,7 +351,8 @@ READ_TOOLS = [
          "jours": {"type": "integer", "description": "7-90, default 30"}},
         ("metrique",)),
     _fn("seances", "Recent sessions per day: planned, done, skipped or "
-        "replaced, minutes, rating, level.",
+        "replaced, minutes, rating, level, and what the watch recorded "
+        "(average/max heart rate, zones, calories).",
         {"jours": {"type": "integer", "description": "1-28, default 14"}}),
     _fn("entrainements", "The workouts the watch RECORDED (Garmin): "
         "date, start time, type, duration, calories, average and max "
@@ -629,6 +630,13 @@ def tool_bilan(conn, ctx, args) -> dict:
     )
     brief = coach_brief.build_brief(payload)
     brief.pop("language", None)
+    # Yesterday's workout as the watch recorded it, heart rate included.
+    yesterday = _workouts(conn, uid, _plus(today, -1), _plus(today, -1),
+                          metrics.local_tz(conn, uid))
+    if yesterday:
+        brief["entrainement_hier_montre"] = [
+            {k: w[k] for k in ("type", "duree_min", "fc_moyenne", "fc_max",
+                               "temps_par_zone_pct") if k in w} for w in yesterday]
     return brief
 
 
@@ -807,6 +815,16 @@ def tool_seances(conn, ctx, args) -> dict:
     days = _int(args, "jours", 14, 1, 28)
     levels = {r["date"]: r["level"]
               for r in training.rateable_sessions(conn, uid, today, days)}
+    # The watch's recording of each day, heart rate included: asked
+    # about "ma seance de tapis", the model reads this tool first, and
+    # without it answered that the watch had sent no heart rate.
+    recorded: dict = {}
+    for workout in _workouts(conn, uid, _plus(today, -(days - 1)), today,
+                             metrics.local_tz(conn, uid)):
+        recorded.setdefault(workout["date"], []).append(
+            {k: workout[k] for k in ("heure", "type", "duree_min", "kcal_actives",
+                                     "fc_moyenne", "fc_max", "temps_par_zone_pct",
+                                     "fc") if k in workout})
     rows = []
     for day in reversed(_dates(today, days)):
         # yesterday_training(d + 1) reviews day d: planned, done, minutes,
@@ -832,6 +850,8 @@ def tool_seances(conn, ctx, args) -> dict:
                "ressenti": review["rating"], "bilan": verdict}
         if day in levels:
             row["niveau"] = levels[day]
+        if day in recorded:
+            row["enregistre_par_la_montre"] = recorded[day]
         rows.append({k: v for k, v in row.items() if v is not None})
     counts: dict = {}
     for row in rows:
