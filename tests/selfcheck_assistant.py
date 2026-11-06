@@ -246,6 +246,44 @@ assert not call(A, "regler_objectif", {"objectif": "calorie_target_fixed_kcal",
                                        "valeur": 600})["ok"]
 
 
+# Settings: checked like the form, a heavier bell lowers the levels and
+# its undo puts them back; private settings are not reachable.
+for session_type in training.LOADED_TYPES:
+    training.set_level(conn, A, session_type, 6)
+db.set_setting(conn, A, "kettlebell_kg", "6")
+bell = call(A, "regler_parametre", {"parametre": "kettlebell_kg", "valeur": "8"})
+assert bell["ok"] and db.get_setting(conn, A, "kettlebell_kg") == "8", bell
+assert training.get_level(conn, A, "kettlebell") < 6
+call(A, bell["undo"]["tool"], bell["undo"]["args"], undo=True)
+assert db.get_setting(conn, A, "kettlebell_kg") == "6"
+assert training.get_level(conn, A, "kettlebell") == 6
+assert db.get_setting(conn, B, "kettlebell_kg") != "8"
+assert not call(A, "regler_parametre", {"parametre": "kettlebell_kg", "valeur": "200"})["ok"]
+assert not call(A, "regler_parametre", {"parametre": "ntfy_topic", "valeur": "x"})["ok"]
+assert call(A, "regler_parametre", {"parametre": "ask_sleep", "valeur": "non"})["ok"]
+assert db.get_setting(conn, A, "ask_sleep") == "0"
+assert call(A, "regler_parametre", {"parametre": "message_style", "valeur": "Fiche"})["ok"]
+assert db.get_setting(conn, A, "message_style") == "fiche"
+# The week plan: one day changed, undo puts it back as it was.
+before_plan = training.schedule_for_user(conn, A)[4]
+plan_edit = call(A, "regler_planning", {"jour": "vendredi", "seance": "kettlebell",
+                                        "heure": "19h00", "duree_min": 25})
+assert plan_edit["ok"], plan_edit
+friday = training.schedule_for_user(conn, A)[4]
+assert (friday["session_type"], friday["start"], friday["duration_min"]) == (
+    "kettlebell", "19:00", 25), friday
+assert training.schedule_for_user(conn, B)[4] == before_plan
+call(A, plan_edit["undo"]["tool"], plan_edit["undo"]["args"], undo=True)
+assert training.schedule_for_user(conn, A)[4] == before_plan
+assert not call(A, "regler_planning", {"jour": "vendredi", "heure": "25:00"})["ok"]
+# Today's actions: refused when they do not apply, told why.
+refused = call(A, "seance_du_jour", {"action": "plus_lourd"})
+assert not refused["ok"] and "too easy" in refused["result"], refused
+missed = call(A, "seance_du_jour", {"action": "pas_faite", "jour": "aujourdhui"})
+assert missed["ok"] and done_sessions.done_on(conn, A, TODAY)["session_type"] == "none", missed
+call(A, missed["undo"]["tool"], missed["undo"]["args"], undo=True)
+assert done_sessions.done_on(conn, A, TODAY) is None
+
 # --- 5. The tool loop against a fake Ollama ---------------------------------
 def ndjson(*chunks):
     return "".join(json.dumps(c) + "\n" for c in chunks)

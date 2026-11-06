@@ -37,6 +37,7 @@ import asyncio
 import datetime as dt
 import json
 import os
+import re
 import sqlite3
 from typing import Any, AsyncIterator, Callable, Optional
 
@@ -182,7 +183,8 @@ FR_SYSTEM_PROMPT = (
     "essoufflement inhabituel, malaise, ou ca ne passe pas) : dis "
     "calmement de consulter un medecin.\n"
     "ACTIONS : noter_nuit, regler_niveau, declarer_malade, "
-    "declarer_seance, regler_objectif changent ses donnees : seulement "
+    "declarer_seance, regler_objectif, regler_parametre, regler_planning, "
+    "seance_du_jour changent ses donnees : seulement "
     "s'il le demande ou dit oui clairement. Ensuite, confirme en une "
     "phrase ce qui a change, d'apres le resultat de l'outil (il peut "
     "annuler d'un geste). Ne dis JAMAIS qu'un reglage est change sans "
@@ -227,7 +229,8 @@ EN_SYSTEM_PROMPT = (
     "symptoms (fever, chest pain or tightness, unusual breathlessness, "
     "feeling faint, or it does not go away): calmly say to see a doctor.\n"
     "ACTIONS: noter_nuit, regler_niveau, declarer_malade, "
-    "declarer_seance, regler_objectif change their data: only when they "
+    "declarer_seance, regler_objectif, regler_parametre, regler_planning, "
+    "seance_du_jour change their data: only when they "
     "ask or clearly say yes. Then confirm in one sentence what changed, "
     "from the tool's result (they can undo it in one tap). NEVER say a "
     "setting changed without calling the tool and getting ok; what no "
@@ -400,6 +403,22 @@ READ_TOOLS = [
          "jours": {"type": "integer", "description": "window, default 7"}},
         ("domaine",)),
 ]
+# Settings the chat may change (regler_parametre), each checked like the
+# Settings form checks it. Never the addresses, topics, calendar or
+# Drive names, keys or anything private.
+PARAMS = {
+    "kettlebell_kg": ("number", 2, 48),
+    "session_cap_min": ("number", 10, 240),
+    "kettlebell_circuits": ("choice", ("A", "AB", "B")),
+    "message_style": ("choice", ("texte", "fiche")),
+    "ask_sleep": ("bool",),
+    "remind_mfp_sync": ("bool",),
+    "desk_job": ("bool",),
+    "city": ("text", 60),
+}
+_DAY_NAMES = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+              "dimanche")
+
 WRITE_TOOLS = [
     _fn("noter_nuit", "WRITE: record how last night felt (the Home "
         "page's buttons). Only when asked.",
@@ -422,6 +441,34 @@ WRITE_TOOLS = [
              *training.SESSION_LABEL_FR, done_sessions.OTHER,
              done_sessions.NOTHING]}},
         ("jour", "seance")),
+    _fn("regler_parametre", "WRITE: change one setting: kettlebell "
+        "weight in kg (levels go down for a heavier one), max session "
+        "length in minutes, kettlebell circuits, morning message style, "
+        "morning sleep question / evening MyFitnessPal reminder / desk "
+        "break on or off (oui/non), weather city. Only when asked.",
+        {"parametre": {"type": "string", "enum": list(PARAMS)},
+         "valeur": {"type": "string"}}, ("parametre", "valeur")),
+    _fn("regler_planning", "WRITE: change one day of the week plan: its "
+        "session (or repos), start time HH:MM, length in minutes. The "
+        "watch and calendar follow. Only when asked.",
+        {"jour": {"type": "string", "enum": list(_DAY_NAMES)},
+         "seance": {"type": "string",
+                    "enum": [*training.SESSION_LABEL_FR, "repos"]},
+         "heure": {"type": "string", "description": "optional HH:MM"},
+         "duree_min": {"type": "integer", "description": "optional"}},
+        ("jour",)),
+    _fn("seance_du_jour", "WRITE: today's session. envoyer = do the "
+        "planned session anyway on a day the coach cancelled or lightened "
+        "it (sent to the watch); revenir = back to the coach's call. "
+        "pas_faite / sans_montre / demain = a planned session not "
+        "recorded (demain only when tomorrow is a rest day). plus_lourd / "
+        "plus_long = after a session too easy. Only when asked.",
+        {"action": {"type": "string", "enum": [
+            "envoyer", "revenir", "pas_faite", "sans_montre", "demain",
+            "plus_lourd", "plus_long"]},
+         "jour": {"type": "string",
+                  "description": "for pas_faite/sans_montre: aujourdhui or hier"}},
+        ("action",)),
     _fn("regler_objectif", "WRITE: change one goal from Settings. Only "
         "when asked. A daily calorie target ('mets-moi a 1900 kcal') is "
         "calorie_target_fixed_kcal (0 = computed again every day).",
@@ -440,7 +487,8 @@ TOOL_LABELS = {
            "donnees_brutes": "Données brutes",
            "noter_nuit": "Nuit notée", "regler_niveau": "Niveau du soir",
            "declarer_malade": "Maladie", "declarer_seance": "Séance notée",
-           "regler_objectif": "Objectif"},
+           "regler_objectif": "Objectif", "regler_parametre": "Réglage",
+           "regler_planning": "Planning", "seance_du_jour": "Séance du jour"},
     "en": {"bilan": "Today's overview", "aujourdhui": "Today",
            "sommeil": "Sleep", "tendances": "Trends",
            "seances": "Sessions", "entrainements": "Workouts",
@@ -449,7 +497,8 @@ TOOL_LABELS = {
            "donnees_brutes": "Raw data",
            "noter_nuit": "Night logged", "regler_niveau": "Tonight's level",
            "declarer_malade": "Illness", "declarer_seance": "Session logged",
-           "regler_objectif": "Goal"},
+           "regler_objectif": "Goal", "regler_parametre": "Setting",
+           "regler_planning": "Plan", "seance_du_jour": "Today's session"},
 }
 
 
@@ -1449,6 +1498,161 @@ def write_regler_objectif(conn, ctx, args, undo=False):
             if (previous or "") != value else None)
 
 
+def write_regler_parametre(conn, ctx, args, undo=False):
+    uid = ctx["user_id"]
+    key = _choice(args, "parametre", PARAMS)
+    spec = PARAMS[key]
+    previous = db.get_setting(conn, uid, key)
+    raw = str(args.get("valeur", "")).strip()
+    if spec[0] == "number":
+        try:
+            number = float(raw.replace(",", "."))
+        except ValueError:
+            raise ToolError("valeur must be a number") from None
+        if not spec[1] <= number <= spec[2]:
+            raise ToolError(f"{key} must be between {spec[1]} and {spec[2]}")
+        value = f"{number:g}"
+    elif spec[0] == "choice":
+        value = next((c for c in spec[1] if c.lower() == raw.lower()), None)
+        if value is None:
+            raise ToolError(f"{key} must be one of {list(spec[1])}")
+    elif spec[0] == "bool":
+        if raw.lower() in ("1", "oui", "on", "true", "yes"):
+            value = "1"
+        elif raw.lower() in ("0", "non", "off", "false", "no"):
+            value = "0"
+        else:
+            raise ToolError("valeur: oui or non")
+    else:
+        if len(raw) > spec[1]:
+            raise ToolError(f"{key}: at most {spec[1]} characters")
+        value = raw
+    levels_before = {t: training.get_level(conn, uid, t)
+                     for t in training.LOADED_TYPES}
+    db.set_setting(conn, uid, key, value)
+    conn.commit()
+    data = {"ok": True, "parametre": key, "valeur": value, "avant": previous or None}
+    if key == "kettlebell_kg":
+        if undo and isinstance(args.get("niveaux"), dict):
+            # Undoing a heavier bell: the levels it lowered come back.
+            for session_type, level in args["niveaux"].items():
+                if session_type in training.LOADED_TYPES:
+                    training.set_level(conn, uid, session_type, int(level))
+        else:
+            old_kg = float(previous) if previous else None
+            lowered = training.lower_levels_for_heavier_bell(
+                conn, uid, old_kg, float(value))
+            if lowered:
+                data["niveaux_ajustes"] = {t: f"{a} -> {b}"
+                                           for t, (a, b) in lowered.items()}
+    undo_args = {"parametre": key, "valeur": previous or ""}
+    if key == "kettlebell_kg":
+        undo_args["niveaux"] = levels_before
+    return data, ({"tool": "regler_parametre", "args": undo_args}
+                  if (previous or "") != value else None)
+
+
+def write_regler_planning(conn, ctx, args, undo=False):
+    uid = ctx["user_id"]
+    weekday = _DAY_NAMES.index(_choice(args, "jour", _DAY_NAMES))
+    schedule = {str(k): dict(v) for k, v in
+                training.schedule_for_user(conn, uid).items()}
+    before = dict(schedule[str(weekday)])
+    if undo and isinstance(args.get("entree"), dict):
+        entry = dict(args["entree"])
+    else:
+        entry = dict(before)
+        if args.get("seance"):
+            seance = _choice(args, "seance", {*training.SESSION_LABEL_FR, "repos"})
+            entry["session_type"] = None if seance == "repos" else seance
+            if seance != "repos":
+                entry["title"] = training.SESSION_LABEL_FR[seance]
+        if args.get("heure"):
+            start = str(args["heure"]).strip().replace("h", ":")
+            if len(start) == 4 and start[1] == ":":
+                start = "0" + start
+            if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", start):
+                raise ToolError("heure: HH:MM")
+            entry["start"] = start
+        if args.get("duree_min") not in (None, ""):
+            entry["duration_min"] = _int(args, "duree_min", None, 5, 240, clamp=False)
+    schedule[str(weekday)] = entry
+    db.set_setting(conn, uid, "schedule", json.dumps(schedule))
+    conn.commit()
+    import run_coach
+
+    data = {"ok": True, "jour": _DAY_NAMES[weekday],
+            "seance": training.SESSION_LABEL_FR.get(entry.get("session_type"), "repos"),
+            "heure": entry.get("start"), "duree_min": entry.get("duration_min")}
+    if run_coach.planned_change(conn, uid):
+        data["note"] = ("la seance d'aujourd'hui a change : le bouton "
+                        "Replanifier de l'accueil refait la journee (montre, "
+                        "agenda, message)")
+    else:
+        data["note"] = "la montre et l'agenda suivront au prochain passage du coach"
+    return data, ({"tool": "regler_planning",
+                   "args": {"jour": _DAY_NAMES[weekday], "entree": before}}
+                  if before != entry else None)
+
+
+def write_seance_du_jour(conn, ctx, args, undo=False):
+    import missed_sessions
+    import progression_choice
+
+    uid, today = ctx["user_id"], ctx["today"]
+    action = _choice(args, "action", ("envoyer", "revenir", "pas_faite",
+                                      "sans_montre", "demain", "plus_lourd",
+                                      "plus_long", "annuler_reponse"))
+    if action in ("envoyer", "revenir"):
+        if action == "envoyer":
+            offer = day_actions.send_anyway(conn, uid, today)
+            if offer is None:
+                raise ToolError("nothing to send anyway today: the coach did "
+                                "not cancel or lighten today's session")
+            data = {"ok": True, "envoye": f"{offer['label']} niveau {offer['level']}"}
+        else:
+            day_actions.cancel_anyway(conn, uid, today)
+            data = {"ok": True, "retour": "choix du coach"}
+        try:
+            from ingest import garmin_api
+
+            data["montre"] = garmin_api.refresh_today(
+                conn, uid, garmin_api.get_client(ctx["username"]), today)
+        except Exception as error:  # noqa: BLE001 -- told, never lost
+            data["montre"] = f"envoi impossible : {error}"[:200]
+        return data, {"tool": "seance_du_jour", "args": {
+            "action": "revenir" if action == "envoyer" else "envoyer"}}
+    if action in ("plus_lourd", "plus_long"):
+        offer = progression_choice.offer(conn, uid, today)
+        if offer is None:
+            raise ToolError("no choice pending: it comes after a loaded "
+                            "session rated too easy")
+        note = progression_choice.choose(
+            conn, uid, today, offer["date"], offer["type"],
+            "heavier" if action == "plus_lourd" else "longer")
+        if not note:
+            raise ToolError("that choice is not possible now")
+        return {"ok": True, "fait": note}, None
+    day = _day(args, "jour", today, 2)
+    if action == "annuler_reponse":
+        done_sessions.clear(conn, uid, day)
+        conn.execute("DELETE FROM postponed_sessions WHERE user_id = ? AND "
+                     "from_date = ?", (uid, day))
+        conn.commit()
+        return {"ok": True, "annule": day}, None
+    choice = {"pas_faite": "none", "sans_montre": "nowatch",
+              "demain": "tomorrow"}[action]
+    try:
+        note = missed_sessions.answer(conn, uid, day, choice, today=today)
+    except ValueError as error:
+        raise ToolError(str(error)) from None
+    if not note:
+        raise ToolError("not possible: no training session planned that day, "
+                        "or tomorrow is not a free rest day")
+    return {"ok": True, "fait": note}, {"tool": "seance_du_jour", "args": {
+        "action": "annuler_reponse", "jour": day}}
+
+
 READERS: dict[str, Callable] = {
     "bilan": tool_bilan, "aujourdhui": tool_aujourdhui,
     "sommeil": tool_sommeil, "tendances": tool_tendances,
@@ -1462,6 +1666,9 @@ WRITERS: dict[str, Callable] = {
     "declarer_malade": write_declarer_malade,
     "declarer_seance": write_declarer_seance,
     "regler_objectif": write_regler_objectif,
+    "regler_parametre": write_regler_parametre,
+    "regler_planning": write_regler_planning,
+    "seance_du_jour": write_seance_du_jour,
 }
 
 
@@ -1650,6 +1857,14 @@ def action_label(name: str, data: dict, language: str) -> str:
     if name == "regler_objectif":
         return (f"{data['objectif']} : {data['avant'] or '—'} → "
                 f"{data['valeur'] or '—'}")
+    if name == "regler_parametre":
+        return f"{data['parametre']} : {data['avant'] or '—'} → {data['valeur'] or '—'}"
+    if name == "regler_planning":
+        return (f"{data['jour'].capitalize()} : {data['seance']}"
+                + (f" à {data['heure']}" if data.get("heure") else ""))
+    if name == "seance_du_jour":
+        return str(data.get("fait") or data.get("envoye") or data.get("retour")
+                   or data.get("annule") or "")[:80]
     return name
 
 

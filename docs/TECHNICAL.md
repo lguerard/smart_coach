@@ -840,8 +840,17 @@ Same split as the morning message -- code decides, the model writes:
   (tonight's level, calendar included), `declarer_malade`,
   `declarer_seance` ("J'ai fait : ..."), `regler_objectif` (a few
   numeric goals, range-checked, the fixed daily calorie target among
-  them). The prompt forbids saying a setting changed without the tool's
-  ok. Each shows an action chip with
+  them), `regler_parametre` (kettlebell weight -- a heavier one lowers
+  the loaded levels like the Settings form, and its undo restores them
+  --, max session length, kettlebell circuits, morning message style,
+  the morning sleep question, the evening MyFitnessPal reminder, the
+  desk break, the weather city; never addresses, topics, calendar or
+  Drive names), `regler_planning` (one day of the week plan: session or
+  rest, start, length; today changed = the Home "Replanifier" banner)
+  and `seance_du_jour` (send the planned session anyway / back to the
+  coach's call, not done / done without the watch / tomorrow, heavier /
+  longer after "too easy": the very functions behind those buttons).
+  The prompt forbids saying a setting changed without the tool's ok. Each shows an action chip with
   **Annuler**, which puts the previous value back. Nothing is ever
   deleted, and nothing changes unless asked.
 - Body photos, passwords, tokens, the ntfy topic and the Drive remote
