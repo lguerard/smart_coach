@@ -214,6 +214,24 @@
         {% endfor %}
       </select>
     </label>
+    {% set current = method %}
+    {% set cls = '' %}
+{% if by_method %}
+  <div class="grid grid-cols-2 gap-2 {{ cls }}">
+    {% for key, label in [('montre', 'Avec la montre'), ('formule', 'Sans la montre')] %}
+    {% set m = by_method.get(key) %}
+    <div class="rounded-lg p-2.5 text-xs" style="background: var(--surface-2);{% if current == key %} outline: 2px solid var(--accent);{% endif %}">
+      <p class="caption">{{ label }}{% if current == key %} · utilisée{% endif %}</p>
+      {% if m %}
+      <p class="mt-1"><span class="num font-semibold text-sm" style="color: var(--text-primary);">{{ m.target_kcal }} kcal</span> d'objectif</p>
+      <p style="color: var(--muted);">pour {{ m.tdee_kcal }} kcal de dépense{{ ' hors séances' if key == 'montre' else '' }}</p>
+      {% else %}
+      <p class="mt-1" style="color: var(--muted);">{{ 'pas de dépense de la montre sur 7 jours' if key == 'montre' else 'il manque la taille, l\'âge ou le sexe' }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+{% endif %}
     <p class="text-xs" style="color: var(--muted);">
       Dans tous les cas, l'objectif retire ensuite le deficit pour ton rythme
       vise ; un objectif calories fixe (plus haut) passe avant tout ca. La

@@ -1232,6 +1232,7 @@ def progress_page(request: Request) -> HTMLResponse:
             "bundle": bundle,
             "targets": progress.macro_targets(conn, user_id, date),
             "observed": progress.observed_tdee(conn, user_id, date),
+            "by_method": progress.target_by_method(conn, user_id, date),
             "level_history": level_history,
             "history_types": history_types,
             "history_type": history_type,
@@ -1908,6 +1909,8 @@ def settings_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "settings.html", {
             "settings": settings, "levels": levels,
+            "by_method": progress.target_by_method(
+                conn, user_id, today_str(conn, user_id)),
             "passkeys": db.passkeys_for_user(conn, user_id),
             "is_admin": admin,
             "pending_users": db.pending_users(conn) if admin else [],

@@ -406,6 +406,45 @@ def formula_tdee(
     return bmr * max(1.1, min(1.9, factor))
 
 
+def target_by_method(
+    conn: sqlite3.Connection, user_id: int, date: str,
+) -> dict:
+    """The expenditure and calorie target each base would give, side by
+    side: ``{"montre": {...}, "formule": {...}}`` with ``tdee_kcal`` and
+    ``target_kcal`` (a method with nothing to go on is left out)."""
+    weight = conn.execute(
+        "SELECT kg FROM weight WHERE user_id = ? AND local_date <= ? "
+        "ORDER BY local_date DESC LIMIT 1", (user_id, date),
+    ).fetchone()
+    if not weight:
+        return {}
+    weekly_change = float(
+        db.get_setting(conn, user_id, "weekly_weight_change_kg") or 0)
+    delta = weekly_change * KCAL_PER_KG_BODY_MASS / 7
+    start = (dt.date.fromisoformat(date) - dt.timedelta(days=7)).isoformat()
+    end = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+    watch_total = conn.execute(
+        "SELECT AVG(daily_total) AS avg FROM (SELECT local_date, "
+        "SUM(kcal) AS daily_total FROM total_calories_burned WHERE "
+        "user_id = ? AND local_date BETWEEN ? AND ? GROUP BY local_date)",
+        (user_id, start, end),
+    ).fetchone()["avg"]
+    options = {
+        "montre": (watch_total - exercise_kcal_per_day(conn, user_id, start, end)
+                   if watch_total is not None else None),
+        "formule": formula_tdee(conn, user_id, weight["kg"]),
+    }
+    out = {}
+    for name, tdee in options.items():
+        if tdee is None:
+            continue
+        target = round(tdee + delta)
+        if weekly_change < 0:
+            target = max(target, CALORIE_FLOOR_KCAL)
+        out[name] = {"tdee_kcal": round(tdee), "target_kcal": target}
+    return out
+
+
 def exercise_kcal_per_day(
     conn: sqlite3.Connection, user_id: int, start: str, end: str,
 ) -> float:
@@ -1894,6 +1933,11 @@ if __name__ == "__main__":
     assert "exercise_kcal_excluded" not in by_formula, by_formula
     db.set_setting(conn, obs, "activity_factor", "1.4")
     assert macro_targets(conn, obs, when)["tdee_estimate_kcal"] == round(bmr * 1.4)
+    # Both side by side, whichever is in use.
+    both = target_by_method(conn, obs, when)
+    assert both["formule"]["tdee_kcal"] == round(bmr * 1.4), both
+    assert both["montre"]["tdee_kcal"] == 2600 - 50, both
+    assert both["montre"]["target_kcal"] == 2550 - 440, both
     db.set_setting(conn, obs, "tdee_method", "")
     assert macro_targets(conn, obs, when)["tdee_method"] == "montre"
     # A target set by hand wins, and the carbs follow it.
