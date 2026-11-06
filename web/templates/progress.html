@@ -31,7 +31,7 @@
 
 {% if targets.calorie_target_kcal %}
 <div class="card p-4">
-  <h2 class="font-semibold text-sm mb-1">Objectif calories : {{ targets.calorie_target_kcal }} kcal</h2>
+  <h2 class="font-semibold text-sm mb-1">Objectif calories : {{ targets.calorie_target_kcal }} kcal{% if targets.calorie_source == 'fixed' %} <span class="text-xs font-normal" style="color: var(--muted);">· fixé à la main (Réglages){% if targets.computed_calorie_target_kcal %} ; le calcul automatique donnerait {{ targets.computed_calorie_target_kcal }} kcal{% endif %}</span>{% endif %}</h2>
   {% if observed %}
   <p class="text-xs" style="color: var(--text-secondary);">
     Sur 4 semaines tu as noté en moyenne <strong>{{ observed.intake_kcal }} kcal</strong>

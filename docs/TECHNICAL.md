@@ -222,7 +222,11 @@ days logged at 1000 kcal or more, the logged average minus the weight
 slope's energy, 7700 kcal/kg). The watch tends to count high and a
 diary to miss things; the observed figure needs neither to be right,
 since a deficit set from it is a deficit in the person's own logging.
-A cut never goes below 1500 kcal. When it applies, the Progrès page
+A cut never goes below 1500 kcal. A fixed target set by hand
+(`calorie_target_fixed_kcal`, Réglages or the chat's `regler_objectif`;
+1200-5000 kcal, empty or 0 = computed again) wins over all of this; the
+carbs follow it, and the Progrès page shows what the computed target
+would be. When the observed expenditure applies, the Progrès page
 says so with its numbers, Sunday's message once, and the recalibration
 hint is not repeated on top.
 
@@ -835,7 +839,9 @@ Same split as the morning message -- code decides, the model writes:
   very same functions: `noter_nuit` (how the night felt), `regler_niveau`
   (tonight's level, calendar included), `declarer_malade`,
   `declarer_seance` ("J'ai fait : ..."), `regler_objectif` (a few
-  numeric goals, range-checked). Each shows an action chip with
+  numeric goals, range-checked, the fixed daily calorie target among
+  them). The prompt forbids saying a setting changed without the tool's
+  ok. Each shows an action chip with
   **Annuler**, which puts the previous value back. Nothing is ever
   deleted, and nothing changes unless asked.
 - Body photos, passwords, tokens, the ntfy topic and the Drive remote

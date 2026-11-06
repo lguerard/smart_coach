@@ -228,6 +228,22 @@ assert not call(A, "regler_objectif", {"objectif": "ntfy_topic", "valeur": 1})["
 weight_goal = call(A, "regler_objectif", {"objectif": "weekly_weight_change_kg",
                                           "valeur": "-0.5"})
 assert weight_goal["ok"] and db.get_setting(conn, A, "weekly_weight_change_kg") == "-0.5"
+# "Mets-moi a 1900 kcal par jour": a fixed calorie target, really set,
+# with the computed one back on undo or on 0.
+import progress  # noqa: E402
+
+kcal = call(A, "regler_objectif", {"objectif": "calorie_target_fixed_kcal",
+                                   "valeur": 1900})
+assert kcal["ok"] and progress.macro_targets(conn, A, TODAY)["calorie_target_kcal"] == 1900
+assert progress.macro_targets(conn, B, TODAY).get("calorie_source") != "fixed"
+call(A, "regler_objectif", kcal["undo"]["args"], undo=True)
+assert progress.macro_targets(conn, A, TODAY).get("calorie_source") != "fixed"
+call(A, "regler_objectif", {"objectif": "calorie_target_fixed_kcal", "valeur": 1900})
+assert call(A, "regler_objectif", {"objectif": "calorie_target_fixed_kcal",
+                                   "valeur": 0})["ok"]
+assert db.get_setting(conn, A, "calorie_target_fixed_kcal") == ""
+assert not call(A, "regler_objectif", {"objectif": "calorie_target_fixed_kcal",
+                                       "valeur": 600})["ok"]
 
 
 # --- 5. The tool loop against a fake Ollama ---------------------------------

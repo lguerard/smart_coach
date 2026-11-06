@@ -102,6 +102,13 @@
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>
     <label class="block text-sm">
+      Objectif calories fixe (kcal / jour, optionnel -- vide = calcule
+      chaque jour d'apres ta depense et le rythme vise ci-dessous)
+      <input name="calorie_target_fixed_kcal" value="{{ settings.calorie_target_fixed_kcal }}"
+        type="number" min="1200" max="5000" step="10" placeholder="automatique"
+        class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+    </label>
+    <label class="block text-sm">
       Rythme vise (kg / semaine, negatif = perte)
       <input name="weekly_weight_change_kg" value="{{ settings.weekly_weight_change_kg }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">

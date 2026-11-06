@@ -185,7 +185,9 @@ FR_SYSTEM_PROMPT = (
     "declarer_seance, regler_objectif changent ses donnees : seulement "
     "s'il le demande ou dit oui clairement. Ensuite, confirme en une "
     "phrase ce qui a change, d'apres le resultat de l'outil (il peut "
-    "annuler d'un geste).\n"
+    "annuler d'un geste). Ne dis JAMAIS qu'un reglage est change sans "
+    "avoir appele l'outil et recu ok ; ce qu'aucun outil ne change, dis "
+    "qu'il faut le faire dans Reglages.\n"
     "STYLE : court (2 a 6 phrases, ou une petite liste), en francais, "
     "Markdown simple (gras, listes). Pas de culpabilisation, aucune "
     "remarque sur son corps ou son poids, pas de jargon. "
@@ -227,7 +229,9 @@ EN_SYSTEM_PROMPT = (
     "ACTIONS: noter_nuit, regler_niveau, declarer_malade, "
     "declarer_seance, regler_objectif change their data: only when they "
     "ask or clearly say yes. Then confirm in one sentence what changed, "
-    "from the tool's result (they can undo it in one tap).\n"
+    "from the tool's result (they can undo it in one tap). NEVER say a "
+    "setting changed without calling the tool and getting ok; what no "
+    "tool changes, say it is done in Settings.\n"
     "STYLE: short (2 to 6 sentences, or a short list), in English, "
     "simple Markdown (bold, lists). No guilt, no remark about their body "
     "or weight, no jargon. Today: {weekday} {date}."
@@ -259,6 +263,8 @@ GOALS = {
     "hydration_target_ml_per_kg": (20, 60),
     "target_weight_kg": (30, 250),
     "weekly_weight_change_kg": (-1.0, 0.5),
+    # A fixed daily calorie target; 0 = back to the computed one.
+    "calorie_target_fixed_kcal": (1200, 5000),
 }
 
 
@@ -417,7 +423,8 @@ WRITE_TOOLS = [
              done_sessions.NOTHING]}},
         ("jour", "seance")),
     _fn("regler_objectif", "WRITE: change one goal from Settings. Only "
-        "when asked.",
+        "when asked. A daily calorie target ('mets-moi a 1900 kcal') is "
+        "calorie_target_fixed_kcal (0 = computed again every day).",
         {"objectif": {"type": "string", "enum": list(GOALS)},
          "valeur": {"type": "number"}}, ("objectif", "valeur")),
 ]
@@ -1142,6 +1149,7 @@ SETTINGS_SHOWN = (
     "intensity_weekly_goal_min", "protein_target_g_per_kg",
     "fat_target_g_per_kg", "hydration_target_ml_per_kg", "target_weight_kg",
     "weekly_weight_change_kg", "height_cm", "age_years", "sex",
+    "calorie_target_fixed_kcal",
     "kettlebell_kg", "kettlebell_circuits", "desk_job", "ask_sleep",
     "message_style", "city", "trust_device_tdee", "bmr_manual_kcal",
 )
@@ -1427,9 +1435,11 @@ def write_regler_objectif(conn, ctx, args, undo=False):
         except (TypeError, ValueError):
             raise ToolError("valeur must be a number") from None
         lo, hi = GOALS[key]
-        if not lo <= number <= hi:
+        if key == "calorie_target_fixed_kcal" and number == 0:
+            number = None  # back to the target computed every day
+        elif not lo <= number <= hi:
             raise ToolError(f"{key} must be between {lo} and {hi}")
-        value = f"{number:g}"
+        value = "" if number is None else f"{number:g}"
     # Same storage as the Settings form (db.set_setting, stripped text).
     db.set_setting(conn, uid, key, value)
     return ({"ok": True, "objectif": key, "valeur": value or None,

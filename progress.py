@@ -427,6 +427,20 @@ def macro_weight_kg(
     return target if 0 < target < weight_kg else weight_kg
 
 
+FIXED_CALORIES_RANGE = (1200, 5000)
+
+
+def fixed_calorie_target(conn: sqlite3.Connection, user_id: int) -> Optional[int]:
+    """The calorie target set by hand (Settings or the chat), or None."""
+    raw = (db.get_setting(conn, user_id, "calorie_target_fixed_kcal") or "").strip()
+    try:
+        value = round(float(raw.replace(",", ".")))
+    except ValueError:
+        return None
+    low, high = FIXED_CALORIES_RANGE
+    return value if low <= value <= high else None
+
+
 def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     """Today's calorie/protein/fat/carb/hydration targets.
 
@@ -479,6 +493,15 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
             calorie_target = max(calorie_target, CALORIE_FLOOR_KCAL)
         result["tdee_estimate_kcal"] = round(tdee)
         result["calorie_target_kcal"] = calorie_target
+    # A target set by hand wins over the computed one, whatever the
+    # expenditure says (carbs then fill what it leaves).
+    fixed = fixed_calorie_target(conn, user_id)
+    if fixed:
+        if calorie_target is not None:
+            result["computed_calorie_target_kcal"] = calorie_target
+        calorie_target = fixed
+        result["calorie_target_kcal"] = fixed
+        result["calorie_source"] = "fixed"
 
     protein_ratio = db.get_setting(conn, user_id, "protein_target_g_per_kg")
     fat_ratio = db.get_setting(conn, user_id, "fat_target_g_per_kg")
@@ -1784,6 +1807,15 @@ if __name__ == "__main__":
     assert week_review(conn, obs, "2026-08-01") == {
         "days": 7, "logged_days": 0, "under_days": 0, "over_days": [],
         "sessions": {"planned": 0, "done": 0}}
+    # A target set by hand wins, and the carbs follow it.
+    db.set_setting(conn, obs, "calorie_target_fixed_kcal", "1900")
+    fixed = macro_targets(conn, obs, when)
+    assert fixed["calorie_target_kcal"] == 1900 and fixed["calorie_source"] == "fixed", fixed
+    assert fixed["carb_target_g"] == round((1900 - fixed["protein_target_g"] * 4
+                                            - fixed["fat_target_g"] * 9) / 4), fixed
+    db.set_setting(conn, obs, "calorie_target_fixed_kcal", "300")  # nonsense: ignored
+    assert "calorie_source" not in macro_targets(conn, obs, when)
+    db.set_setting(conn, obs, "calorie_target_fixed_kcal", "")
     # A cut never goes under the floor.
     db.set_setting(conn, obs, "weekly_weight_change_kg", "-1.5")
     assert macro_targets(conn, obs, when)["calorie_target_kcal"] == CALORIE_FLOOR_KCAL

@@ -855,6 +855,10 @@ DEFAULT_SETTINGS = {
     "hydration_target_ml_per_kg": "35",
     "target_weight_kg": "",
     "weekly_weight_change_kg": "-0.4",
+    # A fixed daily calorie target (kcal), set by hand or from the chat;
+    # empty = computed from the expenditure and weekly_weight_change_kg
+    # (progress.macro_targets).
+    "calorie_target_fixed_kcal": "",
     "height_cm": "",
     "age_years": "",
     "sex": "",
