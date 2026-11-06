@@ -415,6 +415,8 @@ PARAMS = {
     "remind_mfp_sync": ("bool",),
     "desk_job": ("bool",),
     "city": ("text", 60),
+    "tdee_method": ("choice", ("montre", "bmr_actif", "formule")),
+    "activity_factor": ("number", 1.1, 1.9),
 }
 _DAY_NAMES = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
               "dimanche")
@@ -445,7 +447,10 @@ WRITE_TOOLS = [
         "weight in kg (levels go down for a heavier one), max session "
         "length in minutes, kettlebell circuits, morning message style, "
         "morning sleep question / evening MyFitnessPal reminder / desk "
-        "break on or off (oui/non), weather city. Only when asked.",
+        "break on or off (oui/non), weather city, what the calorie "
+        "target starts from (tdee_method: montre, bmr_actif, formule = "
+        "without the watch) and the daily activity factor for the "
+        "formula. Only when asked.",
         {"parametre": {"type": "string", "enum": list(PARAMS)},
          "valeur": {"type": "string"}}, ("parametre", "valeur")),
     _fn("regler_planning", "WRITE: change one day of the week plan: its "
@@ -1198,7 +1203,7 @@ SETTINGS_SHOWN = (
     "intensity_weekly_goal_min", "protein_target_g_per_kg",
     "fat_target_g_per_kg", "hydration_target_ml_per_kg", "target_weight_kg",
     "weekly_weight_change_kg", "height_cm", "age_years", "sex",
-    "calorie_target_fixed_kcal",
+    "calorie_target_fixed_kcal", "tdee_method", "activity_factor",
     "kettlebell_kg", "kettlebell_circuits", "desk_job", "ask_sleep",
     "message_style", "city", "trust_device_tdee", "bmr_manual_kcal",
 )

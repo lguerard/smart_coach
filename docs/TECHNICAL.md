@@ -227,7 +227,12 @@ Progrès page, not used to lower the target any more: both together put
 a real account on the floor (2,150 kcal logged with the weight creeping
 up read as 1,900 kcal burned), a gap that comes from a log missing
 things or water on the scale more than from the body. It is the base
-only when the watch reports no expenditure at all. A cut never goes below 1500 kcal. A fixed target set by hand
+only when the watch reports no expenditure at all. Réglages "Base du
+calcul" (`tdee_method`) also offers the basal rate plus the watch's
+active calories (`bmr_actif`, what an unticked `trust_device_tdee`
+meant) and no watch at all (`formule`: `bmr_manual_kcal`, else
+Mifflin-St Jeor from height/age/sex, times `activity_factor` -- 1.2
+sitting most of the day to 1.5 physical work, workouts not counted). A cut never goes below 1500 kcal. A fixed target set by hand
 (`calorie_target_fixed_kcal`, Réglages or the chat's `regler_objectif`;
 1200-5000 kcal, empty or 0 = computed again) wins over all of this; the
 carbs follow it, and the Progrès page shows what the computed target

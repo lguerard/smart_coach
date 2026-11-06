@@ -197,24 +197,32 @@
 
   <div class="card p-4 space-y-3">
     <h2 class="font-semibold text-sm">Depense energetique (TDEE / BMR)</h2>
-    <p class="text-xs" style="color: var(--muted);">
-      Par defaut, la cible calorique se base sur la depense totale
-      rapportee par la montre (moyenne 7 jours) -- elle inclut deja
-      son estimation du metabolisme de base, ce qui rend le BMR
-      ci-dessous SANS EFFET tant que la case est cochee. Decochez-la
-      si vous avez de bonnes raisons de penser que ce metabolisme de
-      base est surestime : la cible repasse alors par le BMR manuel
-      (sinon la formule Mifflin-St Jeor) + les calories actives
-      mesurees.
-    </p>
-    <label class="flex items-center gap-2 text-sm">
-      <input name="trust_device_tdee" type="checkbox" value="1"
-        {{ "checked" if settings.trust_device_tdee != "0" }}>
-      Faire confiance a la depense totale de la montre
+    {% set method = settings.tdee_method or ('bmr_actif' if settings.trust_device_tdee == '0' else 'montre') %}
+    <label class="block text-sm">
+      Base du calcul des calories
+      <select name="tdee_method" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+        <option value="montre" {{ 'selected' if method == 'montre' }}>Montre : sa depense totale, sans les seances (par defaut)</option>
+        <option value="bmr_actif" {{ 'selected' if method == 'bmr_actif' }}>Metabolisme de base + calories actives de la montre</option>
+        <option value="formule" {{ 'selected' if method == 'formule' }}>Sans la montre : formule (taille, age, sexe, poids) x activite</option>
+      </select>
     </label>
     <label class="block text-sm">
-      BMR manuel (kcal/jour, optionnel -- ignore si la case ci-dessus
-      est cochee)
+      Activite au quotidien, hors seances (pour la formule)
+      <select name="activity_factor" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
+        {% for value, label in [('1.2', 'Assis presque toute la journee'), ('1.3', 'Assis, avec un peu de marche (~7 000 pas)'), ('1.4', 'Souvent debout ou a marcher'), ('1.5', 'Travail physique')] %}
+        <option value="{{ value }}" {{ 'selected' if (settings.activity_factor or '1.3') == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="text-xs" style="color: var(--muted);">
+      Dans tous les cas, l'objectif retire ensuite le deficit pour ton rythme
+      vise ; un objectif calories fixe (plus haut) passe avant tout ca. La
+      formule a besoin de la taille, de l'age et du sexe ci-dessous (ou d'un
+      BMR manuel).
+    </p>
+    <label class="block text-sm">
+      BMR manuel (kcal/jour, optionnel -- utilise par les deux dernieres
+      bases ci-dessus, a la place de la formule ou de la montre)
       <input name="bmr_manual_kcal" value="{{ settings.bmr_manual_kcal }}"
         class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
     </label>

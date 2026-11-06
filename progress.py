@@ -337,9 +337,10 @@ def tdee_estimate(
         dt.date.fromisoformat(date) - dt.timedelta(days=7)
     ).isoformat()
     end = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
-    trust_device = (
-        db.get_setting(conn, user_id, "trust_device_tdee") or "1"
-    ) == "1"
+    method = tdee_method(conn, user_id)
+    if method == "formule":
+        return formula_tdee(conn, user_id, weight_kg)
+    trust_device = method == "montre"
     avg_total = conn.execute(
         "SELECT AVG(daily_total) AS avg FROM (SELECT local_date, "
         "SUM(kcal) AS daily_total FROM total_calories_burned WHERE "
@@ -352,7 +353,15 @@ def tdee_estimate(
     workouts = exercise_kcal_per_day(conn, user_id, start, end)
     if avg_total is not None:
         return avg_total - workouts
-    bmr = bmr_for_date(conn, user_id, date, weight_kg)
+    # A basal rate set by hand wins over the device's reading: setting
+    # one is saying the device's is wrong.
+    manual = (db.get_setting(conn, user_id, "bmr_manual_kcal") or "").strip()
+    try:
+        bmr = float(manual) if manual else None
+    except ValueError:
+        bmr = None
+    if bmr is None:
+        bmr = bmr_for_date(conn, user_id, date, weight_kg)
     if bmr is None:
         return None
     avg_active = conn.execute(
@@ -362,6 +371,39 @@ def tdee_estimate(
         "local_date)", (user_id, start, end),
     ).fetchone()["avg"] or 0
     return bmr + max(0.0, avg_active - workouts)
+
+
+TDEE_METHODS = ("montre", "bmr_actif", "formule")
+
+
+def tdee_method(conn: sqlite3.Connection, user_id: int) -> str:
+    """``tdee_method``, or what ``trust_device_tdee`` meant before it."""
+    method = (db.get_setting(conn, user_id, "tdee_method") or "").strip()
+    if method in TDEE_METHODS:
+        return method
+    return ("montre" if (db.get_setting(conn, user_id, "trust_device_tdee")
+                         or "1") == "1" else "bmr_actif")
+
+
+def formula_tdee(
+    conn: sqlite3.Connection, user_id: int, weight_kg: float,
+) -> Optional[float]:
+    """The expenditure with no watch at all: the basal rate set by hand,
+    else Mifflin-St Jeor from height/age/sex, times ``activity_factor``
+    (daily life, workouts not counted). None without height/age/sex."""
+    manual = (db.get_setting(conn, user_id, "bmr_manual_kcal") or "").strip()
+    try:
+        bmr = float(manual) if manual else estimate_bmr(conn, user_id, weight_kg)
+    except ValueError:
+        bmr = estimate_bmr(conn, user_id, weight_kg)
+    if bmr is None:
+        return None
+    try:
+        factor = float((db.get_setting(conn, user_id, "activity_factor")
+                        or "1.3").replace(",", "."))
+    except ValueError:
+        factor = 1.3
+    return bmr * max(1.1, min(1.9, factor))
 
 
 def exercise_kcal_per_day(
@@ -490,7 +532,7 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         return {}
     weight_kg = weight_row["kg"]
 
-    result: dict = {}
+    result: dict = {"tdee_method": tdee_method(conn, user_id)}
     tdee = tdee_estimate(conn, user_id, date, weight_kg)
     calorie_target = None
     # The watch's expenditure without the workouts is the base. The one
@@ -504,7 +546,7 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     if tdee is None and observed:
         tdee = observed["tdee_kcal"]
         result["tdee_source"] = "observed"
-    elif tdee is not None:
+    elif tdee is not None and tdee_method(conn, user_id) != "formule":
         window_end = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
         window_start = (dt.date.fromisoformat(date) - dt.timedelta(days=7)).isoformat()
         workouts = exercise_kcal_per_day(conn, user_id, window_start, window_end)
@@ -1840,6 +1882,20 @@ if __name__ == "__main__":
     assert week_review(conn, obs, "2026-08-01") == {
         "days": 7, "logged_days": 0, "under_days": 0, "over_days": [],
         "sessions": {"planned": 0, "done": 0}}
+    # No watch at all: Mifflin-St Jeor x the daily activity factor.
+    db.set_setting(conn, obs, "height_cm", "180")
+    db.set_setting(conn, obs, "age_years", "40")
+    db.set_setting(conn, obs, "sex", "M")
+    db.set_setting(conn, obs, "tdee_method", "formule")
+    by_formula = macro_targets(conn, obs, when)
+    bmr = 10 * 98 + 6.25 * 180 - 5 * 40 + 5
+    assert by_formula["tdee_method"] == "formule", by_formula
+    assert by_formula["tdee_estimate_kcal"] == round(bmr * 1.3), by_formula
+    assert "exercise_kcal_excluded" not in by_formula, by_formula
+    db.set_setting(conn, obs, "activity_factor", "1.4")
+    assert macro_targets(conn, obs, when)["tdee_estimate_kcal"] == round(bmr * 1.4)
+    db.set_setting(conn, obs, "tdee_method", "")
+    assert macro_targets(conn, obs, when)["tdee_method"] == "montre"
     # A target set by hand wins, and the carbs follow it.
     db.set_setting(conn, obs, "calorie_target_fixed_kcal", "1900")
     fixed = macro_targets(conn, obs, when)

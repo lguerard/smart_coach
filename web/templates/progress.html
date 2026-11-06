@@ -37,6 +37,14 @@
     {% if targets.tdee_source == 'observed' %}
     Pas de dépense comptée par la montre : l'objectif part de ce que montre ta balance
     ({{ targets.tdee_estimate_kcal }} kcal par jour).
+    {% elif targets.tdee_method == 'formule' %}
+    Il part d'une dépense calculée <strong>sans la montre</strong> : métabolisme de base
+    (taille, âge, sexe, poids) × ton activité au quotidien, sport non compté, soit
+    {{ targets.tdee_estimate_kcal }} kcal par jour, moins le déficit pour ton rythme visé
+    (<a href="/settings" class="link">Réglages</a>).
+    {% elif targets.tdee_method == 'bmr_actif' %}
+    Il part de ton métabolisme de base + les calories actives de la montre hors séances,
+    soit {{ targets.tdee_estimate_kcal }} kcal par jour, moins le déficit pour ton rythme visé.
     {% else %}
     Il part de ta dépense comptée par la montre <strong>sans les séances</strong> :
     {{ targets.tdee_estimate_kcal }} kcal par jour{% if targets.exercise_kcal_excluded %}

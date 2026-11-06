@@ -1958,10 +1958,8 @@ async def save_settings(request: Request, background: BackgroundTasks):
         conn, user_id, "remind_mfp_sync",
         "1" if "remind_mfp_sync" in form else "0",
     )
-    db.set_setting(
-        conn, user_id, "trust_device_tdee",
-        "1" if "trust_device_tdee" in form else "0",
-    )
+    if form.get("tdee_method") not in (None, *progress.TDEE_METHODS):
+        db.set_setting(conn, user_id, "tdee_method", "montre")
     for session_type in training.SESSION_LABEL_FR:
         field = f"level_{session_type}"
         if field in form and str(form[field]).strip():

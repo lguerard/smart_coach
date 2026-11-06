@@ -879,6 +879,17 @@ DEFAULT_SETTINGS = {
     # stays "1", since the device total is never broken back down
     # into its basal and activity parts to swap just one out).
     "trust_device_tdee": "1",
+    # What the calorie target starts from (progress.tdee_estimate):
+    # "montre" = the watch's expenditure without the workouts;
+    # "bmr_actif" = the basal rate + the watch's active calories (what an
+    # unticked trust_device_tdee used to mean); "formule" = no watch at
+    # all, Mifflin-St Jeor (or bmr_manual_kcal) x activity_factor.
+    # Empty = follow trust_device_tdee, as before this setting.
+    "tdee_method": "",
+    # Daily activity outside the workouts, for "formule": 1.2 sitting
+    # most of the day, 1.3 sitting with some walking (~7,000 steps),
+    # 1.4 on your feet a lot, 1.5 physical work.
+    "activity_factor": "1.3",
     "rclone_remote": "",  # this user's Drive folder (multi-user: one export per person)
     "calendar_name": "",  # this user's target Google Calendar display name
     "ntfy_topic": "",  # this user's own ntfy topic (falls back to env NTFY_TOPIC)
