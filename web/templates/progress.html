@@ -32,28 +32,27 @@
 {% if targets.calorie_target_kcal %}
 <div class="card p-4">
   <h2 class="font-semibold text-sm mb-1">Objectif calories : {{ targets.calorie_target_kcal }} kcal{% if targets.calorie_source == 'fixed' %} <span class="text-xs font-normal" style="color: var(--muted);">· fixé à la main (Réglages){% if targets.computed_calorie_target_kcal %} ; le calcul automatique donnerait {{ targets.computed_calorie_target_kcal }} kcal{% endif %}</span>{% endif %}</h2>
-  {% if observed %}
+  {% if targets.tdee_estimate_kcal %}
   <p class="text-xs" style="color: var(--text-secondary);">
-    Sur 4 semaines tu as noté en moyenne <strong>{{ observed.intake_kcal }} kcal</strong>
-    ({{ observed.days }} jours notés) et ton poids a bougé de
-    <strong>{{ '%+.2f'|format(observed.weekly_kg) }} kg par semaine</strong> :
-    ton corps dépense donc environ <strong>{{ observed.tdee_kcal }} kcal</strong> par jour,
-    tels que tu les notes.
     {% if targets.tdee_source == 'observed' %}
-    {% if targets.observed_capped %}C'est bien moins que les {{ targets.device_tdee_kcal }} kcal comptés par la montre :
-    un tel écart vient plus souvent d'un journal incomplet ou d'eau sur la balance que du corps.
-    L'objectif part donc de {{ targets.tdee_estimate_kcal }} kcal (300 de moins que la montre, au plus).
-    {% elif targets.device_tdee_kcal %}C'est moins que les {{ targets.device_tdee_kcal }} kcal comptés par la montre :
-    l'objectif part de ce chiffre-là, celui que ta balance confirme.{% else %}L'objectif part de ce chiffre-là.{% endif %}
+    Pas de dépense comptée par la montre : l'objectif part de ce que montre ta balance
+    ({{ targets.tdee_estimate_kcal }} kcal par jour).
     {% else %}
-    La montre compte {{ targets.tdee_estimate_kcal }} kcal, un peu moins : l'objectif part du plus prudent des deux.
+    Il part de ta dépense comptée par la montre <strong>sans les séances</strong> :
+    {{ targets.tdee_estimate_kcal }} kcal par jour{% if targets.exercise_kcal_excluded %}
+    ({{ targets.exercise_kcal_excluded }} kcal de sport par jour en moyenne laissés de côté :
+    la montre les surestime, et ne pas les « remanger » garde une marge){% endif %},
+    moins le déficit pour ton rythme visé.
     {% endif %}
   </p>
-  {% else %}
-  <p class="text-xs" style="color: var(--text-secondary);">
-    À partir de la dépense comptée par la montre ({{ targets.tdee_estimate_kcal }} kcal).
-    Avec 14 jours de repas notés et des pesées sur 4 semaines, l'objectif suivra
-    aussi ce que ta balance montre.
+  {% endif %}
+  {% if observed %}
+  <p class="text-xs mt-1.5" style="color: var(--muted);">
+    Pour comparer : sur 4 semaines tu as noté en moyenne {{ observed.intake_kcal }} kcal
+    ({{ observed.days }} jours) et ton poids a bougé de {{ '%+.2f'|format(observed.weekly_kg) }} kg
+    par semaine, ce qui donnerait environ {{ observed.tdee_kcal }} kcal de dépense, tels que tu notes.
+    {% if targets.tdee_estimate_kcal and observed.tdee_kcal < targets.tdee_estimate_kcal - 200 %}Un écart pareil vient le plus souvent
+    d'un journal incomplet (huile, boissons, grignotages) ou d'eau sur la balance.{% endif %}
   </p>
   {% endif %}
 </div>

@@ -215,25 +215,23 @@ that session on the watch, and every later push from the site keeps it;
 the target weight when it is set below the current one
 (`progress.macro_weight_kg`).
 
-The calorie target starts from the lower of two expenditures: the
-watch's (7-day average of `total_calories_burned`) and the one the
-scale shows (`progress.observed_tdee`: over 28 days with at least 14
-days logged at 1000 kcal or more, the logged average minus the weight
-slope's energy, 7700 kcal/kg). The watch tends to count high and a
-diary to miss things; the observed figure needs neither to be right,
-since a deficit set from it is a deficit in the person's own logging.
-It brings the watch's figure down by 300 kcal at most
-(`OBSERVED_MAX_DROP_KCAL`): a wider gap comes from a log missing things
-or water on the scale far more often than from the body (2,150 kcal
-logged with the weight creeping up read as 1,900 burned and put the
-target on the floor).
-A cut never goes below 1500 kcal. A fixed target set by hand
+The calorie target starts from the watch's expenditure without the
+workouts: the 7-day average of `total_calories_burned` minus the active
+calories recorded during each workout (`progress.exercise_kcal_per_day`).
+The watch counts workouts high (strength, intervals), and a target that
+does not eat them back keeps that error on the safe side. The
+expenditure the scale shows (`progress.observed_tdee`: over 28 days with
+at least 14 days logged at 1000 kcal or more, the logged average minus
+the weight slope's energy, 7700 kcal/kg) is shown next to it on the
+Progrès page, not used to lower the target any more: both together put
+a real account on the floor (2,150 kcal logged with the weight creeping
+up read as 1,900 kcal burned), a gap that comes from a log missing
+things or water on the scale more than from the body. It is the base
+only when the watch reports no expenditure at all. A cut never goes below 1500 kcal. A fixed target set by hand
 (`calorie_target_fixed_kcal`, Réglages or the chat's `regler_objectif`;
 1200-5000 kcal, empty or 0 = computed again) wins over all of this; the
 carbs follow it, and the Progrès page shows what the computed target
-would be. When the observed expenditure applies, the Progrès page
-says so with its numbers, Sunday's message once, and the recalibration
-hint is not repeated on top.
+would be.
 
 Kettlebell days use one of two 20/10 circuits
 (`training.KETTLEBELL_CIRCUITS`). A is the standing video workout (the

@@ -318,8 +318,9 @@ def tdee_estimate(
     """Estimated total daily energy expenditure, for setting targets.
 
     Prefers the trailing 7-day average of the device's own
-    total_calories_burned; falls back to BMR + trailing average
-    active_calories when the device doesn't report a TDEE directly,
+    total_calories_burned, minus the recorded workouts' own calories
+    (``exercise_kcal_per_day``); falls back to BMR + trailing average
+    active_calories (workouts left out the same way) when the device doesn't report a TDEE directly,
     or when Settings' ``trust_device_tdee`` is turned off (see
     :func:`bmr_for_date` and db.DEFAULT_SETTINGS for why that switch
     exists -- the device total is never decomposed to swap out just
@@ -345,8 +346,12 @@ def tdee_estimate(
         "user_id = ? AND local_date BETWEEN ? AND ? GROUP BY "
         "local_date)", (user_id, start, end),
     ).fetchone()["avg"] if trust_device else None
+    # The workouts' own calories are left out: the watch counts them
+    # high (strength, intervals), and a target that does not eat them
+    # back keeps that error on the safe side.
+    workouts = exercise_kcal_per_day(conn, user_id, start, end)
     if avg_total is not None:
-        return avg_total
+        return avg_total - workouts
     bmr = bmr_for_date(conn, user_id, date, weight_kg)
     if bmr is None:
         return None
@@ -356,7 +361,23 @@ def tdee_estimate(
         "user_id = ? AND local_date BETWEEN ? AND ? GROUP BY "
         "local_date)", (user_id, start, end),
     ).fetchone()["avg"] or 0
-    return bmr + avg_active
+    return bmr + max(0.0, avg_active - workouts)
+
+
+def exercise_kcal_per_day(
+    conn: sqlite3.Connection, user_id: int, start: str, end: str,
+) -> float:
+    """The recorded workouts' active calories, per day of the window
+    (the active-calorie records overlapping each workout)."""
+    total = conn.execute(
+        "SELECT COALESCE(SUM(a.kcal), 0) AS kcal FROM active_calories a "
+        "WHERE a.user_id = ? AND EXISTS (SELECT 1 FROM exercise_sessions e "
+        "WHERE e.user_id = a.user_id AND e.local_date BETWEEN ? AND ? AND "
+        "a.start_utc < e.end_utc AND a.end_utc > e.start_utc)",
+        (user_id, start, end),
+    ).fetchone()["kcal"]
+    days = (dt.date.fromisoformat(end) - dt.date.fromisoformat(start)).days + 1
+    return total / max(1, days)
 
 
 KCAL_PER_KG_BODY_MASS = 7700  # standard energy-balance heuristic
@@ -368,12 +389,6 @@ OBSERVED_MIN_DAYS = 14
 OBSERVED_MIN_DAY_KCAL = 1000
 # A cut never goes below this, whatever the measures say.
 CALORIE_FLOOR_KCAL = 1500
-# The scale's expenditure may bring the watch's down by this much at
-# most. Below it, the gap is the log missing things or water on the
-# scale far more often than a body burning that little: on a real
-# account 2,150 kcal logged with the weight creeping up read as 1,900 kcal
-# burned and put the target on the 1,500 floor.
-OBSERVED_MAX_DROP_KCAL = 300
 
 
 def observed_tdee(
@@ -478,21 +493,23 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     result: dict = {}
     tdee = tdee_estimate(conn, user_id, date, weight_kg)
     calorie_target = None
-    # The lower of the watch's expenditure and the one the weight shows
-    # (observed_tdee): when the weight does not move as planned, the
-    # target follows what the scale says, never the other way round.
+    # The watch's expenditure without the workouts is the base. The one
+    # the scale shows (observed_tdee) is only shown next to it: lowering
+    # the target with it as well, on top of leaving the workouts out,
+    # put a real account on the 1,500 floor -- a gap that came from a
+    # log missing things or water on the scale more than from the body.
     observed = observed_tdee(conn, user_id, date)
     if observed:
         result["observed_tdee_kcal"] = observed["tdee_kcal"]
-        if tdee is None or observed["tdee_kcal"] < tdee:
-            if tdee is not None:
-                result["device_tdee_kcal"] = round(tdee)
-                if observed["tdee_kcal"] < tdee - OBSERVED_MAX_DROP_KCAL:
-                    result["observed_capped"] = True
-                tdee = max(observed["tdee_kcal"], tdee - OBSERVED_MAX_DROP_KCAL)
-            else:
-                tdee = observed["tdee_kcal"]
-            result["tdee_source"] = "observed"
+    if tdee is None and observed:
+        tdee = observed["tdee_kcal"]
+        result["tdee_source"] = "observed"
+    elif tdee is not None:
+        window_end = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+        window_start = (dt.date.fromisoformat(date) - dt.timedelta(days=7)).isoformat()
+        workouts = exercise_kcal_per_day(conn, user_id, window_start, window_end)
+        if workouts:
+            result["exercise_kcal_excluded"] = round(workouts)
     if tdee is not None:
         weekly_change = float(
             db.get_setting(conn, user_id, "weekly_weight_change_kg") or 0
@@ -1792,18 +1809,22 @@ if __name__ == "__main__":
     seen = observed_tdee(conn, obs, when)
     assert seen["tdee_kcal"] == 2200 and seen["weekly_kg"] == 0, seen
     flat = macro_targets(conn, obs, when)
-    assert flat["tdee_source"] == "observed" and flat["device_tdee_kcal"] == 2600, flat
-    # ...but 300 kcal under the watch's at most: 2,300, not 2,200.
-    assert flat["observed_capped"] and flat["tdee_estimate_kcal"] == 2300, flat
-    assert flat["calorie_target_kcal"] == 2300 - 440, flat
-    # Losing 0.5 kg a week on 2200 logged: the body burns ~2750, more
-    # than the watch says -- the watch's lower figure stays.
-    conn.execute("UPDATE weight SET kg = 98.0 - (julianday(local_date) - "
-                 "julianday('2026-09-01')) / 14.0 WHERE user_id = ?", (obs,))
+    # Only shown: the target stays on the watch's expenditure.
+    assert flat["observed_tdee_kcal"] == 2200 and "tdee_source" not in flat, flat
+    assert flat["calorie_target_kcal"] == 2600 - 440, flat
+    # A workout's own calories are left out of the watch's expenditure.
+    conn.execute(
+        "INSERT INTO exercise_sessions (uuid, user_id, start_utc, end_utc, "
+        "local_date, title) VALUES ('ob-e', ?, '2026-09-27T18:00:00+00:00', "
+        "'2026-09-27T18:30:00+00:00', '2026-09-27', 'Tapis')", (obs,))
+    conn.execute(
+        "INSERT INTO active_calories VALUES ('ob-a', ?, "
+        "'2026-09-27T18:00:00+00:00', '2026-09-27T18:30:00+00:00', "
+        "'2026-09-27', 350)", (obs,))
     conn.commit()
-    losing = macro_targets(conn, obs, when)
-    assert losing["observed_tdee_kcal"] > 2600 and "tdee_source" not in losing, losing
-    assert losing["calorie_target_kcal"] == 2600 - 440, losing
+    without = macro_targets(conn, obs, when)
+    assert without["exercise_kcal_excluded"] == 50, without  # 350 over 7 days
+    assert without["calorie_target_kcal"] == 2600 - 50 - 440, without
     # Too few logged days: the watch alone, as before.
     conn.execute("DELETE FROM nutrition WHERE user_id = ? AND local_date > "
                  "'2026-09-12'", (obs,))
