@@ -183,7 +183,28 @@ lowered level, even several in a row (the deload guardrail handles
 streaks); only a red day with the level already at its floor becomes
 an active uphill walk (5 km/h, 5 %, 35 min or the session cap if shorter), at most once per rolling
 week (`training.tier_after_guardrail`, `coach_log.recovery_kind`). The
-calendar event is retitled on those days. The coach's call is advice:
+calendar event is retitled on those days.
+
+Missed sessions (`missed_sessions.py`). Nothing is made up: a missed
+session's work is never added to the next ones, and the level just
+holds (`progression_gate`). At the evening check-in (after a fresh
+Garmin fetch, so a workout done at 20:00 is seen), a training day whose
+slot is over with nothing recorded or declared gets "what happened?"
+instead of the rating question: "Pas fait", "Fait sans montre" and,
+only when tomorrow is a rest day in the plan, nothing has been moved
+there yet and the session was not itself moved, "Je la fais demain"
+(signed links, `quick_links` kind "missed"; the same answers on Today's
+rating card). A moved session is stored in `postponed_sessions`;
+`missed_sessions.day_template` then gives that rest day the session
+(its type, the original slot), and every place that reads the day's plan
+uses it -- the morning decision, the watch, the calendar, Today, the
+chat. After a break -- the last two planned sessions of a type not done,
+or none done for more than ten days -- the morning starts that type one
+level lower, with no step up on top, once per day
+(`missed_sessions.apply_layoff`). Sunday's review says how many
+sessions were done out of those planned.
+
+The coach's call is advice:
 on a day it cancelled (rest), replaced (a walk) or lightened (a lower
 level than last time), Today offers to send the planned session anyway
 (`day_actions.anyway_offer` / `send_anyway`, table `day_overrides`, at

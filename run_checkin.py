@@ -214,7 +214,11 @@ def evening_checkin(
     today = date or dt.datetime.now(
         metrics.local_tz(conn, user_id)
     ).date().isoformat()
-    rating_prompt(conn, user, today)
+    # Tonight's workout reaches the database only through Garmin: fetched
+    # now, so a session done at 20:00 is not taken for a missed one.
+    _refresh_garmin_today(conn, user)
+    if not missed_prompt(conn, user, today):
+        rating_prompt(conn, user, today)
     lines = []
     avg_sleep = _recent_avg_sleep_hours(conn, user_id, today)
     if (
@@ -271,6 +275,54 @@ def public_url(conn: sqlite3.Connection, user_id: int) -> str:
 
     return (db.get_setting(conn, user_id, "public_url")
             or os.environ.get("PUBLIC_URL", "")).strip()
+
+
+MISSED_LABELS = (("none", "Pas fait"), ("nowatch", "Fait sans montre"),
+                 ("tomorrow", "Je la fais demain"))
+
+
+def missed_prompt(
+    conn: sqlite3.Connection, user: dict, today: str,
+    now: dt.datetime | None = None,
+) -> bool:
+    """Evening question when tonight's session was planned and the watch
+    recorded nothing once its slot is over: not done, done without the
+    watch, or tomorrow (only when tomorrow is a rest day,
+    missed_sessions.can_postpone). Replaces the rating question, which
+    has nothing to rate.
+
+    Returns:
+        bool: Whether a notification was sent.
+    """
+    import missed_sessions
+    import quick_links
+
+    user_id = user["id"]
+    question = missed_sessions.evening_question(conn, user_id, today)
+    now = now or dt.datetime.now(metrics.local_tz(conn, user_id))
+    if question is None or not missed_sessions.slot_over(conn, user_id, today, now):
+        return False
+    ntfy_topic = db.get_setting(conn, user_id, "ntfy_topic") or None
+    label = question["label"].lower()
+    text = (f"Pas de seance {label} enregistree ce soir. Qu'est-ce qui s'est "
+            "passe ? Rien a rattraper si elle n'est pas faite : la prochaine "
+            "reste au meme niveau.")
+    base = public_url(conn, user_id)
+    if not base:
+        sent_log.send(conn, user_id, "missed",
+                      text + " (Reponds dans Seances sur le site.)",
+                      topic=ntfy_topic)
+        return True
+    choices = [(c, l) for c, l in MISSED_LABELS
+               if c != "tomorrow" or question["can_postpone"]]
+    actions = [
+        {"action": "http", "label": label_fr, "method": "POST", "clear": True,
+         "url": quick_links.missed_url(conn, user_id, base, today, choice)}
+        for choice, label_fr in choices
+    ]
+    sent_log.send(conn, user_id, "missed", text, topic=ntfy_topic,
+                  actions=actions, click=f"{base.rstrip('/')}/sessions#notes")
+    return True
 
 
 def rating_prompt(conn: sqlite3.Connection, user: dict, today: str) -> bool:
@@ -470,6 +522,33 @@ if __name__ == "__main__" and sys.argv[1:] == ["--selfcheck"]:
     )
     conn.commit()
     assert not rating_prompt(conn, user, "2026-07-13")
+
+    # Nothing recorded once the slot is over: "what happened?" instead,
+    # with "tomorrow" only when tomorrow is a rest day in the plan.
+    import missed_sessions
+
+    late = dt.datetime(2026, 7, 15, 23, 30)
+    conn.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, 'x', '2026-07-15', "
+        "'green', 'lower_body', 3, 'm', 'train')", (uid,),
+    )
+    conn.commit()
+    early = dt.datetime(2026, 7, 15, 6, 0)
+    if not missed_sessions.slot_over(conn, uid, "2026-07-15", early):
+        assert not missed_prompt(conn, user, "2026-07-15", now=early)  # not yet
+    assert missed_prompt(conn, user, "2026-07-15", now=late)
+    text, actions, click = buttons[-1]
+    labels = [a["label"] for a in actions]
+    assert labels[:2] == ["Pas fait", "Fait sans montre"], labels
+    assert ("Je la fais demain" in labels) == missed_sessions.can_postpone(
+        conn, uid, "2026-07-15"), labels
+    assert all("/quick/missed/" in a["url"] for a in actions), actions
+    assert "Pas de seance muscu bas du corps" in text, text
+    # Answered: asked no more.
+    missed_sessions.answer(conn, uid, "2026-07-15", "none", today="2026-07-15")
+    assert not missed_prompt(conn, user, "2026-07-15", now=late)
+    conn.execute("DELETE FROM session_done WHERE user_id = ?", (uid,))
     conn.execute("DELETE FROM coach_log WHERE user_id = ?", (uid,))
     conn.execute("DELETE FROM session_feedback WHERE user_id = ?", (uid,))
     conn.commit()

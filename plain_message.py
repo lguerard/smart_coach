@@ -573,6 +573,10 @@ def _weekly_block(weekly: dict, fr: bool) -> str:
 
     lines = []
     week = weekly.get("week_review") or {}
+    if week.get("sessions_planned"):
+        done, planned = week.get("sessions_done", 0), week["sessions_planned"]
+        lines.append(f"🏋️ Séances : {done} faite{'s' if done > 1 else ''} sur "
+                     f"{planned} prévue{'s' if planned > 1 else ''}.")
     if week.get("logged_days"):
         under, logged = week["under_days"], week["logged_days"]
         line = (f"📅 Ta semaine : {under} jour{'s' if under > 1 else ''} sous "
@@ -785,6 +789,8 @@ if __name__ == "__main__":
                   "weight_change_kg": 0.9, "reading": "recomposition"}}})
     assert ("📅 Ta semaine : 2 jours sous l'objectif sur 6 notés, 2 150 kcal "
             "en moyenne pour 1 980 visées.") in sunday, sunday
+    assert "Séances : 3 faites sur 4 prévues." in card({"language": "fr", "weekly": {
+        "week_review": {"sessions_done": 3, "sessions_planned": 4}}})
     assert "Poids : +0,2 kg sur la semaine (98,4 kg en moyenne)." in sunday, sunday
     assert "Tour de taille : -2,0 cm en 28 jours (110,5 cm) : le tour de taille " \
         "baisse" in sunday, sunday

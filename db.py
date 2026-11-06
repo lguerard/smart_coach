@@ -669,6 +669,19 @@ CREATE TABLE IF NOT EXISTS day_overrides (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- A missed session moved to the next day, a rest day in the plan
+-- (missed_sessions.py): that day then plans it like a training day.
+CREATE TABLE IF NOT EXISTS postponed_sessions (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    from_date TEXT NOT NULL,
+    to_date TEXT NOT NULL,
+    session_type TEXT NOT NULL,
+    start TEXT,
+    duration_min INTEGER,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, to_date)
+);
+
 -- Waist circumference entered by hand on the Corps page (waist.py).
 CREATE TABLE IF NOT EXISTS waist_measurements (
     user_id INTEGER NOT NULL REFERENCES users(id),

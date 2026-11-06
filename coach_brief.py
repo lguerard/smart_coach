@@ -357,10 +357,13 @@ def weekly_brief(payload: dict) -> dict:
     # The week's food, day by day against the target, and the waist
     # read with the weight (progress.week_review, waist.trend).
     week = weekly.get("week_review") or {}
-    if week.get("logged_days"):
+    if week.get("logged_days") or (week.get("sessions") or {}).get("planned"):
         brief["week_review"] = {k: week[k] for k in (
             "logged_days", "under_days", "avg_kcal", "avg_target_kcal",
         ) if k in week}
+        if (week.get("sessions") or {}).get("planned"):
+            brief["week_review"]["sessions_done"] = week["sessions"]["done"]
+            brief["week_review"]["sessions_planned"] = week["sessions"]["planned"]
     waist_trend = weekly.get("waist")
     if waist_trend:
         brief["waist"] = {k: waist_trend[k] for k in (

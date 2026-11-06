@@ -14,6 +14,7 @@ from typing import Optional
 
 import db
 import done_sessions
+import missed_sessions
 import training
 
 
@@ -91,7 +92,7 @@ def set_today_level(
         try:
             gcal.push_description(
                 username, calendar_name, day,
-                training.schedule_for_user(conn, user_id)[day.weekday()],
+                missed_sessions.day_template(conn, user_id, date),
                 description, duration_min=values.get("duration_min"),
             )
         except Exception as error:  # noqa: BLE001 -- shown, never lost

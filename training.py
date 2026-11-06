@@ -1105,9 +1105,9 @@ def pending_feedback(
             "SELECT 1 FROM exercise_sessions WHERE user_id = ? AND "
             "local_date = ? LIMIT 1", (user_id, date),
         ).fetchone()
-        slot = schedule_for_user(conn, user_id)[
-            dt.date.fromisoformat(date).weekday()
-        ]
+        import missed_sessions
+
+        slot = missed_sessions.day_template(conn, user_id, date)
         try:
             hour, minute = (int(x) for x in str(slot.get("start") or "").split(":"))
             end = (hour * 60 + minute) + int(slot.get("duration_min") or 0)
@@ -2155,6 +2155,12 @@ def plan_day(
         feedback = recent_feedback(conn, user_id, session_type)
         status = compute_status(wellness, baseline, feedback, extra)
         if tier_info is None:
+            import missed_sessions
+
+            # Back after a break (missed twice in a row, or none for ten
+            # days): one level lower, and no step up on top of it.
+            restart = missed_sessions.apply_layoff(
+                conn, user_id, session_type, date)
             before = get_level(conn, user_id, session_type)
             # A yellow day still moves the level up when the level has
             # clearly been mastered (steady_progress); the day itself
@@ -2163,9 +2169,11 @@ def plan_day(
             steady = (
                 steady_progress(conn, user_id, session_type, date, before)
                 if status == "yellow" and wellness.get("sleep_felt") != "bad"
-                else None
+                and not restart else None
             )
             effective = "green" if steady else status
+            if restart and effective == "green":
+                effective = "yellow"
             gate = (
                 progression_gate(conn, user_id, session_type, date)
                 if effective == "green" else None
@@ -2182,6 +2190,8 @@ def plan_day(
                 before, level, status, gate, deload,
                 _all_votes(wellness, baseline, feedback, extra), steady,
             )
+            if restart:
+                reason = f"{restart} : niveau {before + 1} -> {level}"
             tier_info = tier_after_guardrail(
                 status, level, active_recoveries_recent(conn, user_id, date),
             )

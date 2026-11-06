@@ -52,6 +52,7 @@ import day_actions
 import done_sessions
 import meals
 import mfp_goals
+import missed_sessions
 import sent_log
 import session_history
 import sleep_analysis
@@ -548,8 +549,7 @@ def home(request: Request) -> HTMLResponse:
     date = today_str(conn, user_id)
     entry = latest_coach_entry(conn, user_id, date)
 
-    weekday = dt.date.fromisoformat(date).weekday()
-    day_template = training.schedule_for_user(conn, user_id)[weekday]
+    day_template = missed_sessions.day_template(conn, user_id, date)
     session_values = None
     description = None
     tier = training.TIER_TRAIN
@@ -729,6 +729,10 @@ def home(request: Request) -> HTMLResponse:
             "sync_sources": sources,
             "status_signals": status_signals,
             "pending_feedback": pending_feedback,
+            "pending_missed": (
+                missed_sessions.evening_question(
+                    conn, user_id, pending_feedback["date"], today=date)
+                if pending_feedback else None),
             "planning_changed": _planning_changed(conn, user_id),
             "note": request.query_params.get("note"),
             "sleep_felt": sleep_feedback.felt(conn, user_id, date),
@@ -866,6 +870,38 @@ async def progression(request: Request):
         status_code=303)
 
 
+@app.post("/quick/missed/{user_id}/{date}/{choice}/{signature}")
+def quick_missed(user_id: int, date: str, choice: str, signature: str):
+    """A notification button: tonight's session not done, done without
+    the watch, or tomorrow (signed link, quick_links, kind "missed")."""
+    conn = get_conn()
+    today = today_str(conn, user_id)
+    if not quick_links.verify(conn, user_id, date, choice, signature,
+                              today=today, action="missed"):
+        return PlainTextResponse("Lien invalide ou expire.", status_code=403)
+    note = missed_sessions.answer(conn, user_id, date, choice, today=today)
+    if not note:
+        return PlainTextResponse("Ce choix n'est plus possible.", status_code=409)
+    return PlainTextResponse(note)
+
+
+@app.post("/missed")
+async def missed_from_site(request: Request):
+    """The same three answers from the Today card."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    today = today_str(conn, user_id)
+    try:
+        note = missed_sessions.answer(conn, user_id, str(form.get("date", "")),
+                                      str(form.get("choice", "")), today=today)
+    except ValueError as error:
+        note = str(error)
+    return RedirectResponse(
+        "/?" + urlencode({"note": note or "Ce choix n'est plus possible."}),
+        status_code=303)
+
+
 @app.post("/quick/sleep/{user_id}/{date}/{rating}/{signature}")
 def quick_sleep(user_id: int, date: str, rating: str, signature: str):
     """A notification button: how the night was, no login needed (signed
@@ -938,9 +974,7 @@ def regenerate(request: Request) -> HTMLResponse:
         )
 
     language = db.get_setting(conn, user_id, "language") or "fr"
-    day_template = training.schedule_for_user(
-        conn, user_id,
-    )[dt.date.fromisoformat(date).weekday()]
+    day_template = missed_sessions.day_template(conn, user_id, date)
     plan = training.plan_from_log(conn, user_id, date, day_template, entry)
     # The same builder as the morning run: a regenerated message is the
     # same message rephrased, not one missing yesterday's activity, the

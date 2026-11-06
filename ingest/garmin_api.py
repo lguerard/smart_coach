@@ -1733,9 +1733,9 @@ def refresh_today(
     ).fetchone()
     if entry is None:
         return "no_log"
-    template = training.schedule_for_user(conn, user_id)[
-        dt.date.fromisoformat(today).weekday()
-    ]
+    import missed_sessions
+
+    template = missed_sessions.day_template(conn, user_id, today)
     plan = training.plan_from_log(conn, user_id, today, template, entry)
     kind = (
         None if plan["session_type"] is None or plan["tier"] == training.TIER_REST
@@ -1771,14 +1771,15 @@ def push_programme(
     # Edits made in Garmin Connect first: they go into the programme,
     # so this push sends them back instead of overwriting them.
     watch_sync.import_watch_edits(conn, user_id, client, today)
+    import missed_sessions
+
     results = {today: refresh_today(conn, user_id, client, today)}
-    schedule = training.schedule_for_user(conn, user_id)
     for row in conn.execute(
         "SELECT local_date FROM garmin_planned_workouts WHERE user_id = ? "
         "AND local_date > ? ORDER BY local_date", (user_id, today),
     ).fetchall():
         date = row["local_date"]
-        session_type = schedule[dt.date.fromisoformat(date).weekday()].get(
+        session_type = missed_sessions.day_template(conn, user_id, date).get(
             "session_type",
         )
         if not session_type:
@@ -1859,11 +1860,13 @@ def plan_week_ahead(
         )
     conn.commit()
 
-    schedule = training.schedule_for_user(conn, user_id)
+    import missed_sessions
+
     created = []
     for offset in range(1, days):
         day = start + dt.timedelta(days=offset)
-        session_type = schedule[day.weekday()].get("session_type")
+        session_type = missed_sessions.day_template(
+            conn, user_id, day.isoformat()).get("session_type")
         if not session_type:
             continue
         date = day.isoformat()

@@ -1403,8 +1403,11 @@ def week_review(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
                 under += 1
             else:
                 over.append(day)
+    import missed_sessions
+
     out = {"days": 7, "logged_days": len(logged), "under_days": under,
-           "over_days": over}
+           "over_days": over,
+           "sessions": missed_sessions.week_sessions(conn, user_id, date)}
     if logged:
         out["avg_kcal"] = round(sum(logged) / len(logged))
     if targets:
@@ -1779,7 +1782,8 @@ if __name__ == "__main__":
     assert week_review(conn, obs, "2026-09-15")["under_days"] == 4
     db.set_setting(conn, obs, "weekly_weight_change_kg", "-0.4")
     assert week_review(conn, obs, "2026-08-01") == {
-        "days": 7, "logged_days": 0, "under_days": 0, "over_days": []}
+        "days": 7, "logged_days": 0, "under_days": 0, "over_days": [],
+        "sessions": {"planned": 0, "done": 0}}
     # A cut never goes under the floor.
     db.set_setting(conn, obs, "weekly_weight_change_kg", "-1.5")
     assert macro_targets(conn, obs, when)["calorie_target_kcal"] == CALORIE_FLOOR_KCAL

@@ -88,6 +88,18 @@
         <button name="rating" value="right" class="btn btn-primary">Au bon niveau</button>
         <button name="rating" value="hard" class="btn">Trop dure</button>
       </form>
+      {% if pending_missed %}
+      <p class="text-xs mt-3" style="color: var(--muted);">La montre n'a rien enregistré ce jour-là.</p>
+      <form method="post" action="/missed" class="flex flex-wrap gap-2 mt-1.5">
+        <input type="hidden" name="date" value="{{ pending_feedback.date }}">
+        <button name="choice" value="none" class="btn btn-sm">Pas faite</button>
+        <button name="choice" value="nowatch" class="btn btn-sm">Faite sans la montre</button>
+        {% if pending_missed.can_postpone %}
+        <button name="choice" value="tomorrow" class="btn btn-sm">Je la fais demain</button>
+        {% endif %}
+      </form>
+      <p class="text-xs mt-1.5" style="color: var(--muted);">Pas faite : rien à rattraper, la prochaine reste au même niveau.</p>
+      {% endif %}
     </div>
     {% endif %}
 

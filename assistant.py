@@ -49,6 +49,7 @@ import db
 import day_review
 import done_sessions
 import meals
+import missed_sessions
 import metrics
 import muscles
 import progress
@@ -606,8 +607,7 @@ def _pick(src: dict, keys) -> dict:
 def _plan_today(conn, ctx):
     """(entry, plan, template) for today, plan None before the run."""
     entry = day_actions.coach_entry(conn, ctx["user_id"], ctx["today"])
-    template = training.schedule_for_user(conn, ctx["user_id"])[
-        dt.date.fromisoformat(ctx["today"]).weekday()]
+    template = missed_sessions.day_template(conn, ctx["user_id"], ctx["today"])
     plan = None
     if entry and (entry["session_type"] or entry["tier"]):
         plan = training.plan_from_log(conn, ctx["user_id"], ctx["today"],

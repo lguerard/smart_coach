@@ -27,7 +27,9 @@ import db
 RATINGS = ("easy", "right", "hard")
 SLEEP_RATINGS = ("bad", "ok", "good")
 PROGRESS_CHOICES = ("longer", "heavier")
-VALUES = {"rate": RATINGS, "sleep": SLEEP_RATINGS, "progress": PROGRESS_CHOICES}
+MISSED_CHOICES = ("none", "nowatch", "tomorrow")
+VALUES = {"rate": RATINGS, "sleep": SLEEP_RATINGS, "progress": PROGRESS_CHOICES,
+          "missed": MISSED_CHOICES}
 MAX_AGE_DAYS = 3
 
 
@@ -75,6 +77,15 @@ def progress_url(
     """Absolute URL of the one-tap "heavier or longer" link."""
     return (f"{base_url.rstrip('/')}/quick/progress/{user_id}/{date}/{choice}/"
             f"{sign(conn, user_id, date, choice, 'progress')}")
+
+
+def missed_url(
+    conn: sqlite3.Connection, user_id: int, base_url: str, date: str,
+    choice: str,
+) -> str:
+    """Absolute URL of a one-tap "session not done" answer."""
+    return (f"{base_url.rstrip('/')}/quick/missed/{user_id}/{date}/{choice}/"
+            f"{sign(conn, user_id, date, choice, 'missed')}")
 
 
 def verify(

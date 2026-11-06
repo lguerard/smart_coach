@@ -26,6 +26,7 @@ import db
 import gcal
 import llm
 import metrics
+import missed_sessions
 import progress
 import sent_log
 import session_history
@@ -69,8 +70,8 @@ def run_for_user(conn, user: dict, note: str | None = None) -> None:
     # pipeline only carries it out on the calendar, the watch and the
     # phone.
     illness = training.illness_watch(conn, user_id, today)
-    weekday = dt.date.fromisoformat(today).weekday()
-    template = training.schedule_for_user(conn, user_id)[weekday]
+    # The plan's day, or a missed session moved onto this rest day.
+    template = missed_sessions.day_template(conn, user_id, today)
     # Yesterday's TSB (today's isn't computed until after this pipeline
     # runs, see the training_load call below) -- lets the guardrail force
     # a deload on accumulated fatigue alone, not just 3 reds in a row.
@@ -251,8 +252,7 @@ def planned_change(conn, user_id: int) -> tuple[str | None, str | None] | None:
     ).fetchone()
     if entry is None:
         return None  # the morning has not run: it will use the planning
-    weekday = dt.date.fromisoformat(today).weekday()
-    now = training.schedule_for_user(conn, user_id)[weekday].get("session_type")
+    now = missed_sessions.day_template(conn, user_id, today).get("session_type")
     return None if entry["session_type"] == now else (entry["session_type"], now)
 
 
