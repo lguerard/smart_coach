@@ -222,6 +222,11 @@ days logged at 1000 kcal or more, the logged average minus the weight
 slope's energy, 7700 kcal/kg). The watch tends to count high and a
 diary to miss things; the observed figure needs neither to be right,
 since a deficit set from it is a deficit in the person's own logging.
+It brings the watch's figure down by 300 kcal at most
+(`OBSERVED_MAX_DROP_KCAL`): a wider gap comes from a log missing things
+or water on the scale far more often than from the body (2,150 kcal
+logged with the weight creeping up read as 1,900 burned and put the
+target on the floor).
 A cut never goes below 1500 kcal. A fixed target set by hand
 (`calorie_target_fixed_kcal`, Réglages or the chat's `regler_objectif`;
 1200-5000 kcal, empty or 0 = computed again) wins over all of this; the

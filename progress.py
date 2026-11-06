@@ -368,6 +368,12 @@ OBSERVED_MIN_DAYS = 14
 OBSERVED_MIN_DAY_KCAL = 1000
 # A cut never goes below this, whatever the measures say.
 CALORIE_FLOOR_KCAL = 1500
+# The scale's expenditure may bring the watch's down by this much at
+# most. Below it, the gap is the log missing things or water on the
+# scale far more often than a body burning that little: on a real
+# account 2,150 kcal logged with the weight creeping up read as 1,900 kcal
+# burned and put the target on the 1,500 floor.
+OBSERVED_MAX_DROP_KCAL = 300
 
 
 def observed_tdee(
@@ -481,7 +487,11 @@ def macro_targets(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
         if tdee is None or observed["tdee_kcal"] < tdee:
             if tdee is not None:
                 result["device_tdee_kcal"] = round(tdee)
-            tdee = observed["tdee_kcal"]
+                if observed["tdee_kcal"] < tdee - OBSERVED_MAX_DROP_KCAL:
+                    result["observed_capped"] = True
+                tdee = max(observed["tdee_kcal"], tdee - OBSERVED_MAX_DROP_KCAL)
+            else:
+                tdee = observed["tdee_kcal"]
             result["tdee_source"] = "observed"
     if tdee is not None:
         weekly_change = float(
@@ -1783,7 +1793,9 @@ if __name__ == "__main__":
     assert seen["tdee_kcal"] == 2200 and seen["weekly_kg"] == 0, seen
     flat = macro_targets(conn, obs, when)
     assert flat["tdee_source"] == "observed" and flat["device_tdee_kcal"] == 2600, flat
-    assert flat["calorie_target_kcal"] == 2200 - 440, flat
+    # ...but 300 kcal under the watch's at most: 2,300, not 2,200.
+    assert flat["observed_capped"] and flat["tdee_estimate_kcal"] == 2300, flat
+    assert flat["calorie_target_kcal"] == 2300 - 440, flat
     # Losing 0.5 kg a week on 2200 logged: the body burns ~2750, more
     # than the watch says -- the watch's lower figure stays.
     conn.execute("UPDATE weight SET kg = 98.0 - (julianday(local_date) - "

@@ -40,7 +40,10 @@
     ton corps dépense donc environ <strong>{{ observed.tdee_kcal }} kcal</strong> par jour,
     tels que tu les notes.
     {% if targets.tdee_source == 'observed' %}
-    {% if targets.device_tdee_kcal %}C'est moins que les {{ targets.device_tdee_kcal }} kcal comptés par la montre :
+    {% if targets.observed_capped %}C'est bien moins que les {{ targets.device_tdee_kcal }} kcal comptés par la montre :
+    un tel écart vient plus souvent d'un journal incomplet ou d'eau sur la balance que du corps.
+    L'objectif part donc de {{ targets.tdee_estimate_kcal }} kcal (300 de moins que la montre, au plus).
+    {% elif targets.device_tdee_kcal %}C'est moins que les {{ targets.device_tdee_kcal }} kcal comptés par la montre :
     l'objectif part de ce chiffre-là, celui que ta balance confirme.{% else %}L'objectif part de ce chiffre-là.{% endif %}
     {% else %}
     La montre compte {{ targets.tdee_estimate_kcal }} kcal, un peu moins : l'objectif part du plus prudent des deux.

@@ -377,6 +377,7 @@ def weekly_brief(payload: dict) -> dict:
             "weight_kg_per_week": observed["weekly_kg"],
             "burns_kcal": observed["tdee_kcal"],
             "watch_kcal": targets.get("device_tdee_kcal"),
+            "base_kcal": targets.get("tdee_estimate_kcal"),
             "target_kcal": targets.get("calorie_target_kcal"),
         }
     return brief
