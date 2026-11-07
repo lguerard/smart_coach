@@ -839,7 +839,10 @@ any other service.
 | `ASSISTANT_MODEL` | `gemma4:12b` | Any Ollama model with tool calling. |
 | `ASSISTANT_NUM_CTX` | `8192` | Context size sent with every request. **Keep it equal to the `num_ctx` every other app sends to the same Ollama**: a different value makes Ollama reload the model for that context size, evicting it for the other apps (and them for you). |
 
-Every request also sends `think: false`, `stream: true` and the tools.
+Every request also sends `think: false`, `stream: true`, the tools and
+`temperature: 0.4` (fewer detours and hedges than Ollama's 0.8). The
+prompt asks for the answer first, in 1 to 3 sentences, asserted with
+its figures, one caveat at most and only for a missing data point.
 Only the web container needs these variables.
 
 ### How it answers
