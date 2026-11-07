@@ -380,6 +380,18 @@ two generations of every MyFitnessPal meal (8 to 10 rows a day for 3
 to 5 meals); after each import `parse_health_connect.dedupe_nutrition`
 keeps one row per date, meal type and time, the newest.
 
+A day the export reached short (MyFitnessPal not synced before it) can
+be corrected on the Repas page (`nutrition_fixes.py`): the totals typed
+from MyFitnessPal are stored, and the gap between them and what Health
+Connect has is kept as one `smartcoach-fix-<date>` nutrition row, so
+every sum of that day is right at once (the reconciliation and the
+meal de-duplication leave `smartcoach-` rows alone). After each import
+the gap is recomputed, and the correction removes itself once Health
+Connect is within 50 kcal of it. Yesterday corrected after the morning
+run: `run_coach.rewrite_message` writes the message again from the data
+as it is now (the decision unchanged, the same function as Home's
+"Réécrire") and sends it again, "Message du matin corrigé" first.
+
 The day's targets cannot be sent to MyFitnessPal either (Health
 Connect carries no goals), so the Repas page shows them as typed into
 its goals (`mfp_goals.py`): grams for Premium, and for the free

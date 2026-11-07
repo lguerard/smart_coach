@@ -15,6 +15,7 @@ from pathlib import Path
 
 import db
 import meals
+import nutrition_fixes
 import metrics
 from ingest import garmin_api, parse_health_connect, sync_drive
 
@@ -71,6 +72,10 @@ def main() -> None:
             )
             if matched:
                 print(f"  meals found in the food diary: {len(matched)}")
+            # Days typed in by hand: the gap follows what Health Connect
+            # has now, and goes once it has caught up.
+            for day, outcome in nutrition_fixes.apply_all(conn, user["id"]).items():
+                print(f"  food day {day} corrected by hand: {outcome}")
         except Exception as exc:
             print(f"  health connect: FAILED: {exc}")
 

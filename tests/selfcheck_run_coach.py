@@ -206,4 +206,28 @@ if __name__ == "__main__":
     row = _logged(conn, user["id"])
     assert row["tier"] == training.TIER_TRAIN and row["status"] == "yellow", dict(row)
 
+    # Yesterday's food corrected by hand: the message is written again
+    # from the right figures and sent again, the decision unchanged.
+    import nutrition_fixes
+
+    yesterday = (dt.date.fromisoformat(today) - dt.timedelta(days=1)).isoformat()
+    nutrition_fixes.set_fix(conn, user["id"], yesterday, "2327", "101")
+    calls["sent"].clear()
+    calls["payloads"].clear()
+    llm.coach = lambda payload: (calls["payloads"].append(payload)
+                                 or "message corrige")
+    before = _logged(conn, user["id"])
+    assert run_coach.rewrite_message(
+        conn, user["id"], today, send_note="Message du matin corrige") == "message corrige"
+    after = _logged(conn, user["id"])
+    assert after["message"] == "message corrige" and after["id"] == before["id"]
+    assert (after["level"], after["tier"]) == (before["level"], before["tier"])
+    assert "Message du matin corrige\n\nmessage corrige" in calls["sent"][-1], calls["sent"]
+    food = calls["payloads"][-1]["weekly_progress"]["nutrition_yesterday"]["actual"]
+    assert round(food["calories_kcal"]) == 2327, food
+    # Without a note (Home's "Reecrire"): rewritten, not sent.
+    calls["sent"].clear()
+    run_coach.rewrite_message(conn, user["id"], today)
+    assert calls["sent"] == []
+
     print("selfcheck_run_coach.py: all checks passed (no live call made)")

@@ -52,6 +52,7 @@ import day_actions
 import done_sessions
 import meals
 import mfp_goals
+import nutrition_fixes
 import missed_sessions
 import sent_log
 import session_history
@@ -973,24 +974,12 @@ def regenerate(request: Request) -> HTMLResponse:
             },
         )
 
-    language = db.get_setting(conn, user_id, "language") or "fr"
-    day_template = missed_sessions.day_template(conn, user_id, date)
-    plan = training.plan_from_log(conn, user_id, date, day_template, entry)
     # The same builder as the morning run: a regenerated message is the
     # same message rephrased, not one missing yesterday's activity, the
     # illness watch or what is left to eat.
-    message = llm.coach(coach_payload.build_payload(
-        conn, user_id, date, language,
-        training.session_payload(plan, day_template, language),
-        training.illness_watch(conn, user_id, date),
-    ))
-    conn.execute(
-        "UPDATE coach_log SET message = ?, created_at = ? WHERE id = ? "
-        "AND user_id = ?",
-        (message, dt.datetime.now(dt.timezone.utc).isoformat(),
-         entry["id"], user_id),
-    )
-    conn.commit()
+    import run_coach
+
+    run_coach.rewrite_message(conn, user_id, date)
     entry = latest_coach_entry(conn, user_id, date)
     return templates.TemplateResponse(
         request, "_message.html", {"entry": entry, "error": None},
@@ -2202,9 +2191,58 @@ def meals_page(request: Request) -> HTMLResponse:
             "mfp_text": meals.mfp_text,
             "remaining": progress.remaining_today(conn, user_id, date),
             "mfp_goal": mfp_goals.goal(conn, user_id, date),
+            "fixes": nutrition_fixes.active(conn, user_id),
+            "yesterday": (dt.date.fromisoformat(date)
+                          - dt.timedelta(days=1)).isoformat(),
             "today": date, "note": request.query_params.get("note"),
         },
     )
+
+
+@app.post("/repas/correction")
+async def meals_correction(request: Request, background: BackgroundTasks):
+    """A day's totals typed from MyFitnessPal (nutrition_fixes), or one
+    removed. Yesterday corrected after the morning run: the message is
+    written again from the right figures and sent again."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    today = today_str(conn, user_id)
+    date = str(form.get("date") or "")
+    try:
+        if dt.date.fromisoformat(date) > dt.date.fromisoformat(today):
+            raise ValueError
+    except ValueError:
+        return _meals_redirect("Date invalide.")
+    if form.get("action") == "delete":
+        nutrition_fixes.remove(conn, user_id, date)
+        return _meals_redirect("Correction retirée.")
+    try:
+        note = nutrition_fixes.set_fix(
+            conn, user_id, date, form.get("calories"), form.get("protein_g"),
+            form.get("carbs_g"), form.get("fat_g"))
+    except ValueError as error:
+        return _meals_redirect(str(error))
+    yesterday = (dt.date.fromisoformat(today) - dt.timedelta(days=1)).isoformat()
+    if date == yesterday and latest_coach_entry(conn, user_id, today):
+        background.add_task(_rewrite_morning, user_id, today)
+        note += (" Le message du matin est réécrit avec ces chiffres et "
+                 "renvoyé sur ton téléphone dans une minute.")
+    return _meals_redirect(note)
+
+
+def _rewrite_morning(user_id: int, date: str) -> None:
+    import run_coach
+
+    conn = db.connect()
+    try:
+        run_coach.rewrite_message(
+            conn, user_id, date,
+            send_note="Message du matin corrige : tes repas d'hier sont a jour.")
+    except Exception as error:  # noqa: BLE001 -- the correction is saved anyway
+        print(f"morning rewrite for user {user_id} failed: {error}")
+    finally:
+        conn.close()
 
 
 @app.post("/repas/objectif-mfp")

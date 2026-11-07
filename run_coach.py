@@ -281,6 +281,52 @@ def replan_today(conn, user: dict) -> str | None:
     return new
 
 
+def rewrite_message(
+    conn, user_id: int, date: str, send_note: str | None = None,
+) -> str | None:
+    """Write today's message again from the data as it is now, the
+    morning's decision unchanged (no level, calendar or watch moves);
+    with ``send_note``, push it again, that note first.
+
+    Used by Home's "Reecrire" button and after a food day is corrected
+    (nutrition_fixes): the morning message had been written from a day
+    Health Connect had not received in full.
+
+    Returns:
+        str | None: The new message, or None before the morning run.
+    """
+    entry = conn.execute(
+        "SELECT * FROM coach_log WHERE user_id = ? AND local_date = ? "
+        "ORDER BY id DESC LIMIT 1", (user_id, date),
+    ).fetchone()
+    if entry is None:
+        return None
+    language = db.get_setting(conn, user_id, "language") or "fr"
+    template = missed_sessions.day_template(conn, user_id, date)
+    plan = training.plan_from_log(conn, user_id, date, template, entry)
+    payload = coach_payload.build_payload(
+        conn, user_id, date, language,
+        training.session_payload(plan, template, language),
+        training.illness_watch(conn, user_id, date),
+    )
+    message = llm.coach(payload)
+    conn.execute(
+        "UPDATE coach_log SET message = ?, created_at = ? WHERE id = ? AND "
+        "user_id = ?", (message, dt.datetime.now(dt.timezone.utc).isoformat(),
+                        entry["id"], user_id),
+    )
+    conn.commit()
+    if send_note is not None:
+        header = progress.format_plan_header(payload["today_targets"], language)
+        body = f"{send_note}\n\n{message}" if send_note else message
+        sent_log.send(
+            conn, user_id, "morning",
+            f"{header}\n{body}" if header else body,
+            topic=db.get_setting(conn, user_id, "ntfy_topic") or None,
+        )
+    return message
+
+
 def main() -> None:
     """Run the daily pipeline for every user account.
 

@@ -669,6 +669,19 @@ CREATE TABLE IF NOT EXISTS day_overrides (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- A day's food totals typed in by hand from MyFitnessPal, until Health
+-- Connect has them (nutrition_fixes.py).
+CREATE TABLE IF NOT EXISTS nutrition_fixes (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    calories REAL NOT NULL,
+    protein_g REAL,
+    carbs_g REAL,
+    fat_g REAL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
+);
+
 -- A missed session moved to the next day, a rest day in the plan
 -- (missed_sessions.py): that day then plans it like a training day.
 CREATE TABLE IF NOT EXISTS postponed_sessions (

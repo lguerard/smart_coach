@@ -34,6 +34,43 @@
   {% if note %}<p class="text-sm mt-2" style="color: var(--accent-text);">{{ note }}</p>{% endif %}
 </div>
 
+<div class="card p-4" id="correction">
+  <h2 class="card-title">{{ icon('refresh', 16) }} Corriger une journée</h2>
+  <p class="text-xs mt-1" style="color: var(--text-secondary);">
+    MyFitnessPal n'a pas envoyé ta journée à Health Connect avant l'export de la nuit ?
+    Tape ses totaux tels que MyFitnessPal les affiche : ils comptent tout de suite partout,
+    et la correction s'efface d'elle-même quand Health Connect les a. Hier corrigé : le message
+    du matin est réécrit et renvoyé.
+  </p>
+  <form method="post" action="/repas/correction" class="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3 items-end">
+    <label class="text-xs grid gap-1 col-span-2 sm:col-span-1 min-w-0">Jour
+      <input type="date" name="date" value="{{ yesterday }}" max="{{ today }}" required
+        class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border); background: var(--surface-1);">
+    </label>
+    {% for name, label in [('calories', 'kcal'), ('protein_g', 'Protéines (g)'), ('carbs_g', 'Glucides (g)'), ('fat_g', 'Lipides (g)')] %}
+    <label class="text-xs grid gap-1 min-w-0">{{ label }}
+      <input type="number" name="{{ name }}" step="1" min="0" inputmode="decimal" {{ 'required' if name == 'calories' }}
+        class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm num" style="border-color: var(--border); background: var(--surface-1);">
+    </label>
+    {% endfor %}
+    <button class="btn btn-primary btn-sm col-span-2 sm:col-span-5">Corriger</button>
+  </form>
+  {% if fixes %}
+  <ul class="mt-3 text-sm divide-y" style="border-color: var(--border);">
+    {% for f in fixes %}
+    <li class="py-1.5 flex items-center justify-between gap-2" style="border-color: var(--border);">
+      <span>{{ f.local_date[8:10] }}/{{ f.local_date[5:7] }} : <span class="num">{{ f.calories | round | int }} kcal{% if f.protein_g is not none %} · P {{ f.protein_g | round | int }} g{% endif %}</span>
+        <span class="text-xs" style="color: var(--muted);">· en attente de Health Connect</span></span>
+      <form method="post" action="/repas/correction">
+        <input type="hidden" name="date" value="{{ f.local_date }}"><input type="hidden" name="action" value="delete">
+        <button class="text-xs link" style="color: var(--muted);">retirer</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+
 {% if mfp_goal %}
 {% set g = mfp_goal %}
 <div class="card p-4" id="objectif-mfp">
