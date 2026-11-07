@@ -295,6 +295,38 @@
       <p id="regen-spinner" class="htmx-indicator text-xs mt-2" style="color: var(--muted);">
         Génération en cours...
       </p>
+      <details id="donnees-hier" class="mt-3 text-sm">
+        <summary class="cursor-pointer text-xs font-medium link">{{ icon('refresh', 12) }} Mauvaises données ?</summary>
+        <p class="text-xs mt-2" style="color: var(--text-secondary);">
+          Le message a été écrit avec ce que Health Connect avait de tes repas d'hier
+          {% if yesterday_food.calories_kcal is defined %}: <strong>{{ yesterday_food.calories_kcal }} kcal</strong>,
+          {{ yesterday_food.protein_g | round | int }} g de protéines{% else %}: rien{% endif %}.
+          MyFitnessPal dit autre chose ? Tape ses totaux d'hier : la journée est corrigée,
+          le message réécrit et renvoyé sur ton téléphone.
+        </p>
+        <form method="post" action="/repas/correction" class="grid grid-cols-2 gap-2 mt-2 items-end">
+          <input type="hidden" name="date" value="{{ yesterday_date }}">
+          <input type="hidden" name="next" value="home">
+          {% for name, label in [('calories', 'kcal'), ('protein_g', 'Protéines (g)'), ('carbs_g', 'Glucides (g)'), ('fat_g', 'Lipides (g)')] %}
+          <label class="text-xs grid gap-1 min-w-0">{{ label }}
+            <input type="number" name="{{ name }}" step="1" min="0" inputmode="decimal" {{ 'required' if name == 'calories' }}
+              class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm num" style="border-color: var(--border); background: var(--surface-1);">
+          </label>
+          {% endfor %}
+          <button class="btn btn-primary btn-sm col-span-2">Corriger hier et réécrire le message</button>
+        </form>
+      </details>
+      <script>
+        // Opened from the morning notification's "Mauvaises donnees" button.
+        const openWrongData = () => {
+          const box = document.getElementById('donnees-hier');
+          if (location.hash === '#donnees-hier' && box) {
+            box.open = true; box.scrollIntoView({ block: 'center' });
+          }
+        };
+        openWrongData();
+        window.addEventListener('hashchange', openWrongData);
+      </script>
       <a href="/messages" class="text-xs link mt-3 inline-block">{{ icon('message', 12) }} Tous les messages envoyés</a>
     </div>
     {% endif %}

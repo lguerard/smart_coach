@@ -238,8 +238,23 @@ def run_for_user(conn, user: dict, note: str | None = None) -> None:
     sent_log.send(
         conn, user_id, "replan" if note else "morning",
         f"{header}\n{body}" if header else body, topic=ntfy_topic,
+        actions=wrong_data_action(conn, user_id),
     )
     print(f"{username}: {message}")
+
+
+def wrong_data_action(conn, user_id: int) -> list | None:
+    """The morning message's "Mauvaises donnees" button: it opens Home's
+    form for yesterday's food as MyFitnessPal shows it, which corrects
+    the day and writes the message again (nutrition_fixes). None
+    without a known dashboard address."""
+    import run_checkin
+
+    base = run_checkin.public_url(conn, user_id)
+    if not base:
+        return None
+    return [{"action": "view", "label": "Mauvaises donnees",
+             "url": f"{base.rstrip('/')}/#donnees-hier", "clear": False}]
 
 
 def planned_change(conn, user_id: int) -> tuple[str | None, str | None] | None:

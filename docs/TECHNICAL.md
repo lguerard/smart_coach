@@ -391,6 +391,11 @@ Connect is within 50 kcal of it. Yesterday corrected after the morning
 run: `run_coach.rewrite_message` writes the message again from the data
 as it is now (the decision unchanged, the same function as Home's
 "Réécrire") and sends it again, "Message du matin corrigé" first.
+The morning push carries a "Mauvaises donnees" button (when the
+dashboard address is known, `run_coach.wrong_data_action`): it opens
+Today's "Mauvaises données ?" form under the coach's message, which
+shows what Health Connect had for yesterday and takes MyFitnessPal's
+totals -- the same correction, the same rewrite and resend.
 
 The day's targets cannot be sent to MyFitnessPal either (Health
 Connect carries no goals), so the Repas page shows them as typed into

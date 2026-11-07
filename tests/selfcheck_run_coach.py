@@ -230,4 +230,12 @@ if __name__ == "__main__":
     run_coach.rewrite_message(conn, user["id"], today)
     assert calls["sent"] == []
 
+    # The morning push's "Mauvaises donnees" button opens Home's form.
+    assert run_coach.wrong_data_action(conn, user["id"]) is None  # no address
+    db.set_setting(conn, user["id"], "public_url", "https://coach.example/")
+    action = run_coach.wrong_data_action(conn, user["id"])
+    assert action == [{"action": "view", "label": "Mauvaises donnees",
+                       "url": "https://coach.example/#donnees-hier",
+                       "clear": False}], action
+
     print("selfcheck_run_coach.py: all checks passed (no live call made)")

@@ -747,6 +747,11 @@ def home(request: Request) -> HTMLResponse:
             "cal_note": request.query_params.get("cal_note"),
             "pushed": request.query_params.get("pushed"),
             "anyway_offer": day_actions.anyway_offer(conn, user_id, date),
+            "yesterday_date": (dt.date.fromisoformat(date)
+                               - dt.timedelta(days=1)).isoformat(),
+            "yesterday_food": progress.intake_for_date(
+                conn, user_id,
+                (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()),
             "anyway": day_actions.anyway_for(conn, user_id, date),
             "username": request.session.get("username"),
         },
@@ -2214,21 +2219,27 @@ async def meals_correction(request: Request, background: BackgroundTasks):
             raise ValueError
     except ValueError:
         return _meals_redirect("Date invalide.")
+    back = _meals_redirect
+    if form.get("next") == "home":
+        def back(note=None):
+            return RedirectResponse(
+                "/?" + urlencode({"note": note or ""}) + "#coach-message",
+                status_code=303)
     if form.get("action") == "delete":
         nutrition_fixes.remove(conn, user_id, date)
-        return _meals_redirect("Correction retirée.")
+        return back("Correction retirée.")
     try:
         note = nutrition_fixes.set_fix(
             conn, user_id, date, form.get("calories"), form.get("protein_g"),
             form.get("carbs_g"), form.get("fat_g"))
     except ValueError as error:
-        return _meals_redirect(str(error))
+        return back(str(error))
     yesterday = (dt.date.fromisoformat(today) - dt.timedelta(days=1)).isoformat()
     if date == yesterday and latest_coach_entry(conn, user_id, today):
         background.add_task(_rewrite_morning, user_id, today)
         note += (" Le message du matin est réécrit avec ces chiffres et "
                  "renvoyé sur ton téléphone dans une minute.")
-    return _meals_redirect(note)
+    return back(note)
 
 
 def _rewrite_morning(user_id: int, date: str) -> None:
