@@ -73,7 +73,7 @@ READ_CALLS = [
     ("bilan", {}), ("aujourdhui", {}), ("sommeil", {"jours": 7}),
     ("seances", {"jours": 14}), ("programme", {}), ("repas", {}),
     ("entrainements", {"jours": 14}), ("entrainements", {"jour": "hier"}),
-    ("coeur", {"jours": 14}),
+    ("coeur", {"jours": 14}), ("medicaments", {}),
     *[("donnees_brutes", {"table": t, "du": "2026-01-01"})
       for t in assistant.RAW_TABLES],
     ("repas", {"jour": "hier"}), ("progres", {}),
@@ -283,6 +283,31 @@ missed = call(A, "seance_du_jour", {"action": "pas_faite", "jour": "aujourdhui"}
 assert missed["ok"] and done_sessions.done_on(conn, A, TODAY)["session_type"] == "none", missed
 call(A, missed["undo"]["tool"], missed["undo"]["args"], undo=True)
 assert done_sessions.done_on(conn, A, TODAY) is None
+
+# Medications: added as said, taken, undone, paused, scoped to the account.
+import meds  # noqa: E402
+
+added = call(A, "medicament", {"action": "ajouter", "nom": "Magnésium",
+                               "heures": "12h, 20:00", "dose": "1 gélule"})
+assert added["ok"], added
+med_id = json.loads(added["result"])["id"]
+assert meds.get(conn, A, med_id)["times"] == ["12:00", "20:00"]
+assert meds.get(conn, B, med_id) is None
+taken = call(A, "medicament", {"action": "pris", "id": med_id, "heure": "12:00"})
+assert taken["ok"] and meds._status(conn, A, med_id, TODAY, "12:00") == "taken"
+call(A, taken["undo"]["tool"], taken["undo"]["args"], undo=True)
+assert meds._status(conn, A, med_id, TODAY, "12:00") is None
+paused = call(A, "medicament", {"action": "pause", "id": med_id})
+assert paused["ok"] and not meds.get(conn, A, med_id)["active"]
+call(A, paused["undo"]["tool"], paused["undo"]["args"], undo=True)
+assert meds.get(conn, A, med_id)["active"]
+assert not call(B, "medicament", {"action": "pris", "id": med_id, "heure": "12:00"})["ok"]
+assert not call(A, "medicament", {"action": "pris", "id": med_id, "heure": "13:00"})["ok"]
+listed = json.loads(call(A, "medicaments")["result"])
+assert listed["liste"][0]["nom"] == "Magnésium" and "medecin" in listed["rappel"]
+assert call(B, "medicaments")["result"].count("Magnésium") == 0
+removed = call(A, added["undo"]["tool"], added["undo"]["args"], undo=True)
+assert removed["ok"] and meds.get(conn, A, med_id) is None
 
 # --- 5. The tool loop against a fake Ollama ---------------------------------
 def ndjson(*chunks):

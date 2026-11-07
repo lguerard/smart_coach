@@ -51,6 +51,7 @@ import custom_moves
 import day_actions
 import done_sessions
 import meals
+import meds
 import mfp_goals
 import nutrition_fixes
 import missed_sessions
@@ -906,6 +907,94 @@ async def missed_from_site(request: Request):
     return RedirectResponse(
         "/?" + urlencode({"note": note or "Ce choix n'est plus possible."}),
         status_code=303)
+
+
+@app.post("/quick/med/{user_id}/{date}/{value}/{signature}")
+def quick_med(user_id: int, date: str, value: str, signature: str):
+    """A reminder's "Pris" / "Sauter" button (signed link, quick_links,
+    kind "med"): records the dose, which stops its reminders."""
+    conn = get_conn()
+    if not quick_links.verify(conn, user_id, date, value, signature,
+                              today=today_str(conn, user_id), action="med"):
+        return PlainTextResponse("Lien invalide ou expire.", status_code=403)
+    med_id, hhmm, status = value.split(".")
+    slot = f"{hhmm[:2]}:{hhmm[2:]}"
+    if not meds.mark(conn, user_id, int(med_id), date, slot, status):
+        return PlainTextResponse("Ce rappel n'existe plus.", status_code=404)
+    med = meds.get(conn, user_id, int(med_id))
+    return PlainTextResponse(
+        f"{med['name']} ({slot}) : {'pris' if status == 'taken' else 'saute'}. Merci !")
+
+
+@app.get("/medicaments", response_class=HTMLResponse)
+def meds_page(request: Request) -> HTMLResponse:
+    """Medications and supplements: today's doses, the list, the week."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    now = dt.datetime.now(metrics.local_tz(conn, user_id)).replace(tzinfo=None)
+    return templates.TemplateResponse(
+        request, "meds.html", {
+            "doses": meds.day(conn, user_id, now),
+            "items": meds.list_meds(conn, user_id),
+            "week": {h["med_id"]: h for h in meds.history(
+                conn, user_id, now.date().isoformat(), 7)},
+            "today": now.date().isoformat(),
+            "days_fr": _DAYS_FR,
+            "note": request.query_params.get("note"),
+        },
+    )
+
+
+def _meds_redirect(note: str | None = None) -> RedirectResponse:
+    return RedirectResponse(
+        "/medicaments" + ("?" + urlencode({"note": note}) if note else ""),
+        status_code=303)
+
+
+@app.post("/medicaments/save")
+async def meds_save(request: Request):
+    """Add an item (no id) or change one."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    days = "".join(str(d) for d in range(7) if form.get(f"day_{d}"))
+    fields = {"name": form.get("name"), "dose": form.get("dose"),
+              "times": form.get("times"), "weekdays": days or meds.ALL_DAYS,
+              "repeat_min": form.get("repeat_min") or 15,
+              "notes": form.get("notes")}
+    try:
+        if form.get("id"):
+            meds.update(conn, user_id, int(form["id"]),
+                        active=bool(form.get("active")), **fields)
+            note = "Modifié."
+        else:
+            meds.add(conn, user_id, fields.pop("name"), fields.pop("times"), **fields)
+            note = "Ajouté : les rappels partent à chaque heure de prise."
+    except (ValueError, TypeError) as error:
+        note = str(error)
+    return _meds_redirect(note)
+
+
+@app.post("/medicaments/{med_id}/delete")
+def meds_delete(med_id: int, request: Request):
+    conn = get_conn()
+    meds.delete(conn, current_user_id(request), med_id)
+    return _meds_redirect("Supprimé.")
+
+
+@app.post("/medicaments/{med_id}/mark")
+async def meds_mark(med_id: int, request: Request):
+    """Today's dose taken, skipped, or back to not done."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    date = today_str(conn, user_id)
+    slot, status = str(form.get("slot", "")), str(form.get("status", ""))
+    if status == "undo":
+        meds.unmark(conn, user_id, med_id, date, slot)
+    elif not meds.mark(conn, user_id, med_id, date, slot, status):
+        return _meds_redirect("Prise inconnue.")
+    return _meds_redirect()
 
 
 @app.post("/quick/sleep/{user_id}/{date}/{rating}/{signature}")

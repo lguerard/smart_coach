@@ -669,6 +669,39 @@ CREATE TABLE IF NOT EXISTS day_overrides (
     PRIMARY KEY (user_id, local_date)
 );
 
+-- Medications and supplements, their doses taken or skipped, and the
+-- reminders sent for each dose (meds.py, run_meds.py).
+CREATE TABLE IF NOT EXISTS meds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    dose TEXT NOT NULL DEFAULT '',
+    times TEXT NOT NULL,
+    weekdays TEXT NOT NULL DEFAULT '0123456',
+    repeat_min INTEGER NOT NULL DEFAULT 15,
+    active INTEGER NOT NULL DEFAULT 1,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS med_log (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    med_id INTEGER NOT NULL,
+    local_date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('taken', 'skipped')),
+    at TEXT NOT NULL,
+    PRIMARY KEY (user_id, med_id, local_date, slot)
+);
+CREATE TABLE IF NOT EXISTS med_reminders (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    med_id INTEGER NOT NULL,
+    local_date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    sent_count INTEGER NOT NULL,
+    last_sent TEXT NOT NULL,
+    PRIMARY KEY (user_id, med_id, local_date, slot)
+);
+
 -- A day's food totals typed in by hand from MyFitnessPal, until Health
 -- Connect has them (nutrition_fixes.py).
 CREATE TABLE IF NOT EXISTS nutrition_fixes (

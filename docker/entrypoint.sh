@@ -53,9 +53,11 @@ case "$1" in
             echo "$coach_at * * * . /app/container.env; cd /app && python run_coach.py >> /proc/1/fd/1 2>&1"
             echo "$afternoon_at * * * . /app/container.env; cd /app && python run_checkin.py afternoon >> /proc/1/fd/1 2>&1"
             echo "$evening_at * * * . /app/container.env; cd /app && python run_checkin.py evening >> /proc/1/fd/1 2>&1"
+            # Medication reminders: every 5 minutes, silent unless one is due.
+            echo "*/5 * * * * . /app/container.env; cd /app && python run_meds.py >> /proc/1/fd/1 2>&1"
         } | crontab -
 
-        echo "entrypoint: ingest at ${INGEST_TIME:-07:15}, coach at ${COACH_TIME:-07:45}, check-ins at ${CHECKIN_MORNING_TIME:-07:15}, ${CHECKIN_AFTERNOON_TIME:-16:00} and ${CHECKIN_EVENING_TIME:-21:00} (${TZ:-UTC})"
+        echo "entrypoint: ingest at ${INGEST_TIME:-07:15}, coach at ${COACH_TIME:-07:45}, check-ins at ${CHECKIN_MORNING_TIME:-07:15}, ${CHECKIN_AFTERNOON_TIME:-16:00} and ${CHECKIN_EVENING_TIME:-21:00}, medication reminders every 5 min (${TZ:-UTC})"
 
         exec cron -f
         ;;

@@ -53,12 +53,24 @@ réseau, et non avec un service en ligne.
   ni aux photos corporelles, ni aux mots de passe et jetons, ni à
   l'agenda Google lui-même.
 - Il ne modifie quelque chose (ressenti de la nuit, niveau du soir,
-  maladie déclarée, séance faite, objectif) que sur demande, avec un
-  bouton « Annuler », et ne supprime jamais rien.
+  maladie déclarée, séance faite, objectif, réglages, planning,
+  médicaments) que sur demande, avec un bouton « Annuler ». Il ne
+  supprime un médicament de la liste que si l'utilisateur le demande.
+- Il ne conseille jamais de médicament, de complément ni de dose : il
+  note ce que l'utilisateur dit prendre.
 - La conversation n'est pas stockée sur le serveur : elle reste dans le
   navigateur de l'utilisateur et est effacée à la déconnexion.
 - Si aucun modèle local n'est configuré, le chat est simplement
   désactivé.
+
+## Médicaments et compléments (onglet « Médicaments »)
+
+- La liste (nom, dose en texte libre, heures, jours) et l'historique des
+  prises restent dans la base locale du serveur, visibles par le seul
+  compte concerné.
+- Les rappels passent par les notifications ntfy de l'utilisateur, comme
+  les autres messages : leur texte nomme le médicament. Choisir un sujet
+  ntfy difficile à deviner (Réglages) les garde privés.
 
 ## Stockage et partage
 

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Médicaments - Smart Coach{% endblock %}
+{% block content %}
+
+{% macro day_boxes(selected) %}
+<div class="flex flex-wrap gap-1.5">
+  {% for name in days_fr %}
+  <label class="option btn btn-sm cursor-pointer">
+    <input type="checkbox" name="day_{{ loop.index0 }}" value="1" class="sr-only"
+      {{ 'checked' if loop.index0|string in selected }}> {{ name[:3] }}
+  </label>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+<div class="card p-4">
+  <h1 class="card-title text-base">{{ icon('pill', 18) }} Médicaments et compléments</h1>
+  <p class="text-xs mt-1" style="color: var(--text-secondary);">
+    À chaque heure de prise, une notification avec « Pris » et « Sauter » ; elle revient
+    à l'intervalle choisi tant que tu n'as pas répondu (8 rappels au plus). Le coach ne
+    dit jamais quoi prendre ni combien : la liste est la tienne, telle que ton médecin
+    ou ton pharmacien l'a fixée.
+  </p>
+  {% if note %}<p class="text-sm mt-2" style="color: var(--accent-text);">{{ note }}</p>{% endif %}
+</div>
+
+<div class="card p-4">
+  <h2 class="card-title mb-2">Aujourd'hui</h2>
+  {% if not doses %}
+  <p class="text-sm" style="color: var(--muted);">Rien à prendre aujourd'hui.</p>
+  {% else %}
+  <ul class="divide-y" style="border-color: var(--border);">
+    {% for d in doses %}
+    <li class="py-2 flex flex-wrap items-center justify-between gap-2" style="border-color: var(--border);">
+      <span class="text-sm">
+        <span class="num font-semibold">{{ d.slot }}</span> · {{ d.name }}{% if d.dose %}
+        <span class="text-xs" style="color: var(--muted);">{{ d.dose }}</span>{% endif %}
+      </span>
+      <form method="post" action="/medicaments/{{ d.med_id }}/mark" class="flex gap-1.5 items-center">
+        <input type="hidden" name="slot" value="{{ d.slot }}">
+        {% if d.status in ('taken', 'skipped') %}
+        <span class="badge" style="--badge: var({{ '--green' if d.status == 'taken' else '--muted' }});">
+          {{ icon('check', 12) if d.status == 'taken' }}{{ 'pris' if d.status == 'taken' else 'sauté' }}</span>
+        <button name="status" value="undo" class="text-xs link" style="color: var(--muted);">annuler</button>
+        {% else %}
+        {% if d.status == 'due' %}<span class="text-xs" style="color: var(--orange);">à prendre</span>{% endif %}
+        <button name="status" value="taken" class="btn btn-primary btn-sm">Pris</button>
+        <button name="status" value="skipped" class="btn btn-sm">Sauter</button>
+        {% endif %}
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+
+{% for m in items %}
+{% set w = week.get(m.id) %}
+<details class="card p-4">
+  <summary class="cursor-pointer flex flex-wrap items-center justify-between gap-2 list-none">
+    <span class="text-sm font-medium {{ '' if m.active else 'line-through' }}" style="{{ '' if m.active else 'color: var(--muted);' }}">
+      {{ m.name }}{% if m.dose %} <span class="text-xs font-normal" style="color: var(--muted);">· {{ m.dose }}</span>{% endif %}
+    </span>
+    <span class="text-xs num" style="color: var(--muted);">
+      {{ m.times | join(', ') }}{% if m.weekdays != '0123456' %} · {% for d in m.weekdays %}{{ days_fr[d|int][:2] }}{{ ' ' if not loop.last }}{% endfor %}{% endif %}
+      {% if w and w.planned %} · 7 j : {{ w.taken }}/{{ w.planned }} pris{% endif %}
+      {% if not m.active %} · en pause{% endif %}
+    </span>
+  </summary>
+  <form method="post" action="/medicaments/save" class="grid gap-2 mt-3">
+    <input type="hidden" name="id" value="{{ m.id }}">
+    <div class="grid grid-cols-2 gap-2">
+      <label class="text-xs grid gap-1 min-w-0">Nom
+        <input name="name" value="{{ m.name }}" required maxlength="60" class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border); background: var(--surface-1);">
+      </label>
+      <label class="text-xs grid gap-1 min-w-0">Dose (texte libre)
+        <input name="dose" value="{{ m.dose }}" maxlength="60" class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border); background: var(--surface-1);">
+      </label>
+      <label class="text-xs grid gap-1 min-w-0">Heures (ex. 8:00, 20:00)
+        <input name="times" value="{{ m.times | join(', ') }}" required class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm num" style="border-color: var(--border); background: var(--surface-1);">
+      </label>
+      <label class="text-xs grid gap-1 min-w-0">Rappel toutes les (min)
+        <input name="repeat_min" type="number" min="5" max="240" value="{{ m.repeat_min }}" class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm num" style="border-color: var(--border); background: var(--surface-1);">
+      </label>
+    </div>
+    {{ day_boxes(m.weekdays) }}
+    <label class="text-xs grid gap-1">Note
+      <input name="notes" value="{{ m.notes }}" maxlength="200" class="w-full rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border); background: var(--surface-1);">
+    </label>
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" name="active" value="1" {{ 'checked' if m.active }}> Rappels actifs
+    </label>
+    <div class="flex flex-wrap gap-2">
+      <button class="btn btn-primary btn-sm">Enregistrer</button>
+    </div>
+  </form>
+  <form method="post" action="/medicaments/{{ m.id }}/delete" class="mt-2" onsubmit="return confirm('Supprimer {{ m.name }} et son historique ?');">
+    <button class="btn btn-sm" style="color: var(--critical);">Supprimer</button>
+  </form>
+</details>
+{% endfor %}
+
+<details class="card p-4" {{ 'open' if not items }}>
+  <summary class="cursor-pointer card-title list-none">{{ icon('pill', 16) }} Ajouter un médicament ou un complément</summary>
+  <form method="post" action="/medicaments/save" class="grid gap-2 mt-3">
+    <div class="grid grid-cols-2 gap-2">
+      <label class="text-xs grid gap-1 min-w-0">Nom
+        <input name="name" required maxlength="60" placeholder="Magnésium" class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border); background: var(--surface-1);">
+      </label>
+      <label class="text-xs grid gap-1 min-w-0">Dose (texte libre)
+        <input name="dose" maxlength="60" placeholder="1 gélule" class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border); background: var(--surface-1);">
+      </label>
+      <label class="text-xs grid gap-1 min-w-0">Heures (ex. 8:00, 20:00)
+        <input name="times" required placeholder="20:00" class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm num" style="border-color: var(--border); background: var(--surface-1);">
+      </label>
+      <label class="text-xs grid gap-1 min-w-0">Rappel toutes les (min)
+        <input name="repeat_min" type="number" min="5" max="240" value="15" class="w-full min-w-0 rounded-lg border px-2 py-1.5 text-sm num" style="border-color: var(--border); background: var(--surface-1);">
+      </label>
+    </div>
+    {{ day_boxes('0123456') }}
+    <label class="text-xs grid gap-1">Note
+      <input name="notes" maxlength="200" placeholder="au dîner" class="w-full rounded-lg border px-2 py-1.5 text-sm" style="border-color: var(--border); background: var(--surface-1);">
+    </label>
+    <button class="btn btn-primary btn-sm">Ajouter</button>
+  </form>
+</details>
+{% endblock %}

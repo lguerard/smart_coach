@@ -423,6 +423,19 @@ reading, and the week's food against the target
 or under that day's target, the average against the average target),
 in both the written message and the plain card.
 
+Medications and supplements (`meds.py`, Médicaments page): each item
+has a free-text dose, its times of day, its weekdays and a reminder
+interval (5-240 min, default 15). `run_meds.py` runs every 5 minutes
+from cron (silent unless something is due): at each dose's time it
+sends a notification with "Pris" and "Sauter" (signed links,
+`quick_links` kind "med", value `<id>.<HHMM>.<taken|skipped>`), and
+again every interval until the dose is marked -- from the buttons, the
+page or the chat -- 8 reminders at most (`med_reminders`). Doses taken
+or skipped are kept in `med_log`. The chat reads the list and today's
+doses (`medicaments`) and keeps the list as the person states it
+(`medicament`: add, change, pause, delete, taken, skipped, with undo);
+its prompt forbids suggesting a drug, a supplement or a dose.
+
 Every notification goes through `sent_log.send`, which pushes it and
 keeps a copy in `sent_messages` (kind, local time, text; a failed push
 too, marked as not sent). The Messages page lists the last 30 days by

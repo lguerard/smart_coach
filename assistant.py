@@ -50,6 +50,7 @@ import db
 import day_review
 import done_sessions
 import meals
+import meds
 import missed_sessions
 import metrics
 import muscles
@@ -176,7 +177,9 @@ FR_SYSTEM_PROMPT = (
     "Les decisions du code (statut, niveau, repos, recuperation, semaine "
     "allegee, regle de progression) passent avant ton avis : tu les "
     "expliques et tu proposes dans leur cadre, tu ne les recalcules pas.\n"
-    "SANTE : tu n'es pas medecin. Jamais de diagnostic ('tu es malade' "
+    "SANTE : tu n'es pas medecin. Jamais de conseil de medicament, de "
+    "complement ni de dose : tu notes ce qu'il dit prendre et tu renvoies "
+    "au medecin ou au pharmacien. Jamais de diagnostic ('tu es malade' "
     "est interdit ; 'ton corps a l'air de lutter' est ok). Des signes "
     "de maladie (outil sante ou aujourdhui) = repos, pas de seance. De "
     "vrais symptomes (fievre, douleur ou gene dans la poitrine, "
@@ -184,7 +187,7 @@ FR_SYSTEM_PROMPT = (
     "calmement de consulter un medecin.\n"
     "ACTIONS : noter_nuit, regler_niveau, declarer_malade, "
     "declarer_seance, regler_objectif, regler_parametre, regler_planning, "
-    "seance_du_jour changent ses donnees : seulement "
+    "seance_du_jour, medicament changent ses donnees : seulement "
     "s'il le demande ou dit oui clairement. Ensuite, confirme en une "
     "phrase ce qui a change, d'apres le resultat de l'outil (il peut "
     "annuler d'un geste). Ne dis JAMAIS qu'un reglage est change sans "
@@ -223,14 +226,16 @@ EN_SYSTEM_PROMPT = (
     "level, rest, recovery, lighter week, progression rule) come before "
     "your opinion: explain them and advise within them, never recompute "
     "them.\n"
-    "HEALTH: you are not a doctor. Never a diagnosis ('you are sick' is "
+    "HEALTH: you are not a doctor. Never advise a medication, a "
+    "supplement or a dose: record what they say they take and refer to "
+    "a doctor or pharmacist. Never a diagnosis ('you are sick' is "
     "forbidden; 'your body seems to be fighting something' is fine). "
     "Illness signs (health or aujourdhui tool) = rest, no session. Real "
     "symptoms (fever, chest pain or tightness, unusual breathlessness, "
     "feeling faint, or it does not go away): calmly say to see a doctor.\n"
     "ACTIONS: noter_nuit, regler_niveau, declarer_malade, "
     "declarer_seance, regler_objectif, regler_parametre, regler_planning, "
-    "seance_du_jour change their data: only when they "
+    "seance_du_jour, medicament change their data: only when they "
     "ask or clearly say yes. Then confirm in one sentence what changed, "
     "from the tool's result (they can undo it in one tap). NEVER say a "
     "setting changed without calling the tool and getting ok; what no "
@@ -337,6 +342,8 @@ RAW_TABLES = {
     "xp": ("xp_ledger", "date", "id"),
     "synchros": ("ingest_runs", "date(ran_at)", "ran_at"),
     "couverture_export": ("hc_export_coverage", None, "table_name"),
+    "medicaments": ("meds", None, "id"),
+    "prises_medicaments": ("med_log", "local_date", "at"),
 }
 # Columns that only link rows or carry machine state: dropped to save
 # the context (never data the person would ask about).
@@ -398,6 +405,9 @@ READ_TOOLS = [
          "au": {"type": "string", "description": "YYYY-MM-DD, default today"},
          "limite": {"type": "integer", "description": "1-50, default 30"}},
         ("table",)),
+    _fn("medicaments", "Their medications and supplements: each with its "
+        "dose, times, weekdays, reminder interval, today's doses (taken, "
+        "skipped, due, later) and the last 7 days taken."),
     _fn("donnees", "Any other data domain, summarised.",
         {"domaine": {"type": "string", "enum": list(DOMAINS)},
          "jours": {"type": "integer", "description": "window, default 7"}},
@@ -474,6 +484,20 @@ WRITE_TOOLS = [
          "jour": {"type": "string",
                   "description": "for pas_faite/sans_montre: aujourdhui or hier"}},
         ("action",)),
+    _fn("medicament", "WRITE: their medication/supplement list as THEY "
+        "state it (never suggest a drug or a dose): ajouter (nom, heures, "
+        "dose, rappel_min), modifier (id + fields), pause / reprendre, "
+        "supprimer (id), pris / saute (id, heure) for today. Reminders "
+        "repeat every rappel_min until taken. Only when asked.",
+        {"action": {"type": "string", "enum": [
+            "ajouter", "modifier", "pause", "reprendre", "supprimer", "pris",
+            "saute"]},
+         "id": {"type": "integer"}, "nom": {"type": "string"},
+         "dose": {"type": "string"},
+         "heures": {"type": "string", "description": "e.g. 08:00, 20:00"},
+         "rappel_min": {"type": "integer", "description": "5-240, default 15"},
+         "heure": {"type": "string", "description": "the dose's HH:MM, for pris/saute"}},
+        ("action",)),
     _fn("regler_objectif", "WRITE: change one goal from Settings. Only "
         "when asked. A daily calorie target ('mets-moi a 1900 kcal') is "
         "calorie_target_fixed_kcal (0 = computed again every day).",
@@ -493,7 +517,8 @@ TOOL_LABELS = {
            "noter_nuit": "Nuit notée", "regler_niveau": "Niveau du soir",
            "declarer_malade": "Maladie", "declarer_seance": "Séance notée",
            "regler_objectif": "Objectif", "regler_parametre": "Réglage",
-           "regler_planning": "Planning", "seance_du_jour": "Séance du jour"},
+           "regler_planning": "Planning", "seance_du_jour": "Séance du jour",
+           "medicaments": "Médicaments", "medicament": "Médicament"},
     "en": {"bilan": "Today's overview", "aujourdhui": "Today",
            "sommeil": "Sleep", "tendances": "Trends",
            "seances": "Sessions", "entrainements": "Workouts",
@@ -503,7 +528,8 @@ TOOL_LABELS = {
            "noter_nuit": "Night logged", "regler_niveau": "Tonight's level",
            "declarer_malade": "Illness", "declarer_seance": "Session logged",
            "regler_objectif": "Goal", "regler_parametre": "Setting",
-           "regler_planning": "Plan", "seance_du_jour": "Today's session"},
+           "regler_planning": "Plan", "seance_du_jour": "Today's session",
+           "medicaments": "Medications", "medicament": "Medication"},
 }
 
 
@@ -1503,6 +1529,80 @@ def write_regler_objectif(conn, ctx, args, undo=False):
             if (previous or "") != value else None)
 
 
+def tool_medicaments(conn, ctx, args) -> dict:
+    uid = ctx["user_id"]
+    now = dt.datetime.now(metrics.local_tz(conn, uid)).replace(tzinfo=None)
+    week = {h["med_id"]: h for h in meds.history(conn, uid, ctx["today"], 7)}
+    return {
+        "liste": [{"id": m["id"], "nom": m["name"], "dose": m["dose"] or None,
+                   "heures": m["times"], "jours": m["weekdays"],
+                   "rappel_toutes_les_min": m["repeat_min"],
+                   "actif": bool(m["active"]), "note": m["notes"] or None,
+                   "7_derniers_jours": {k: week.get(m["id"], {}).get(k)
+                                        for k in ("planned", "taken", "skipped")}}
+                  for m in meds.list_meds(conn, uid)] or "aucun",
+        "aujourdhui": meds.day(conn, uid, now),
+        "lecture": "jours : 0 = lundi ... 6 = dimanche ; due = l'heure est "
+                   "passee, pas encore note",
+        "rappel": "jamais de conseil de medicament ni de dose : renvoyer au "
+                  "medecin ou au pharmacien",
+    }
+
+
+def write_medicament(conn, ctx, args, undo=False):
+    uid, today = ctx["user_id"], ctx["today"]
+    action = _choice(args, "action", ("ajouter", "modifier", "pause", "reprendre",
+                                      "supprimer", "pris", "saute", "restaurer",
+                                      "annuler_prise"))
+    try:
+        if action == "ajouter":
+            med_id = meds.add(conn, uid, args.get("nom"), args.get("heures"),
+                              dose=args.get("dose") or "",
+                              repeat_min=args.get("rappel_min") or 15)
+            med = meds.get(conn, uid, med_id)
+            return ({"ok": True, "ajoute": med["name"], "id": med_id,
+                     "heures": med["times"]},
+                    {"tool": "medicament", "args": {"action": "supprimer", "id": med_id}})
+        med_id = _int(args, "id", None, 1, 10**9, clamp=False)
+        med = meds.get(conn, uid, med_id)
+        if med is None:
+            raise ToolError("unknown id: call medicaments for the list")
+        if action == "restaurer":  # undo of a change: the item as it was
+            before = meds.update(conn, uid, med_id, **{
+                k: args["avant"][k] for k in ("name", "dose", "times", "weekdays",
+                                              "repeat_min", "active", "notes")
+                if k in (args.get("avant") or {})})
+            return {"ok": True, "restaure": before["name"]}, None
+        if action in ("modifier", "pause", "reprendre"):
+            fields = {"active": action == "reprendre"} if action != "modifier" else {}
+            for arg, key in (("nom", "name"), ("dose", "dose"), ("heures", "times"),
+                             ("rappel_min", "repeat_min")):
+                if args.get(arg) not in (None, ""):
+                    fields[key] = args[arg]
+            before = meds.update(conn, uid, med_id, **fields)
+            after = meds.get(conn, uid, med_id)
+            return ({"ok": True, "modifie": after["name"], "heures": after["times"],
+                     "actif": bool(after["active"])},
+                    {"tool": "medicament", "args": {"action": "restaurer", "id": med_id,
+                                                    "avant": {**before, "times": before["times"]}}})
+        if action == "supprimer":
+            meds.delete(conn, uid, med_id)
+            return {"ok": True, "supprime": med["name"]}, None
+        slot = meds._times(args.get("heure") or "")[0]
+        if action == "annuler_prise":
+            meds.unmark(conn, uid, med_id, today, slot)
+            return {"ok": True, "annule": f"{med['name']} {slot}"}, None
+        if not meds.mark(conn, uid, med_id, today, slot,
+                         "taken" if action == "pris" else "skipped"):
+            raise ToolError(f"{med['name']} has no dose at {slot}: {med['times']}")
+        return ({"ok": True, "note": f"{med['name']} {slot} "
+                 + ("pris" if action == "pris" else "saute")},
+                {"tool": "medicament", "args": {"action": "annuler_prise",
+                                                "id": med_id, "heure": slot}})
+    except ValueError as error:
+        raise ToolError(str(error)) from None
+
+
 def write_regler_parametre(conn, ctx, args, undo=False):
     uid = ctx["user_id"]
     key = _choice(args, "parametre", PARAMS)
@@ -1664,7 +1764,7 @@ READERS: dict[str, Callable] = {
     "seances": tool_seances, "entrainements": tool_entrainements,
     "coeur": tool_coeur, "programme": tool_programme,
     "repas": tool_repas, "progres": tool_progres, "donnees": tool_donnees,
-    "donnees_brutes": tool_donnees_brutes,
+    "donnees_brutes": tool_donnees_brutes, "medicaments": tool_medicaments,
 }
 WRITERS: dict[str, Callable] = {
     "noter_nuit": write_noter_nuit, "regler_niveau": write_regler_niveau,
@@ -1673,7 +1773,7 @@ WRITERS: dict[str, Callable] = {
     "regler_objectif": write_regler_objectif,
     "regler_parametre": write_regler_parametre,
     "regler_planning": write_regler_planning,
-    "seance_du_jour": write_seance_du_jour,
+    "seance_du_jour": write_seance_du_jour, "medicament": write_medicament,
 }
 
 
@@ -1867,6 +1967,9 @@ def action_label(name: str, data: dict, language: str) -> str:
     if name == "regler_planning":
         return (f"{data['jour'].capitalize()} : {data['seance']}"
                 + (f" à {data['heure']}" if data.get("heure") else ""))
+    if name == "medicament":
+        return str(data.get("ajoute") or data.get("modifie") or data.get("supprime")
+                   or data.get("note") or data.get("restaure") or data.get("annule") or "")[:80]
     if name == "seance_du_jour":
         return str(data.get("fait") or data.get("envoye") or data.get("retour")
                    or data.get("annule") or "")[:80]

@@ -18,6 +18,7 @@ shared database, so no extra file needs mounting.
 import datetime as dt
 import hashlib
 import hmac
+import re
 import secrets
 import sqlite3
 from typing import Optional
@@ -88,12 +89,33 @@ def missed_url(
             f"{sign(conn, user_id, date, choice, 'missed')}")
 
 
+# A dose answer: "<med id>.<HHMM>.<taken|skipped>".
+MED_VALUE = re.compile(r"\d{1,9}\.\d{4}\.(taken|skipped)")
+
+
+def med_value(med_id: int, slot: str, status: str) -> str:
+    return f"{med_id}.{slot.replace(':', '')}.{status}"
+
+
+def med_url(
+    conn: sqlite3.Connection, user_id: int, base_url: str, date: str,
+    med_id: int, slot: str, status: str,
+) -> str:
+    """Absolute URL of a one-tap "Pris" / "Sauter" answer to a reminder."""
+    value = med_value(med_id, slot, status)
+    return (f"{base_url.rstrip('/')}/quick/med/{user_id}/{date}/{value}/"
+            f"{sign(conn, user_id, date, value, 'med')}")
+
+
 def verify(
     conn: sqlite3.Connection, user_id: int, date: str, rating: str,
     signature: str, today: Optional[str] = None, action: str = "rate",
 ) -> bool:
     """Whether a rating link is genuine and still fresh."""
-    if rating not in VALUES.get(action, ()):
+    if action == "med":
+        if not MED_VALUE.fullmatch(rating or ""):
+            return False
+    elif rating not in VALUES.get(action, ()):
         return False
     try:
         day = dt.date.fromisoformat(date)
@@ -145,6 +167,14 @@ if __name__ == "__main__":
                   "2026-10-17", "progress")
     assert not verify(conn, uid, "2026-10-17", "longer", up.rsplit("/", 1)[1],
                       "2026-10-17", "progress")
+    # A dose answer: its own kind, its value checked by shape.
+    taken = med_url(conn, uid, "https://coach.example", "2026-10-17", 3, "08:00", "taken")
+    assert taken.endswith(taken.rsplit("/", 1)[1]) and "/quick/med/" in taken
+    assert verify(conn, uid, "2026-10-17", "3.0800.taken", taken.rsplit("/", 1)[1],
+                  "2026-10-17", "med")
+    assert not verify(conn, uid, "2026-10-17", "3.0800.skipped",
+                      taken.rsplit("/", 1)[1], "2026-10-17", "med")
+    assert not verify(conn, uid, "2026-10-17", "3.0800; drop", "x", "2026-10-17", "med")
     # The secret stays the same once made.
     assert url == rate_url(conn, uid, "https://coach.example", "2026-10-17", "easy")
     print("quick_links.py: all checks passed")
