@@ -104,6 +104,159 @@ def release(user_id: int) -> None:
     _in_flight.discard(user_id)
 
 
+# --- Answers that outlive the connection -----------------------------------
+#
+# A phone's connection drops: a proxy, a network switch, a locked screen.
+# The answer must not drop with it -- the GPU time is already spent. So
+# the answer runs as a job on the server and keeps every event; the
+# browser reads them from index 0 and, when its connection is cut,
+# comes back for the rest (``follow(job, start=n)``). A job nobody
+# reads for ORPHAN_SEC is stopped (the tab is gone); a finished one is
+# kept KEEP_SEC for a late reconnection.
+
+ORPHAN_SEC = 120
+KEEP_SEC = 300
+PING_SEC = 15            # a line while the model is silent: idle proxies
+_jobs: dict[str, "Job"] = {}
+
+
+class Job:
+    """One answer: its events so far, and whether it is over."""
+
+    def __init__(self, user_id: int, job_id: Optional[str] = None):
+        import secrets
+
+        self.id = job_id or secrets.token_urlsafe(12)
+        self.user_id = user_id
+        self.events: list[dict] = [{"type": "job", "id": self.id}]
+        self.done = False
+        self.ended_at: Optional[float] = None
+        self.readers = 0
+        self.task: Optional[asyncio.Task] = None
+        self._changed = asyncio.Event()
+
+    def push(self, event: dict) -> None:
+        self.events.append(event)
+        self._changed.set()
+        self._changed = asyncio.Event()
+
+    def stop(self) -> None:
+        if self.task and not self.task.done():
+            self.task.cancel()
+
+    def _orphan_check(self) -> None:
+        if not self.readers and not self.done:
+            print(f"assistant: user {self.user_id}: nobody reading for "
+                  f"{ORPHAN_SEC} s, answer stopped")
+            self.stop()
+
+
+JOB_ID = re.compile(r"[A-Za-z0-9_-]{8,40}")
+
+
+def start_job(user_id: int, events: AsyncIterator[dict],
+              job_id: Optional[str] = None) -> Job:
+    """Run ``events`` (a ``chat_events`` stream) as a job. The caller
+    holds the account's slot; the job frees it when it ends.
+
+    ``job_id`` comes from the browser, so that it can come back for the
+    answer even if the connection drops before the first line; one
+    that is malformed or taken is replaced."""
+    loop = asyncio.get_running_loop()
+    for key in [k for k, j in _jobs.items()
+                if j.done and loop.time() - j.ended_at > KEEP_SEC]:
+        del _jobs[key]
+    if not (isinstance(job_id, str) and JOB_ID.fullmatch(job_id)) or job_id in _jobs:
+        job_id = None
+    job = Job(user_id, job_id)
+    _jobs[job.id] = job
+
+    async def run():
+        try:
+            async for event in events:
+                if event.get("type") != "done":
+                    job.push(event)
+        except asyncio.CancelledError:
+            pass  # the stop button, or nobody reading
+        except Exception as error:  # noqa: BLE001 -- the reader is told
+            print(f"assistant: user {user_id}: {type(error).__name__}: {error}")
+            job.push({"type": "error", "text": text(
+                _language_of(user_id), "unreachable")})
+        finally:
+            try:
+                await events.aclose()
+            except BaseException:  # noqa: BLE001 -- the job still ends
+                pass
+
+    def end(_task) -> None:
+        # A callback, not run()'s finally: a task stopped before it
+        # started never runs its body.
+        job.done = True
+        job.ended_at = loop.time()
+        release(user_id)
+        job.push({"type": "done"})
+
+    job.task = loop.create_task(run())
+    job.task.add_done_callback(end)
+    return job
+
+
+async def take_over(user_id: int) -> bool:
+    """``try_acquire``, after stopping this account's answer if nobody
+    is reading it any more (the page was reloaded or closed)."""
+    if try_acquire(user_id):
+        return True
+    for job in list(_jobs.values()):
+        if job.user_id == user_id and not job.done and not job.readers:
+            job.stop()
+            await asyncio.wait({job.task}, timeout=5)
+    return try_acquire(user_id)
+
+
+def get_job(user_id: int, job_id: str) -> Optional[Job]:
+    """This account's job, or None (unknown, expired, someone else's)."""
+    job = _jobs.get(job_id)
+    return job if job is not None and job.user_id == user_id else None
+
+
+async def follow(job: Job, start: int = 0) -> AsyncIterator[dict]:
+    """The job's events from index ``start``, as they come; a ``ping``
+    while nothing new arrives. Ends after ``done``."""
+    loop = asyncio.get_running_loop()
+    index = max(0, start)
+    job.readers += 1
+    try:
+        while True:
+            while index < len(job.events):
+                event = job.events[index]
+                index += 1
+                yield event
+                if event["type"] == "done":
+                    return
+            changed = job._changed
+            try:
+                await asyncio.wait_for(changed.wait(), PING_SEC)
+            except TimeoutError:
+                yield {"type": "ping"}
+    finally:
+        job.readers -= 1
+        if not job.done:
+            print(f"assistant: user {job.user_id}: browser connection lost "
+                  f"after {index} events, the answer goes on")
+            if not job.readers:
+                loop.call_later(ORPHAN_SEC, job._orphan_check)
+
+
+def _language_of(user_id: int) -> str:
+    conn = db.connect()
+    try:
+        return context_for(conn, user_id, "")["language"]
+    except Exception:  # noqa: BLE001 -- only picks the error's language
+        return "fr"
+    finally:
+        conn.close()
+
+
 # --- Texts -----------------------------------------------------------------
 
 TEXTS = {

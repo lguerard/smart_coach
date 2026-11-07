@@ -1193,8 +1193,11 @@ async def assistant_chat(request: Request):
     """Ask the coach: streams NDJSON events (assistant.chat_events).
 
     One line per event -- ``status``, ``tool``, ``card``, ``action``,
-    ``delta``, ``error``, ``done``. Closing the request (the stop
-    button) closes the Ollama call with it.
+    ``delta``, ``error``, ``done``, first a ``job`` with its id, and a
+    ``ping`` when the model is silent. The answer runs as a job
+    (assistant.start_job): a dropped connection resumes with
+    ``GET /assistant/chat/{id}?start=n``; the stop button calls
+    ``/assistant/chat/{id}/stop``, which closes the Ollama call.
     """
     user_id = current_user_id(request)
     language = _assistant_language(user_id)
@@ -1219,29 +1222,46 @@ async def assistant_chat(request: Request):
     except assistant.TooLong:
         return JSONResponse({"error": assistant.text(language, "too_long")},
                             status_code=413)
-    if not assistant.try_acquire(user_id):
+    if not await assistant.take_over(user_id):
         return JSONResponse({"error": assistant.text(language, "busy")},
                             status_code=429)
     username = request.session.get("username", "")
+    job = assistant.start_job(
+        user_id, assistant.chat_events(user_id, username, history), data.get("id"))
+    return _follow_response(job, 0)
 
+
+def _follow_response(job, start: int) -> StreamingResponse:
     async def lines():
-        try:
-            async for event in assistant.chat_events(
-                user_id, username, history,
-                is_disconnected=request.is_disconnected,
-            ):
-                yield json.dumps(event, ensure_ascii=False) + "\n"
-        finally:
-            assistant.release(user_id)
-
-    from starlette.background import BackgroundTask
+        async for event in assistant.follow(job, start):
+            yield json.dumps(event, ensure_ascii=False) + "\n"
 
     return StreamingResponse(
         lines(), media_type="application/x-ndjson",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        # Also freed if the stream never started (client gone at once).
-        background=BackgroundTask(assistant.release, user_id),
     )
+
+
+@app.get("/assistant/chat/{job_id}")
+async def assistant_resume(request: Request, job_id: str, start: int = 0):
+    """The rest of an answer after a dropped connection: its events from
+    index ``start`` (``?start=``), live until it ends. 404 once gone."""
+    job = assistant.get_job(current_user_id(request), job_id)
+    if job is None:
+        return JSONResponse({"error": "gone"}, status_code=404)
+    return _follow_response(job, start)
+
+
+@app.post("/assistant/chat/{job_id}/stop")
+async def assistant_stop(request: Request, job_id: str):
+    """The stop button: the answer runs on without a reader otherwise."""
+    _, error = await _assistant_json(request)
+    if error:
+        return error
+    job = assistant.get_job(current_user_id(request), job_id)
+    if job is not None:
+        job.stop()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/assistant/undo")

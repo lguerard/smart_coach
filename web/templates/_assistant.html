@@ -106,6 +106,8 @@
        else 'The local model is busy (it also serves other apps): your answer is on its way…' }}
   </p>
 
+  <p id="sc-reconnect" class="text-xs px-4 pb-1" style="color: var(--muted); display: none;"></p>
+
   <form id="sc-form" class="flex items-end gap-2 p-3 shrink-0" style="border-top: 1px solid var(--border);">
     <textarea id="sc-input" rows="1" maxlength="4000" class="flex-1 rounded-xl px-3 py-2"
               style="border: 1px solid var(--border); color: var(--text-primary);"
@@ -130,6 +132,7 @@
       'send': 'Envoyer' if fr else 'Send',
       'stopped': 'Réponse arrêtée.' if fr else 'Answer stopped.',
       'network': 'Connexion perdue avec le serveur.' if fr else 'Lost the connection to the server.',
+      'reconnecting': 'Connexion coupée : je reprends la réponse…' if fr else 'Connection cut: picking the answer back up…',
       'undo': 'Annuler' if fr else 'Undo',
       'undone': 'Annulé' if fr else 'Undone',
       'hello': 'Salut ! Je connais tes nuits, tes séances, tes repas et ton programme. Pose-moi une question, ou demande-moi de t\'aider à décider.' if fr else 'Hi! I know your nights, sessions, meals and programme. Ask me anything, or ask me to help you decide.',
@@ -151,7 +154,16 @@
   const panel = $('sc-chat'), list = $('sc-msgs'), form = $('sc-form');
   const input = $('sc-input'), busy = $('sc-busy');
   let convo = load();
-  let controller = null, busyTimer = null;
+  let controller = null, busyTimer = null, job = null;
+  const status = $('sc-reconnect');
+  // The stop button: the answer runs on the server until told.
+  function stopJob() {
+    if (!job) return;
+    fetch('/assistant/chat/' + job + '/stop', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: '{}', credentials: 'same-origin', keepalive: true,
+    }).catch(() => {});
+  }
 
   function load() {
     try { return JSON.parse(localStorage.getItem(CFG.key)) || []; } catch (e) { return []; }
@@ -315,7 +327,17 @@
     busyTimer = setTimeout(() => { if (!started) busy.style.display = ''; }, 8000);
     const history = convo.slice(0, -1).filter((m) => m.content && !m.failed)
       .map((m) => ({ role: m.role, content: m.content }));
+    // The answer runs on the server as a job named here: if the
+    // connection drops (proxy, network switch, locked screen), the
+    // browser comes back for the events it has not seen yet.
+    const jobId = Array.from(crypto.getRandomValues(new Uint8Array(12)),
+      (b) => b.toString(16).padStart(2, '0')).join('');
+    let seen = 0, finished = false;
+    job = jobId;
     const handle = (ev) => {
+      if (ev.type === 'ping') return;
+      seen += 1;
+      if (ev.type === 'done') { finished = true; return; }
       if (ev.type === 'delta') {
         if (!started) { started = true; busy.style.display = 'none'; dots.remove(); }
         reply.content += ev.text;
@@ -330,35 +352,67 @@
         reply.error = ev.text;
       }
     };
+    const read = async (res) => {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (line) { try { handle(JSON.parse(line)); } catch (e) {} }
+        }
+      }
+    };
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     try {
-      const res = await fetch('/assistant/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history }), signal: controller.signal,
-        credentials: 'same-origin',
-      });
-      if (!res.ok || !res.body) {
+      let res = null;
+      try {
+        res = await fetch('/assistant/chat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: history, id: jobId }), signal: controller.signal,
+          credentials: 'same-origin',
+        });
+      } catch (e) {
+        if (e.name === 'AbortError') throw e;  // else: resumed below
+      }
+      if (res && (!res.ok || !res.body)) {
         let msg = CFG.t.network;
         try { msg = (await res.json()).error || msg; } catch (e) {}
         reply.error = msg;
-      } else {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          let nl;
-          while ((nl = buf.indexOf('\n')) >= 0) {
-            const line = buf.slice(0, nl).trim();
-            buf = buf.slice(nl + 1);
-            if (line) { try { handle(JSON.parse(line)); } catch (e) {} }
-          }
+        finished = true;
+      }
+      for (let attempt = 0; !finished; attempt++) {
+        if (res) {
+          try { await read(res); } catch (e) { if (e.name === 'AbortError') throw e; }
+          if (finished) break;
         }
+        if (attempt >= 8) { reply.error = CFG.t.network; break; }
+        status.textContent = CFG.t.reconnecting; status.style.display = '';
+        await wait(Math.min(1000 * 2 ** attempt, 8000));
+        if (controller.signal.aborted) throw new DOMException('stopped', 'AbortError');
+        try {
+          res = await fetch('/assistant/chat/' + jobId + '?start=' + seen, {
+            signal: controller.signal, credentials: 'same-origin',
+          });
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+          res = null;
+          continue;
+        }
+        if (res.status === 404) { reply.error = CFG.t.network; break; }
+        if (!res.ok || !res.body) res = null;
+        else status.style.display = 'none';
       }
     } catch (e) {
       reply.error = e.name === 'AbortError' ? CFG.t.stopped : CFG.t.network;
     }
+    status.style.display = 'none';
+    job = null;
     controller = null;
     setStreaming(false);
     // A failed question is not resent as history: only kept for display.
@@ -392,12 +446,12 @@
     if (e.key === 'Escape' && panel.classList.contains('open')) close();
   });
   $('sc-new').addEventListener('click', () => {
-    if (controller) controller.abort();
+    if (controller) { stopJob(); controller.abort(); }
     convo = []; save(); render();
   });
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    if (controller) { controller.abort(); return; }  // the stop button
+    if (controller) { stopJob(); controller.abort(); return; }  // the stop button
     const q = input.value;
     input.value = ''; input.style.height = '';
     send(q);

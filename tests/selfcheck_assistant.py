@@ -419,6 +419,106 @@ assert sent[-1]["content"] == question[0]["content"] and len(sent) < len(long_hi
 assert assistant.tokens(sent) + assistant.tokens(seen[0]["tools"]) <= \
     assistant.budget_tokens()
 
+# --- 5b. Answers that outlive the connection --------------------------------
+async def slow_words(n, pause=0.0):
+    yield {"type": "status", "text": "..."}
+    for i in range(n):
+        await asyncio.sleep(pause)
+        yield {"type": "delta", "text": f"w{i} "}
+    yield {"type": "done"}
+
+
+async def jobs_check():
+    # Cut after 3 events, resumed from there: the same answer, whole.
+    assert assistant.try_acquire(A)
+    job = assistant.start_job(A, slow_words(6, 0.01), "client-id-123")
+    assert job.id == "client-id-123" and assistant.get_job(A, job.id) is job
+    assert assistant.get_job(B, job.id) is None  # someone else's: unknown
+    first = []
+    reader = assistant.follow(job, 0)
+    async for event in reader:
+        first.append(event)
+        if len(first) == 3:
+            break
+    await reader.aclose()  # the phone's connection drops here
+    rest = [e async for e in assistant.follow(job, len(first))]
+    whole = first + rest
+    assert whole[0] == {"type": "job", "id": "client-id-123"}, whole
+    assert "".join(e["text"] for e in whole if e["type"] == "delta") == \
+        "w0 w1 w2 w3 w4 w5 ", whole
+    assert whole[-1] == {"type": "done"} and \
+        [e["type"] for e in whole].count("done") == 1
+    assert assistant.try_acquire(A), "the slot is freed when the answer ends"
+    # Read again once over: the whole answer, kept for a late reconnection.
+    again = [e async for e in assistant.follow(job, 0)]
+    assert again == whole
+    # A malformed or taken id is replaced.
+    other = assistant.start_job(A, slow_words(1), "client-id-123")
+    assert other.id != "client-id-123"
+    assert assistant.start_job(A, slow_words(1), "x y").id != "x y"
+    await asyncio.sleep(0.05)
+
+    # The stop button: the answer ends now, the slot is free.
+    assert assistant.try_acquire(A)
+    job = assistant.start_job(A, slow_words(50, 0.05))
+    await asyncio.sleep(0.12)
+    job.stop()
+    events = [e async for e in assistant.follow(job, 0)]
+    assert events[-1] == {"type": "done"} and len(events) < 20, events
+    assert assistant.try_acquire(A)
+    assistant.release(A)
+
+    # The model silent: pings keep the connection alive, not counted.
+    assistant.PING_SEC = 0.05
+    assert assistant.try_acquire(A)
+    job = assistant.start_job(A, slow_words(2, 0.12))
+    events = [e async for e in assistant.follow(job, 0)]
+    assert {"type": "ping"} in events and {"type": "ping"} not in job.events
+    assistant.PING_SEC = 15
+
+    # Nobody reading any more (the tab is gone): stopped after a while.
+    assistant.ORPHAN_SEC = 0.05
+    assert assistant.try_acquire(A)
+    job = assistant.start_job(A, slow_words(50, 0.05))
+    reader = assistant.follow(job, 0)
+    await reader.__anext__()
+    await reader.aclose()
+    await asyncio.sleep(0.3)
+    assert job.done and assistant.try_acquire(A)
+    assistant.release(A)
+    assistant.ORPHAN_SEC = 120
+
+    # A new question while an unread answer runs: it takes over.
+    assert assistant.try_acquire(A)
+    job = assistant.start_job(A, slow_words(50, 0.05))
+    assert await assistant.take_over(A) and job.done
+    assistant.release(A)
+    # While someone reads it, the answer stays: busy.
+    assert assistant.try_acquire(A)
+    job = assistant.start_job(A, slow_words(50, 0.05))
+    reader = assistant.follow(job, 0)
+    await reader.__anext__()
+    assert not await assistant.take_over(A)
+    job.stop()
+    await reader.aclose()
+    await asyncio.sleep(0.05)
+    assert assistant.try_acquire(A)
+    assistant.release(A)
+
+    # A crash inside the answer: told, and the stream still ends.
+    async def broken():
+        yield {"type": "status", "text": "..."}
+        raise KeyError("boom")
+    assert assistant.try_acquire(A)
+    job = assistant.start_job(A, broken())
+    events = [e async for e in assistant.follow(job, 0)]
+    assert events[-2]["type"] == "error" and events[-1] == {"type": "done"}, events
+    assert assistant.try_acquire(A)
+    assistant.release(A)
+
+
+asyncio.run(jobs_check())
+
 # --- 6. The web endpoints ----------------------------------------------------
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -465,8 +565,13 @@ assert "".join(e["text"] for e in streamed if e["type"] == "delta") == \
 assert any(e["type"] == "card" and e["tool"] == "repas" for e in streamed)
 tool_text = json.dumps(web_seen[1]["messages"], ensure_ascii=False)
 assert "poulet a" in tool_text and "poulet b" not in tool_text
+assert streamed[0]["type"] == "job"
 assert assistant.try_acquire(A)  # the slot was released
 assistant.release(A)
+# Resuming: an unknown or someone else's answer is gone; stop wants JSON.
+assert web.get("/assistant/chat/nope-nope-nope?start=3").status_code == 404
+assert web.post("/assistant/chat/nope-nope-nope/stop", data={"a": "b"}).status_code == 415
+assert web.post("/assistant/chat/nope-nope-nope/stop", json={}).json() == {"ok": True}
 
 # Undo: writes only, this account only.
 assert web.post("/assistant/undo", json={"tool": "bilan", "args": {}}).status_code == 400
