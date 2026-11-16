@@ -228,11 +228,25 @@ def run_for_user(conn, user: dict, note: str | None = None) -> None:
     # Achievement checks read coach_log (streaks/comebacks), so this
     # runs after today's row is committed -- an Xbox-style toast pops
     # before the daily message, celebration first.
-    for key in achievements.check_and_unlock(conn, user_id, today):
+    unlocked = achievements.check_and_unlock(conn, user_id, today)
+    title = "Succes debloque !" if language == "fr" else "Achievement Unlocked!"
+    if len(unlocked) > 2:
+        # Many at once (new trophies meeting a long history): one push,
+        # not a burst of them.
+        names = [f"{achievements.ACHIEVEMENTS[k]['icon']} "
+                 f"{achievements.ACHIEVEMENTS[k]['name_fr' if language == 'fr' else 'name_en']}"
+                 for k in unlocked]
+        sent_log.send(
+            conn, user_id, "achievement",
+            (f"{len(unlocked)} trophees d'un coup : " if language == "fr"
+             else f"{len(unlocked)} achievements at once: ") + ", ".join(names),
+            title=title, topic=ntfy_topic,
+        )
+        unlocked = []
+    for key in unlocked:
         definition = achievements.ACHIEVEMENTS[key]
         name = definition["name_fr" if language == "fr" else "name_en"]
         desc = definition["desc_fr" if language == "fr" else "desc_en"]
-        title = "Succes debloque !" if language == "fr" else "Achievement Unlocked!"
         sent_log.send(
             conn, user_id, "achievement",
             f"{definition['icon']} {name} -- {desc}", title=title,
