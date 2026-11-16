@@ -582,6 +582,15 @@ undone = web.post("/assistant/undo", json={"tool": "noter_nuit",
 assert undone.status_code == 200 and undone.json()["ok"], undone.text
 assert sleep_feedback.felt(conn, A, TODAY) == "ok"
 assert sleep_feedback.felt(conn, B, TODAY) is None
+# Every page renders, a day without any meal logged included (a gap
+# in the Repas tiles' 7-day line once broke the page with a 500).
+conn.execute("DELETE FROM nutrition WHERE user_id = ? AND local_date = ?",
+             (A, (dt.date.fromisoformat(TODAY) - dt.timedelta(days=2)).isoformat()))
+conn.commit()
+for path in ("/", "/repas", "/sommeil", "/progress", "/trends", "/sessions",
+             "/programme", "/messages", "/medicaments", "/body"):
+    assert web.get(path).status_code == 200, path
+
 # Signed out: the next page clears the browser's conversations.
 web.post("/logout")
 login_page = web.get("/login").text

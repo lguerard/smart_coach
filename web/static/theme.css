@@ -296,19 +296,23 @@ body {
 
 .card, .hero-card {
   position: relative;
-  transition: transform 0.25s cubic-bezier(.2,.8,.2,1), box-shadow 0.25s, border-color 0.25s;
+  transition: box-shadow 0.25s, border-color 0.25s;
 }
 @media (hover: hover) {
   .card:hover, .hero-card:hover {
-    transform: translateY(-2px);
     border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
     box-shadow: 0 14px 34px -18px color-mix(in srgb, var(--accent) 55%, rgba(0,0,0,0.6));
   }
 }
 
-/* Entrance: cards rise in, one after the other (--i set by base.html). */
+/* Hover never moves a card: a moved layer gets its text redrawn as an
+   image, which looks blurred. Shadow, border and background only. */
+
+/* Entrance: cards rise in, one after the other (--i set by base.html).
+   "backwards", never "both": a finished animation that keeps its last
+   frame keeps the card on its own layer, and its text soft. */
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
-.rise { animation: rise 0.55s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i, 0) * 55ms); }
+.rise { animation: rise 0.55s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(var(--i, 0) * 55ms); }
 
 /* The day's card: a slow glowing border in the status colour. */
 .hero-card {
@@ -332,21 +336,21 @@ body {
 }
 
 /* Rings and meters fill up on arrival. */
-.ring { animation: ring-fill 1.2s cubic-bezier(.2,.8,.2,1) both; position: relative; }
+.ring { animation: ring-fill 1.2s cubic-bezier(.2,.8,.2,1) backwards; position: relative; }
 @keyframes ring-fill { from { --pct: 0; } }
 .ring::after {
   content: ""; position: absolute; inset: -6px; border-radius: 50%;
   background: radial-gradient(circle, color-mix(in srgb, var(--ring-color, var(--accent)) 30%, transparent), transparent 70%);
   z-index: -1; opacity: 0.7;
 }
-.meter-fill { transform-origin: left; animation: grow 1s cubic-bezier(.2,.8,.2,1) both; animation-delay: 0.2s; }
+.meter-fill { transform-origin: left; animation: grow 1s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: 0.2s; }
 @keyframes grow { from { transform: scaleX(0); } }
 .meter-track { height: 7px; }
 .meter-fill.done { box-shadow: 0 0 10px color-mix(in srgb, var(--green) 70%, transparent); }
 
 /* Metric tiles: lift, a coloured edge, a week sparkline, a hover card. */
 .metric {
-  position: relative; transition: transform 0.2s, background 0.2s, box-shadow 0.2s;
+  position: relative; transition: background 0.2s, box-shadow 0.2s;
   border: 1px solid transparent; outline: none;
 }
 .metric::before {
@@ -356,7 +360,7 @@ body {
 }
 .metric[tabindex] { cursor: help; }
 @media (hover: hover) {
-  .metric:hover { transform: translateY(-2px) scale(1.015); background: color-mix(in srgb, var(--metric-color, var(--accent)) 9%, var(--surface-2)); }
+  .metric:hover { background: color-mix(in srgb, var(--metric-color, var(--accent)) 9%, var(--surface-2)); }
   .metric:hover::before { opacity: 1; left: 0; right: 0; }
 }
 .metric:focus-visible, .metric:focus-within { border-color: color-mix(in srgb, var(--metric-color, var(--accent)) 45%, transparent); }
@@ -371,7 +375,7 @@ body {
 }
 /* Drawn left to right: the box is unveiled, the line itself never dashed
    (a dash pattern breaks on a stretched, non-scaling line). */
-.spark { animation: unveil 1.3s 0.3s cubic-bezier(.2,.8,.2,1) both; }
+.spark { animation: unveil 1.3s 0.3s cubic-bezier(.2,.8,.2,1) backwards; }
 @keyframes unveil { from { clip-path: inset(-4px 100% -4px -4px); } to { clip-path: inset(-4px -4px -4px -4px); } }
 /* The last point: a zero-length line with round caps stays a round dot
    however the box is stretched. */
@@ -403,8 +407,8 @@ body {
 .has-pop:hover > .pop.left, .has-pop:focus > .pop.left, .has-pop:focus-within > .pop.left { transform: translate(0, 0) scale(1); }
 
 /* Rows that react: signals, goals, tired muscles. */
-.row-hover { border-radius: 8px; transition: background 0.15s, transform 0.15s; padding: 0.3rem 0.45rem; margin: 0 -0.45rem; }
-@media (hover: hover) { .row-hover:hover { background: var(--surface-2); transform: translateX(2px); } }
+.row-hover { border-radius: 8px; transition: background 0.15s; padding: 0.3rem 0.45rem; margin: 0 -0.45rem; }
+@media (hover: hover) { .row-hover:hover { background: var(--surface-2); } }
 
 /* Status pill with a live dot. */
 .live-dot { position: relative; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 0.35rem; vertical-align: 0.05em; }
@@ -426,12 +430,11 @@ svg path[class^="bm-"] { transition: filter 0.15s, opacity 0.15s; }
   svg path[class^="bm-"]:not(.bm-body):hover { opacity: 1; filter: brightness(1.25) drop-shadow(0 0 4px currentColor); }
 }
 .fatigue-bar { height: 4px; border-radius: 999px; background: var(--grid); overflow: hidden; }
-.fatigue-bar > span { display: block; height: 100%; border-radius: 999px; transform-origin: left; animation: grow 0.9s cubic-bezier(.2,.8,.2,1) both; }
+.fatigue-bar > span { display: block; height: 100%; border-radius: 999px; transform-origin: left; animation: grow 0.9s cubic-bezier(.2,.8,.2,1) backwards; }
 
 @media (prefers-reduced-motion: reduce) {
   .rise, .ring, .meter-fill, .spark, .fatigue-bar > span, .hero-card::before, .live-dot::after { animation: none !important; }
   .card, .hero-card, .metric, .btn, .row-hover { transition: none !important; }
-  .card:hover, .hero-card:hover, .metric:hover { transform: none !important; }
 }
 /* Tiles sit in 2 or 4 columns: the card opens inward, never off-screen. */
 .metric:nth-child(odd) > .pop { left: 0; transform: translate(0, 4px) scale(0.97); }
@@ -472,7 +475,7 @@ body { overflow-x: clip; }
   display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
   padding: 0.45rem 0 0.4rem; border-radius: 12px; background: var(--surface-2);
   border: 1px solid transparent; cursor: default; outline: none;
-  transition: transform 0.2s, background 0.2s, border-color 0.2s;
+  transition: top 0.2s, background 0.2s, border-color 0.2s;
 }
 .week-strip .day-letter { font-size: 0.62rem; font-weight: 650; letter-spacing: 0.06em; color: var(--muted); }
 .week-strip .day-num { font-size: 0.72rem; font-weight: 600; color: var(--text-secondary); }
@@ -488,13 +491,13 @@ body { overflow-x: clip; }
 .week-strip .is-today {
   background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  transform: translateY(-3px);
+  top: -3px;
   box-shadow: 0 10px 24px -14px var(--accent);
 }
 .week-strip .is-today .day-letter, .week-strip .is-today .day-num { color: var(--accent-text); }
 .week-strip .is-today .day-dot { animation: breathe 2.6s ease-in-out infinite; }
 @keyframes breathe { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--day) 18%, transparent); } }
-@media (hover: hover) { .week-strip .day:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--day) 45%, transparent); } }
+@media (hover: hover) { .week-strip .day:hover { top: -3px; border-color: color-mix(in srgb, var(--day) 45%, transparent); } }
 
 /* Primary buttons: a light gradient of the accent. */
 .btn-primary {
@@ -592,8 +595,8 @@ body { overflow-x: clip; }
   margin-top: 0.6rem; padding: 0.6rem 0.75rem; border-radius: 12px; min-height: 3.4rem;
   background: var(--surface-2); border: 1px solid var(--border);
 }
-.stat-tile { position: relative; transition: transform 0.2s, background 0.2s; outline: none; }
-@media (hover: hover) { .stat-tile:hover { transform: translateY(-2px); background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); } }
+.stat-tile { position: relative; transition: background 0.2s; outline: none; }
+@media (hover: hover) { .stat-tile:hover { background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); } }
 
 /* Progrès: the big figures, coloured like the tiles. */
 .big-stat { overflow: visible; }
@@ -603,3 +606,23 @@ body { overflow-x: clip; }
 }
 .big-stat .big-num { color: var(--metric-color, var(--text-primary)); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .big-stat { cursor: help; outline: none; }
+
+/* Sommeil, night by night: a row lit under the pointer, a time cursor,
+   a floating label that follows it. */
+.night-row { border-radius: 10px; padding: 0.25rem 0.4rem; margin: 0 -0.4rem; outline: none; cursor: pointer; transition: background 0.15s; }
+@media (hover: hover) { .night-row:hover { background: var(--surface-2); } }
+.night-row.is-picked { background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); box-shadow: inset 3px 0 0 var(--accent); }
+.night-bar { overflow: visible; }
+.night-bar .wake { cursor: help; transition: filter 0.15s; }
+.night-bar .wake:hover { filter: brightness(1.3) drop-shadow(0 0 3px currentColor); }
+.night-cursor { stroke: var(--text-primary); stroke-width: 1.5; vector-effect: non-scaling-stroke; opacity: 0; pointer-events: none; }
+.night-bar.is-hover .night-cursor { opacity: 0.7; }
+.float-tip {
+  position: fixed; z-index: 60; pointer-events: none; white-space: nowrap;
+  background: var(--surface-1-solid); color: var(--text-primary); border: 1px solid var(--border);
+  border-radius: 8px; padding: 0.3rem 0.55rem; font-size: 0.72rem; font-weight: 550;
+  box-shadow: 0 10px 24px -10px rgba(0,0,0,0.5); font-variant-numeric: tabular-nums;
+}
+.night-facts { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.9rem; font-size: 0.75rem; }
+.night-facts dt { color: var(--muted); }
+.night-facts dd { color: var(--text-primary); }

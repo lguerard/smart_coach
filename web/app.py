@@ -643,7 +643,10 @@ TILE_INFO = {
 
 def _spark(values: list) -> Optional[str]:
     """SVG polyline points (100 x 28 box) for a week, gaps skipped."""
-    known = [(i, v) for i, v in enumerate(values) if v is not None]
+    # Only real numbers: a missing day (None, or a template's Undefined)
+    # is a gap, never an error.
+    known = [(i, v) for i, v in enumerate(values)
+             if isinstance(v, (int, float)) and not isinstance(v, bool)]
     if len(known) < 2:
         return None
     low = min(v for _, v in known)
@@ -2502,7 +2505,7 @@ def sleep_page(request: Request) -> HTMLResponse:
             night["final_x"] = last["x"]
         night["day_label"] = date_label_fr(night["date"])
     return templates.TemplateResponse(
-        request, "sleep.html", {"report": report},
+        request, "sleep.html", {"report": report, "axis_start_h": SLEEP_AXIS_START_H},
     )
 
 
@@ -2519,6 +2522,16 @@ def messages_page(request: Request) -> HTMLResponse:
     )
 
 
+def _week_intake(conn, user_id: int, date: str) -> dict:
+    """``{kcal|protein_g|carbs_g|fat_g: [7 values, oldest first]}``."""
+    days = [progress.intake_for_date(
+                conn, user_id,
+                (dt.date.fromisoformat(date) - dt.timedelta(days=n)).isoformat())
+            for n in range(7, 0, -1)]
+    return {key: [d.get("calories_kcal" if key == "kcal" else key) for d in days]
+            for key in ("kcal", "protein_g", "carbs_g", "fat_g")}
+
+
 @app.get("/repas", response_class=HTMLResponse)
 def meals_page(request: Request) -> HTMLResponse:
     """Photograph a meal or a menu; the latest estimates."""
@@ -2533,12 +2546,9 @@ def meals_page(request: Request) -> HTMLResponse:
             "mfp_text": meals.mfp_text,
             "remaining": progress.remaining_today(conn, user_id, date),
             "mfp_goal": mfp_goals.goal(conn, user_id, date),
-            # The 7 days before today, for the goal tiles' lines.
-            "week_intake": [
-                progress.intake_for_date(
-                    conn, user_id,
-                    (dt.date.fromisoformat(date) - dt.timedelta(days=n)).isoformat())
-                for n in range(7, 0, -1)],
+            # The 7 days before today, per goal, for the tiles' lines:
+            # None on a day with nothing logged.
+            "week_intake": _week_intake(conn, user_id, date),
             "fixes": nutrition_fixes.active(conn, user_id),
             "yesterday": (dt.date.fromisoformat(date)
                           - dt.timedelta(days=1)).isoformat(),

@@ -86,8 +86,7 @@
   </p>
   <div class="grid grid-cols-4 gap-2 mt-3">
     {% for key, label, unit, color in [('kcal', 'Calories', '', 'orange'), ('protein_g', 'Protéines', 'g', 'accent'), ('carbs_g', 'Glucides', 'g', 'blue'), ('fat_g', 'Lipides', 'g', 'yellow')] %}
-    {% set ikey = 'calories_kcal' if key == 'kcal' else key %}
-    {% set series = week_intake | map(attribute=ikey, default=none) | list %}
+    {% set series = week_intake[key] %}
     {% set known = series | reject('none') | list %}
     <div class="metric has-pop" tabindex="0" style="--metric-color: var(--{{ color }});">
       <p class="caption">{{ label }}</p>

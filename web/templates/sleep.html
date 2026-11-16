@@ -88,21 +88,24 @@
   </div>
   <ul class="space-y-2">
     {% for n in report.nights %}
-    <li class="flex items-center gap-2">
+    <li class="night-row flex items-center gap-2" tabindex="0" data-night="{{ loop.index0 }}">
       <span class="w-22 shrink-0 text-xs leading-tight" style="width: 5.5rem;">
         {{ n.day_label.split(' ')[0][:3] }} {{ n.date[8:10] }}/{{ n.date[5:7] }}<br>
         <span class="num" style="color: var(--muted);">{{ n.bed }}–{{ n.wake }}</span>
       </span>
-      <svg viewBox="0 0 720 18" preserveAspectRatio="none" class="flex-1 h-5" role="img"
+      <svg viewBox="0 0 720 18" preserveAspectRatio="none" class="night-bar flex-1 h-5" role="img"
            aria-label="Nuit du {{ n.day_label }} : {{ duration(n.sleep_min) }} estimées, {{ n.wakes|length }} réveils probables">
         {% for x in [120, 240, 360, 480, 600] %}<line x1="{{ x }}" x2="{{ x }}" y1="0" y2="18" stroke="var(--grid)" stroke-width="1"/>{% endfor %}
         <rect x="{{ n.x0 }}" y="4" width="{{ [n.x1 - n.x0, 1]|max }}" height="10" rx="3" fill="color-mix(in srgb, var(--accent) 55%, transparent)"/>
         {% for w in n.wakes if not (n.final_x is defined and loop.last) %}
-        <rect x="{{ w.x }}" y="1" width="{{ [w.minutes, 4]|max }}" height="16" rx="1" fill="var(--orange)"><title>{{ w.at }} · {{ w.minutes }} min{% if w.peak_bpm %} · pouls {{ w.peak_bpm }}{% endif %}</title></rect>
+        <rect class="wake" x="{{ w.x }}" y="1" width="{{ [w.minutes, 4]|max }}" height="16" rx="1" fill="var(--orange)"
+          data-tip="Réveil à {{ w.at }} · {{ w.minutes }} min{% if w.peak_bpm %} · pouls jusqu'à {{ w.peak_bpm }}{% endif %}{% if w.watch %} · vu aussi par la montre{% endif %}"></rect>
         {% endfor %}
         {% if n.final_x is defined %}
-        <rect x="{{ n.final_x }}" y="1" width="{{ [n.x1 - n.final_x, 3]|max }}" height="16" rx="2" fill="var(--critical)"><title>réveillé dès {{ n.final_wake }} jusqu'au lever</title></rect>
+        <rect class="wake" x="{{ n.final_x }}" y="1" width="{{ [n.x1 - n.final_x, 3]|max }}" height="16" rx="2" fill="var(--critical)"
+          data-tip="Réveillé dès {{ n.final_wake }} jusqu'au lever ({{ n.wake }})"></rect>
         {% endif %}
+        <line class="night-cursor" x1="0" x2="0" y1="0" y2="18"/>
       </svg>
       <span class="shrink-0 text-xs num text-right" style="width: 3.2rem;">
         {{ duration(n.sleep_min) }}
@@ -113,6 +116,10 @@
     </li>
     {% endfor %}
   </ul>
+  <div id="night-detail" class="muscle-detail mt-3" aria-live="polite">
+    <p class="text-xs text-center" style="color: var(--muted);">{{ icon('moon', 12) }} Passe la souris sur une nuit (ou touche-la) : l'heure sous le curseur, chaque réveil, et le détail de la nuit ici.</p>
+  </div>
+  <div id="night-tip" class="float-tip" role="tooltip" hidden></div>
   {% set missing = 14 - report.count %}
   {% if missing > 0 %}
   <p class="text-xs mt-3" style="color: var(--muted);">{{ missing }} nuit{{ 's' if missing > 1 }} sans enregistrement (montre pas portée ou pas synchronisée).</p>
@@ -130,4 +137,87 @@
   du pouls peut aussi être un rêve ou un mouvement : c'est une estimation.
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Night by night: the time under the pointer, each awakening on its
+  // own, and the whole night in the panel below (pinned by a tap).
+  (() => {
+    const nights = {{ report.nights | tojson }};
+    const AXIS_START_MIN = {{ axis_start_h }} * 60;
+    const tip = document.getElementById('night-tip');
+    const panel = document.getElementById('night-detail');
+    if (!tip || !panel) return;
+    // Out of the card: a frosted card (backdrop-filter) would make
+    // "position: fixed" relative to itself instead of the window.
+    document.body.appendChild(tip);
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const clock = (axisMin) => {
+      const m = Math.round(AXIS_START_MIN + axisMin) % 1440;
+      return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+    };
+    const dur = (m) => Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0');
+    const felt = { good: 'bien dormi', ok: 'nuit normale', bad: 'mal dormi' };
+    const showTip = (text, x, y) => {
+      tip.textContent = text; tip.hidden = false;
+      const w = tip.offsetWidth;
+      tip.style.left = Math.max(8, Math.min(innerWidth - w - 8, x - w / 2)) + 'px';
+      tip.style.top = (y - tip.offsetHeight - 12) + 'px';
+    };
+    const hideTip = () => { tip.hidden = true; };
+    let pinned = null;
+    const detail = (i) => {
+      const n = nights[i];
+      if (!n) return;
+      document.querySelectorAll('.night-row').forEach((r) => r.classList.toggle('is-picked', r.dataset.night === String(i)));
+      const wakes = n.wakes.map((w) =>
+        `<li><span class="num font-semibold" style="color: var(--orange);">${esc(w.at)}</span> · ${w.minutes} min` +
+        (w.peak_bpm ? ` · pouls ${w.peak_bpm}` : '') + (w.watch ? ' · vu par la montre' : '') + '</li>').join('');
+      const facts = [
+        ['Au lit', `${esc(n.bed)} → ${esc(n.wake)} · ${dur(n.in_bed_min)}`],
+        ['Sommeil estimé', dur(n.sleep_min)],
+        ['Selon la montre', dur(n.watch_sleep_min) + (n.score != null ? ` · score ${n.score}` : '')],
+        ['Profond / paradoxal', `${dur(n.deep_min)} / ${dur(n.rem_min)}`],
+      ];
+      if (n.hr_base != null) facts.push(['Pouls de la nuit', `${n.hr_base} bpm (mini ${n.hr_min})`]);
+      if (n.spo2) facts.push(['Oxygène', `${n.spo2.median} % (mini ${n.spo2.min} %)`]);
+      if (n.resp_avg != null) facts.push(['Respiration', `${String(n.resp_avg).replace('.', ',')} /min`]);
+      if (n.felt) facts.push(['Ton ressenti', felt[n.felt]]);
+      panel.innerHTML =
+        `<p class="text-sm font-semibold">${esc(n.day_label.charAt(0).toUpperCase() + n.day_label.slice(1))}</p>
+         <dl class="night-facts mt-1.5">${facts.map(([k, v]) => `<dt>${k}</dt><dd class="num">${v}</dd>`).join('')}</dl>` +
+        (n.wakes.length || n.final_wake
+          ? `<p class="caption mt-2">Réveils probables</p><ul class="text-xs mt-1 space-y-0.5">${wakes}` +
+            (n.final_wake ? `<li><span class="num font-semibold" style="color: var(--critical);">${esc(n.final_wake)}</span> · réveillé jusqu'au lever</li>` : '') + '</ul>'
+          : (n.has_hr ? '<p class="text-xs mt-2" style="color: var(--good);">Aucun réveil repéré dans le pouls.</p>'
+                      : '<p class="text-xs mt-2" style="color: var(--muted);">Pas de pouls enregistré cette nuit : les réveils ne peuvent pas être cherchés.</p>'));
+    };
+    document.querySelectorAll('.night-row').forEach((row) => {
+      const i = Number(row.dataset.night);
+      const n = nights[i];
+      const svg = row.querySelector('.night-bar');
+      const cursor = svg.querySelector('.night-cursor');
+      svg.addEventListener('pointermove', (e) => {
+        const box = svg.getBoundingClientRect();
+        const axis = Math.max(0, Math.min(720, (e.clientX - box.left) / box.width * 720));
+        cursor.setAttribute('x1', axis); cursor.setAttribute('x2', axis);
+        svg.classList.add('is-hover');
+        const wake = e.target.closest('.wake');
+        let text;
+        if (wake) text = wake.dataset.tip;
+        else if (axis < n.x0 || axis > n.x1) text = clock(axis) + ' · pas au lit';
+        else text = clock(axis) + ' · endormi (estimé)';
+        showTip(text, e.clientX, box.top);
+      });
+      svg.addEventListener('pointerleave', () => { svg.classList.remove('is-hover'); hideTip(); });
+      row.addEventListener('mouseenter', () => detail(i));
+      row.addEventListener('mouseleave', () => { if (pinned !== null) detail(pinned); });
+      row.addEventListener('click', () => { pinned = i; detail(i); });
+      row.addEventListener('focus', () => { pinned = i; detail(i); });
+    });
+    // The most recent night is shown from the start.
+    if (nights.length) { pinned = 0; detail(0); }
+  })();
+</script>
 {% endblock %}
