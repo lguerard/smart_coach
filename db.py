@@ -729,6 +729,15 @@ CREATE TABLE IF NOT EXISTS postponed_sessions (
 );
 
 -- Waist circumference entered by hand on the Corps page (waist.py).
+-- The day's three quests (quests.py), picked once and kept: their XP
+-- is in xp_ledger under source "quest:<key>".
+CREATE TABLE IF NOT EXISTS daily_quests (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    local_date TEXT NOT NULL,
+    keys TEXT NOT NULL,
+    PRIMARY KEY (user_id, local_date)
+);
+
 CREATE TABLE IF NOT EXISTS waist_measurements (
     user_id INTEGER NOT NULL REFERENCES users(id),
     local_date TEXT NOT NULL,

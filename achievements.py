@@ -1000,6 +1000,189 @@ CHECKS = {
     "calisthenics_master": _check_calisthenics_master,
 }
 
+# --- More trophies: habits around the app itself ----------------------------
+#
+# Each one counts something the app already stores, so its card shows
+# a real "current / target" like the rest: ratings given, nights told,
+# meal photos, planned sessions done in a row, doses noted, waist
+# measured, quests done.
+
+def _count(sql: str):
+    return lambda conn, user_id, date: conn.execute(sql, (user_id,)).fetchone()[0] or 0
+
+
+def _sleep_told_streak(conn, user_id: int, date: str) -> int:
+    """Days in a row the night was told, back from today (or yesterday
+    when today's is not told yet)."""
+    told = {r[0] for r in conn.execute(
+        "SELECT local_date FROM sleep_feedback WHERE user_id = ?", (user_id,))}
+    day = dt.date.fromisoformat(date)
+    if day.isoformat() not in told:
+        day -= dt.timedelta(days=1)
+    count = 0
+    while day.isoformat() in told:
+        count += 1
+        day -= dt.timedelta(days=1)
+    return count
+
+
+def _plan_streak(conn, user_id: int, date: str) -> int:
+    import missed_sessions
+
+    return missed_sessions.streak(conn, user_id, date)
+
+
+def _sessions_local_hours(conn, user_id: int) -> list[int]:
+    import metrics
+
+    tz = metrics.local_tz(conn, user_id)
+    hours = []
+    for row in conn.execute(
+            "SELECT start_utc FROM exercise_sessions WHERE user_id = ?", (user_id,)):
+        start = dt.datetime.fromisoformat(row[0])
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=dt.timezone.utc)
+        hours.append(start.astimezone(tz).hour)
+    return hours
+
+
+def _early_sessions(conn, user_id: int, date: str) -> int:
+    return sum(h < 8 for h in _sessions_local_hours(conn, user_id))
+
+
+def _late_sessions(conn, user_id: int, date: str) -> int:
+    return sum(h >= 21 for h in _sessions_local_hours(conn, user_id))
+
+
+def _weekend_sessions(conn, user_id: int, date: str) -> int:
+    return sum(dt.date.fromisoformat(r[0]).weekday() >= 5 for r in conn.execute(
+        "SELECT local_date FROM exercise_sessions WHERE user_id = ?", (user_id,)))
+
+
+def _longest_session_min(conn, user_id: int, date: str) -> int:
+    longest = 0.0
+    for start, end in conn.execute(
+            "SELECT start_utc, end_utc FROM exercise_sessions WHERE user_id = ?",
+            (user_id,)):
+        minutes = (dt.datetime.fromisoformat(end)
+                   - dt.datetime.fromisoformat(start)).total_seconds() / 60
+        longest = max(longest, minutes)
+    return round(longest)
+
+
+def _best_step_day(conn, user_id: int, date: str) -> int:
+    import metrics
+
+    days = metrics.steps_for_range(conn, user_id, date, 400)
+    return max((v for v in days.values() if v), default=0)
+
+
+def _waist_drop_cm(conn, user_id: int, date: str) -> float:
+    rows = conn.execute(
+        "SELECT cm FROM waist_measurements WHERE user_id = ? AND local_date <= ? "
+        "ORDER BY local_date", (user_id, date)).fetchall()
+    if len(rows) < 2:
+        return 0.0
+    return max(0.0, round(rows[0][0] - rows[-1][0], 1))
+
+
+def _meds_streak(conn, user_id: int, date: str) -> int:
+    """Days in a row, back from yesterday, with at least one dose
+    planned and every dose noted (taken or skipped on purpose)."""
+    import meds
+
+    count = 0
+    day = dt.date.fromisoformat(date) - dt.timedelta(days=1)
+    for _ in range(60):
+        doses = meds.day(conn, user_id, dt.datetime.combine(day, dt.time(23, 59)))
+        if not doses or any(d["status"] not in ("taken", "skipped") for d in doses):
+            break
+        count += 1
+        day -= dt.timedelta(days=1)
+    return count
+
+
+def _player_level(conn, user_id: int, date: str) -> int:
+    return player_level(conn, user_id)["level"]
+
+
+# key: (icon, tier, name, description, counter, target, unit)
+_COUNTED = {
+    "rater_10": ("\U0001F5F3", "bronze", "Avis éclairé", "10 séances notées.",
+                 _count("SELECT COUNT(*) FROM session_feedback WHERE user_id = ?"), 10, "séances notées"),
+    "rater_50": ("\U0001F5F3", "silver", "Critique avisé", "50 séances notées.",
+                 _count("SELECT COUNT(*) FROM session_feedback WHERE user_id = ?"), 50, "séances notées"),
+    "sleep_told_7": ("\U0001F6CC", "bronze", "À l'écoute",
+                     "7 matins d'affilée à dire comment tu as dormi.", _sleep_told_streak, 7, "matins"),
+    "sleep_told_30": ("\U0001F6CC", "silver", "Journal de nuit",
+                      "30 matins d'affilée à dire comment tu as dormi.", _sleep_told_streak, 30, "matins"),
+    "photo_meal_1": ("\U0001F4F8", "bronze", "Œil de chef", "Une première photo de repas analysée.",
+                     _count("SELECT COUNT(*) FROM meal_estimates WHERE user_id = ?"), 1, "photo"),
+    "photo_meal_20": ("\U0001F4F8", "silver", "Food reporter", "20 photos de repas analysées.",
+                      _count("SELECT COUNT(*) FROM meal_estimates WHERE user_id = ?"), 20, "photos"),
+    "plan_streak_5": ("\u2699\ufe0f", "bronze", "Engrenage",
+                      "5 séances prévues faites d'affilée.", _plan_streak, 5, "d'affilée"),
+    "plan_streak_10": ("\u2699\ufe0f", "silver", "Machine bien huilée",
+                       "10 séances prévues faites d'affilée.", _plan_streak, 10, "d'affilée"),
+    "plan_streak_25": ("\U0001F682", "gold", "Inarrêtable",
+                       "25 séances prévues faites d'affilée.", _plan_streak, 25, "d'affilée"),
+    "plan_streak_50": ("\U0001F9BE", "platinum", "Discipline de fer",
+                       "50 séances prévues faites d'affilée.", _plan_streak, 50, "d'affilée"),
+    "early_bird": ("\U0001F305", "bronze", "Lève-tôt", "5 séances commencées avant 8 h.",
+                   _early_sessions, 5, "séances"),
+    "night_owl": ("\U0001F989", "bronze", "Oiseau de nuit", "5 séances commencées après 21 h.",
+                  _late_sessions, 5, "séances"),
+    "weekend_warrior": ("\U0001F3D6", "silver", "Guerrier du week-end",
+                        "20 séances le samedi ou le dimanche.", _weekend_sessions, 20, "séances"),
+    "long_session": ("\u23F1\ufe0f", "bronze", "Endurant", "Une séance d'au moins 1 heure.",
+                     _longest_session_min, 60, "min"),
+    "epic_session": ("\U0001F3D4", "silver", "Épopée", "Une séance d'au moins 2 heures.",
+                     _longest_session_min, 120, "min"),
+    "steps_20k_day": ("\U0001F6B6", "silver", "Grande journée", "20 000 pas en un jour.",
+                      _best_step_day, 20000, "pas"),
+    "steps_30k_day": ("\U0001F3C3", "gold", "Journée épique", "30 000 pas en un jour.",
+                      _best_step_day, 30000, "pas"),
+    "waist_first": ("\U0001F4CF", "bronze", "Mètre ruban", "Un premier tour de taille noté.",
+                    _count("SELECT COUNT(*) FROM waist_measurements WHERE user_id = ?"), 1, "mesure"),
+    "waist_down_3cm": ("\U0001F4CF", "silver", "Ceinture resserrée",
+                       "3 cm de tour de taille en moins depuis la première mesure.", _waist_drop_cm, 3, "cm"),
+    "waist_down_8cm": ("\U0001F4CF", "gold", "Nouvelle silhouette",
+                       "8 cm de tour de taille en moins depuis la première mesure.", _waist_drop_cm, 8, "cm"),
+    "meds_week": ("\U0001F48A", "bronze", "Bon patient",
+                  "7 jours d'affilée avec toutes les prises notées.", _meds_streak, 7, "jours"),
+    "meds_month": ("\U0001F48A", "silver", "Rigueur",
+                   "30 jours d'affilée avec toutes les prises notées.", _meds_streak, 30, "jours"),
+    "quest_10": ("\U0001F3AF", "bronze", "Chasseur de défis", "10 défis du jour réussis.",
+                 _count("SELECT COUNT(*) FROM xp_ledger WHERE user_id = ? AND source LIKE 'quest:%' "
+                        "AND source != 'quest:bonus'"), 10, "défis"),
+    "quest_50": ("\U0001F3AF", "silver", "Collectionneur", "50 défis du jour réussis.",
+                 _count("SELECT COUNT(*) FROM xp_ledger WHERE user_id = ? AND source LIKE 'quest:%' "
+                        "AND source != 'quest:bonus'"), 50, "défis"),
+    "quest_200": ("\U0001F3AF", "gold", "Maître des défis", "200 défis du jour réussis.",
+                  _count("SELECT COUNT(*) FROM xp_ledger WHERE user_id = ? AND source LIKE 'quest:%' "
+                         "AND source != 'quest:bonus'"), 200, "défis"),
+    "quest_triple": ("\U0001F3B2", "bronze", "Tiercé", "Les trois défis d'un même jour.",
+                     _count("SELECT COUNT(*) FROM xp_ledger WHERE user_id = ? AND source = 'quest:bonus'"),
+                     1, "jour"),
+    "quest_triple_7": ("\U0001F3B2", "silver", "Tiercé gagnant", "7 jours avec les trois défis.",
+                       _count("SELECT COUNT(*) FROM xp_ledger WHERE user_id = ? AND source = 'quest:bonus'"),
+                       7, "jours"),
+    "quest_triple_30": ("\U0001F451", "gold", "Roi des défis", "30 jours avec les trois défis.",
+                        _count("SELECT COUNT(*) FROM xp_ledger WHERE user_id = ? AND source = 'quest:bonus'"),
+                        30, "jours"),
+    "player_level_5": ("\u2B50", "silver", "Niveau 5", "Atteindre le niveau de joueur 5.",
+                       _player_level, 5, "niveau"),
+    "player_level_10": ("\U0001F31F", "gold", "Niveau 10", "Atteindre le niveau de joueur 10.",
+                        _player_level, 10, "niveau"),
+    "player_level_20": ("\U0001F4AB", "platinum", "Niveau 20", "Atteindre le niveau de joueur 20.",
+                        _player_level, 20, "niveau"),
+}
+for _key, (_icon, _tier, _name, _desc, _fn, _target, _unit) in _COUNTED.items():
+    ACHIEVEMENTS[_key] = {"icon": _icon, "tier": _tier, "name_fr": _name,
+                          "name_en": _name, "desc_fr": _desc, "desc_en": _desc}
+    CHECKS[_key] = (lambda fn, target: lambda conn, user_id, date:
+                    fn(conn, user_id, date) >= target)(_fn, _target)
+
 assert set(CHECKS) == set(ACHIEVEMENTS), "every achievement needs a check"
 
 _LIFETIME_TARGETS = {
@@ -1029,6 +1212,9 @@ def achievement_progress(
     Returns:
         tuple[float, float, str] | None: (current, target, unit).
     """
+    if key in _COUNTED:
+        _, _, _, _, fn, target, unit = _COUNTED[key]
+        return (fn(conn, user_id, date), target, unit)
     if key in ("streak_3", "streak_7", "streak_30"):
         target = {"streak_3": 3, "streak_7": 7, "streak_30": 30}[key]
         return (_current_green_streak(conn, user_id), target, "jours verts")
@@ -1709,5 +1895,27 @@ if __name__ == "__main__":
     conn.commit()
     assert _check_perfect_week(conn, uid, "2026-09-20") is True
     assert _check_no_red_week(conn, uid, "2026-09-20") is True  # both weeks qualify
+
+    # The counted trophies: a real current/target, and the check agrees.
+    fresh = db.create_user(conn, "counted", "password1234")
+    assert achievement_progress("waist_first", conn, fresh, "2026-10-10") == (0, 1, "mesure")
+    for day, cm in (("2026-09-01", 98.0), ("2026-10-01", 96.5), ("2026-10-08", 94.6)):
+        conn.execute("INSERT INTO waist_measurements VALUES (?, ?, ?, 'x')", (fresh, day, cm))
+    for k in range(7):  # nights told, the last 7 days up to today
+        day = (dt.date(2026, 10, 10) - dt.timedelta(days=k)).isoformat()
+        conn.execute("INSERT INTO sleep_feedback VALUES (?, ?, 'ok', 'x')", (fresh, day))
+    conn.execute("INSERT INTO xp_ledger (user_id, date, source, amount, detail, "
+                 "created_at) VALUES (?, '2026-10-10', 'quest:bonus', 20, 'x', 'x')", (fresh,))
+    conn.commit()
+    unlocked = check_and_unlock(conn, fresh, "2026-10-10")
+    for key in ("waist_first", "waist_down_3cm", "sleep_told_7", "quest_triple"):
+        assert key in unlocked, (key, unlocked)
+    assert "waist_down_8cm" not in unlocked and "sleep_told_30" not in unlocked
+    assert achievement_progress("waist_down_8cm", conn, fresh, "2026-10-10") == (3.4, 8, "cm")
+    # Not told today yet: the streak still counts back from yesterday.
+    assert _sleep_told_streak(conn, fresh, "2026-10-11") == 7
+    assert _sleep_told_streak(conn, fresh, "2026-10-12") == 0
+    # Another account sees none of it.
+    assert _waist_drop_cm(conn, uid, "2026-10-10") == 0.0
 
     print("achievements.py: all checks passed")

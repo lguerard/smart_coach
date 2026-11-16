@@ -217,6 +217,14 @@ def run_for_user(conn, user: dict, note: str | None = None) -> None:
     # even if this pipeline is ever re-run for the same date).
     achievements.grant_daily_status_xp(conn, user_id, today, status)
 
+    # Daily quests: yesterday's done after the last look at the page
+    # earn their XP now; today's three are picked now the day is planned.
+    import quests
+
+    yesterday = (dt.date.fromisoformat(today) - dt.timedelta(days=1)).isoformat()
+    quests.award(conn, user_id, yesterday)
+    quests.pick(conn, user_id, today, refresh=True)
+
     # Achievement checks read coach_log (streaks/comebacks), so this
     # runs after today's row is committed -- an Xbox-style toast pops
     # before the daily message, celebration first.

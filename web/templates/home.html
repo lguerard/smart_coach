@@ -538,6 +538,37 @@
       </div>
     </a>
 
+    {% if quest_day.total %}
+    {% set qd = quest_day %}
+    <div class="card p-4 quests {{ 'all-done' if qd.done == qd.total }}">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="card-title">{{ icon('target', 16) }} Défis du jour</h2>
+        <span class="num text-xs font-semibold" style="color: var({{ '--good' if qd.done == qd.total else '--muted' }});">{{ qd.done }}/{{ qd.total }}</span>
+      </div>
+      <ul class="mt-2 space-y-2">
+        {% for q in qd.quests %}
+        <li class="quest {{ 'is-done' if q.done }} has-pop" tabindex="0">
+          <span class="quest-check">{% if q.done %}{{ icon('check', 13) }}{% else %}{{ icon(q.icon, 13) }}{% endif %}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="text-xs font-medium truncate">{{ q.label }}</span>
+              <span class="xp-chip">+{{ q.xp }}</span>
+            </div>
+            <div class="meter-track mt-1" style="height: 5px;"><div class="meter-fill {{ 'done' if q.done }}" style="width: {{ 100 if q.done else q.pct }}%; background: var({{ '--green' if q.done else '--accent' }});"></div></div>
+          </div>
+          <span class="pop left" role="tooltip">
+            {% if q.done %}<strong>Fait !</strong> +{{ q.xp }} XP.{% else %}<strong>{{ '{:,}'.format(q.current) | replace(',', ' ') }} / {{ '{:,}'.format(q.target) | replace(',', ' ') }} {{ q.unit }}</strong>{% if q.target > q.current and q.unit not in ('séance', 'réponse') %} : encore {{ '{:,}'.format(q.target - q.current) | replace(',', ' ') }}.{% endif %}{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="text-[11px] mt-3 flex items-center justify-between gap-2" style="color: var(--muted);">
+        <span>Les {{ qd.total }} : <strong style="color: var({{ '--good' if qd.bonus_done else '--text-secondary' }});">+{{ qd.bonus_xp }} XP</strong> de bonus</span>
+        <span class="num">{{ qd.xp_today }} XP aujourd'hui</span>
+      </p>
+    </div>
+    {% endif %}
+
     <div class="card p-4">
       <p class="caption mb-2.5">Actions rapides</p>
       <div class="grid gap-2">
@@ -747,6 +778,25 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+  // Won just now: quests paid on this load (each once), and the day's
+  // trophies (celebrated on the first look of the day only).
+  (() => {
+    const won = {{ xp_granted | tojson }};
+    const trophies = {{ new_achievements_today | map(attribute='name_fr') | list | tojson }};
+    let party = false;
+    won.forEach((w, i) => setTimeout(() => window.scToast(w.label, w.xp), 600 + i * 450));
+    if (won.length) party = true;
+    try {
+      const key = 'smartcoach.celebrated.{{ date }}';
+      const seen = JSON.parse(localStorage.getItem(key) || '[]');
+      const fresh = trophies.filter((t) => !seen.includes(t));
+      fresh.forEach((t, i) => setTimeout(() => window.scToast('Trophée : ' + t), 900 + i * 450));
+      if (fresh.length) { party = true; localStorage.setItem(key, JSON.stringify(trophies)); }
+    } catch (e) {}
+    if (party) setTimeout(() => window.scConfetti(), 400);
+  })();
+</script>
 <script>
   // Body map: a muscle tapped (or pointed at) says how tired it is,
   // from what, and when it is ready again.

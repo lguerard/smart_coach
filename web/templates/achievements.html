@@ -25,6 +25,11 @@
         <strong style="color: var(--text-primary);">{{ score.unlocked_points }}</strong> / {{ score.total_points }} points
         {% if next_rank %}· « {{ next_rank[1] }} » au niveau {{ next_rank[0] }}{% endif %}
       </p>
+      <div class="flex flex-wrap gap-2 mt-2">
+        <span class="chip" style="--chip: var(--yellow);">{{ icon('target', 12) }} <span class="num">{{ quests_done }}</span> défi{{ 's' if quests_done > 1 }} réussi{{ 's' if quests_done > 1 }}</span>
+        <span class="chip" style="--chip: var(--green);">{{ icon('check', 12) }} <span class="num">{{ quest_triples }}</span> tiercé{{ 's' if quest_triples > 1 }}</span>
+        <a href="/" class="chip link" style="--chip: var(--accent);">Défis du jour →</a>
+      </div>
       <div class="mt-2 meter-track" style="max-width: 360px;"><div class="meter-fill" style="width: {{ level_pct }}%; background: linear-gradient(90deg, var(--accent), var(--violet));"></div></div>
     </div>
     <div class="medals">

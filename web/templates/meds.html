@@ -13,46 +13,61 @@
 </div>
 {% endmacro %}
 
-<div class="card p-4">
-  <h1 class="card-title text-base">{{ icon('pill', 18) }} Médicaments et compléments</h1>
-  <p class="text-xs mt-1" style="color: var(--text-secondary);">
-    À chaque heure de prise, une notification avec « Pris » et « Sauter » ; elle revient
-    à l'intervalle choisi tant que tu n'as pas répondu (8 rappels au plus). Le coach ne
-    dit jamais quoi prendre ni combien : la liste est la tienne, telle que ton médecin
-    ou ton pharmacien l'a fixée.
-  </p>
-  {% if note %}<p class="text-sm mt-2" style="color: var(--accent-text);">{{ note }}</p>{% endif %}
-</div>
+{% set total_today = doses | length %}
+<section class="card p-5 meds-hero">
+  <div class="flex flex-wrap items-center gap-5">
+    <div class="ring has-pop" tabindex="0" style="--size: 96px; --pct: {{ (100 * done_today / total_today) | round if total_today else 0 }}; --ring-color: var(--green); --ring-hole: var(--surface-1);">
+      <div class="ring-inner">
+        <span class="ring-value" style="font-size: 1.5rem;">{{ done_today }}<span style="font-size: 0.9rem; color: var(--muted);">/{{ total_today }}</span></span>
+        <span class="ring-label">aujourd'hui</span>
+      </div>
+      <span class="pop left" role="tooltip" style="bottom: auto; top: calc(100% + 8px);">Prises notées aujourd'hui (prises ou sautées exprès) sur celles prévues.</span>
+    </div>
+    <div class="min-w-0 flex-1" style="flex-basis: 13rem;">
+      <h1 class="card-title text-base">{{ icon('pill', 18) }} Médicaments et compléments</h1>
+      <div class="flex flex-wrap gap-2 mt-2">
+        {% if adherence is not none %}<span class="chip" style="--chip: var(--green); font-size: 0.78rem; padding: 0.25rem 0.65rem;">{{ icon('check', 12) }} <span class="num">{{ adherence }} %</span> pris sur 7 jours</span>{% endif %}
+        {% if meds_streak %}<span class="chip" style="--chip: var(--orange); font-size: 0.78rem; padding: 0.25rem 0.65rem;">{{ icon('flame', 12) }} <span class="num">{{ meds_streak }}</span> jour{{ 's' if meds_streak > 1 }} sans oubli</span>{% endif %}
+      </div>
+      <p class="text-xs mt-2" style="color: var(--text-secondary);">
+        À chaque heure de prise, une notification avec « Pris » et « Sauter » ; elle revient
+        à l'intervalle choisi tant que tu n'as pas répondu (8 rappels au plus). Le coach ne
+        dit jamais quoi prendre ni combien : la liste est la tienne, telle que ton médecin
+        ou ton pharmacien l'a fixée.
+      </p>
+    </div>
+  </div>
+  {% if note %}<p class="text-sm mt-3" style="color: var(--accent-text);">{{ note }}</p>{% endif %}
+</section>
 
-<div class="card p-4">
-  <h2 class="card-title mb-2">Aujourd'hui</h2>
+<section class="card p-4">
+  <h2 class="card-title mb-2">{{ icon('timer', 16) }} Aujourd'hui</h2>
   {% if not doses %}
   <p class="text-sm" style="color: var(--muted);">Rien à prendre aujourd'hui.</p>
   {% else %}
-  <ul class="divide-y" style="border-color: var(--border);">
+  <ol class="dose-list">
     {% for d in doses %}
-    <li class="py-2 flex flex-wrap items-center justify-between gap-2" style="border-color: var(--border);">
-      <span class="text-sm">
-        <span class="num font-semibold">{{ d.slot }}</span> · {{ d.name }}{% if d.dose %}
-        <span class="text-xs" style="color: var(--muted);">{{ d.dose }}</span>{% endif %}
-      </span>
+    <li class="dose is-{{ d.status }}">
+      <span class="dose-time num">{{ d.slot }}</span>
+      <span class="dose-dot"></span>
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-medium truncate">{{ d.name }}{% if d.dose %} <span class="text-xs font-normal" style="color: var(--muted);">{{ d.dose }}</span>{% endif %}</p>
+        <p class="text-xs" style="color: var(--muted);">{{ {'taken': 'pris', 'skipped': 'sauté', 'due': 'à prendre maintenant', 'later': 'plus tard'}[d.status] }}</p>
+      </div>
       <form method="post" action="/medicaments/{{ d.med_id }}/mark" class="flex gap-1.5 items-center">
         <input type="hidden" name="slot" value="{{ d.slot }}">
         {% if d.status in ('taken', 'skipped') %}
-        <span class="badge" style="--badge: var({{ '--green' if d.status == 'taken' else '--muted' }});">
-          {{ icon('check', 12) if d.status == 'taken' }}{{ 'pris' if d.status == 'taken' else 'sauté' }}</span>
         <button name="status" value="undo" class="text-xs link" style="color: var(--muted);">annuler</button>
         {% else %}
-        {% if d.status == 'due' %}<span class="text-xs" style="color: var(--orange);">à prendre</span>{% endif %}
-        <button name="status" value="taken" class="btn btn-primary btn-sm">Pris</button>
+        <button name="status" value="taken" class="btn btn-primary btn-sm">{{ icon('check', 12) }} Pris</button>
         <button name="status" value="skipped" class="btn btn-sm">Sauter</button>
         {% endif %}
       </form>
     </li>
     {% endfor %}
-  </ul>
+  </ol>
   {% endif %}
-</div>
+</section>
 
 {% for m in items %}
 {% set w = week.get(m.id) %}
@@ -61,10 +76,17 @@
     <span class="text-sm font-medium {{ '' if m.active else 'line-through' }}" style="{{ '' if m.active else 'color: var(--muted);' }}">
       {{ m.name }}{% if m.dose %} <span class="text-xs font-normal" style="color: var(--muted);">· {{ m.dose }}</span>{% endif %}
     </span>
-    <span class="text-xs num" style="color: var(--muted);">
-      {{ m.times | join(', ') }}{% if m.weekdays != '0123456' %} · {% for d in m.weekdays %}{{ days_fr[d|int][:2] }}{{ ' ' if not loop.last }}{% endfor %}{% endif %}
-      {% if w and w.planned %} · 7 j : {{ w.taken }}/{{ w.planned }} pris{% endif %}
-      {% if not m.active %} · en pause{% endif %}
+    <span class="text-xs num flex items-center gap-2" style="color: var(--muted);">
+      <span>{{ m.times | join(', ') }}{% if m.weekdays != '0123456' %} · {% for d in m.weekdays %}{{ days_fr[d|int][:2] }}{{ ' ' if not loop.last }}{% endfor %}{% endif %}{% if not m.active %} · en pause{% endif %}</span>
+      {% if dots.get(m.id) %}
+      <span class="week-dots has-pop" tabindex="0" aria-label="7 derniers jours">
+        {% for d in dots[m.id] %}<span class="wd is-{{ d.state }}" title="{{ d.day }} {{ d.num }}"></span>{% endfor %}
+        <span class="pop" role="tooltip" style="left: auto; right: 0; transform: none;">
+          <strong>7 derniers jours</strong>{% if w and w.planned %} : {{ w.taken }}/{{ w.planned }} pris{% endif %}<br>
+          {% for d in dots[m.id] %}{{ d.day }} {{ d.num }} : {{ {'taken': 'pris', 'skipped': 'sauté exprès', 'missed': 'oublié', 'off': 'rien de prévu'}[d.state] }}<br>{% endfor %}
+        </span>
+      </span>
+      {% endif %}
     </span>
   </summary>
   <form method="post" action="/medicaments/save" class="grid gap-2 mt-3">

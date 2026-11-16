@@ -216,6 +216,57 @@
       ];
     })();
   </script>
+  <div id="xp-toasts" class="xp-toasts" aria-live="polite"></div>
+  <script>
+    // Celebrations: confetti and "+XP" toasts, for a trophy or a quest.
+    // Nothing moves when the viewer asked for less motion; the toast
+    // still says what was won.
+    (() => {
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scToast = (text, xp) => {
+        const box = document.getElementById('xp-toasts');
+        const el = document.createElement('div');
+        el.className = 'xp-toast';
+        el.innerHTML = (xp ? '<strong>+' + Number(xp) + ' XP</strong> ' : '') + '<span></span>';
+        el.querySelector('span').textContent = text;
+        box.append(el);
+        setTimeout(() => el.classList.add('out'), 3600);
+        setTimeout(() => el.remove(), 4200);
+      };
+      window.scConfetti = () => {
+        if (still) return;
+        const canvas = document.createElement('canvas');
+        canvas.className = 'confetti';
+        document.body.append(canvas);
+        const ctx = canvas.getContext('2d');
+        const dpr = devicePixelRatio || 1;
+        canvas.width = innerWidth * dpr; canvas.height = innerHeight * dpr;
+        ctx.scale(dpr, dpr);
+        const css = getComputedStyle(document.documentElement);
+        const colours = ['--accent', '--violet', '--yellow', '--magenta', '--aqua', '--orange']
+          .map((v) => css.getPropertyValue(v).trim());
+        const bits = Array.from({ length: 140 }, () => ({
+          x: innerWidth / 2 + (Math.random() - 0.5) * 120, y: innerHeight * 0.35,
+          vx: (Math.random() - 0.5) * 13, vy: -Math.random() * 13 - 4,
+          w: 5 + Math.random() * 6, h: 3 + Math.random() * 5, r: Math.random() * 6,
+          vr: (Math.random() - 0.5) * 0.4, c: colours[Math.floor(Math.random() * colours.length)],
+        }));
+        const start = performance.now();
+        const frame = (now) => {
+          const t = now - start;
+          ctx.clearRect(0, 0, innerWidth, innerHeight);
+          bits.forEach((b) => {
+            b.vy += 0.35; b.vx *= 0.99; b.x += b.vx; b.y += b.vy; b.r += b.vr;
+            ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.r);
+            ctx.globalAlpha = Math.max(0, 1 - t / 2400);
+            ctx.fillStyle = b.c; ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h); ctx.restore();
+          });
+          if (t < 2400) requestAnimationFrame(frame); else canvas.remove();
+        };
+        requestAnimationFrame(frame);
+      };
+    })();
+  </script>
   {% if request.session.get("user_id") %}{% include "_assistant.html" %}{% endif %}
   {% block scripts %}{% endblock %}
 </body>

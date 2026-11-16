@@ -11,46 +11,68 @@
   .analysis ul { list-style: disc; padding-left: 1.1rem; }
 </style>
 
-<div class="card p-5 space-y-2">
-  <h1 class="text-lg font-semibold">Corps 🔒</h1>
-  <p class="text-sm" style="color: var(--text-secondary);">
-    Un espace privé pour suivre ta morphologie en photo. Ce que tu dois savoir :
-  </p>
-  <ul class="text-xs space-y-1 list-disc pl-4" style="color: var(--muted);">
-    <li>Les photos sont <strong>chiffrées</strong> sur ton serveur, nettoyées de leurs métadonnées (GPS, appareil), et visibles par <strong>toi seul</strong> : aucun autre compte, même administrateur.</li>
-    <li>Elles n'apparaissent jamais dans les notifications, le calendrier ou le message du matin.</li>
-    <li>L'analyse envoie la photo au modèle d'IA configuré (Anthropic), <strong>uniquement</strong> si tu coches la case.</li>
-    <li>Elles restent floutées jusqu'à ce que tu tapes dessus, et se refloutent quand tu quittes l'onglet.</li>
-    <li>Tu peux tout supprimer à tout moment.</li>
-  </ul>
-</div>
+<section class="card p-5 body-hero">
+  <div class="flex items-center gap-3">
+    <span class="session-icon" style="--day: var(--violet);">{{ icon('lock', 18) }}</span>
+    <div class="min-w-0">
+      <h1 class="text-lg font-semibold">Corps</h1>
+      <p class="text-xs" style="color: var(--text-secondary);">Ton tour de taille et tes photos, visibles par toi seul.</p>
+    </div>
+  </div>
+  <details class="fold mt-3">
+    <summary class="text-xs link cursor-pointer list-none flex items-center gap-1.5">{{ icon('shield', 13) }} Ce qui protège tes photos <span class="fold-chevron">{{ icon('chevron-down', 12) }}</span></summary>
+    <ul class="text-xs space-y-1 list-disc pl-4 mt-2" style="color: var(--muted);">
+      <li>Les photos sont <strong>chiffrées</strong> sur ton serveur, nettoyées de leurs métadonnées (GPS, appareil), et visibles par <strong>toi seul</strong> : aucun autre compte, même administrateur.</li>
+      <li>Elles n'apparaissent jamais dans les notifications, le calendrier ou le message du matin.</li>
+      <li>L'analyse envoie la photo au modèle d'IA configuré (Anthropic), <strong>uniquement</strong> si tu coches la case.</li>
+      <li>Elles restent floutées jusqu'à ce que tu tapes dessus, et se refloutent quand tu quittes l'onglet.</li>
+      <li>Tu peux tout supprimer à tout moment.</li>
+    </ul>
+  </details>
+</section>
 
 {% if note %}
 <div class="card p-4"><p class="text-sm" style="color: var(--yellow);">{{ note }}</p></div>
 {% endif %}
 
-<div class="card p-5 space-y-3" id="taille">
+{% set wh = waist_history %}
+<section class="card p-5 space-y-3" id="taille">
   <div class="flex items-center justify-between gap-2">
-    <h2 class="font-semibold text-sm">Tour de taille</h2>
-    {% if waist_trend %}
-    <span class="badge" style="--badge: var({{ '--green' if waist_trend.reading in ('fat_loss', 'recomposition') else '--orange' if waist_trend.reading in ('fat_gain', 'waist_up') else '--muted' }});">
-      {{ '%+.1f'|format(waist_trend.change_cm) | replace('.', ',') }} cm en {{ waist_trend.days }} j
-    </span>
+    <h2 class="card-title">{{ icon('target', 16) }} Tour de taille</h2>
+    {% if wh %}
+    <span class="text-xs" style="color: var(--muted);">mesure chaque semaine, le matin à jeun</span>
     {% endif %}
   </div>
+  {% if wh %}
+  <div class="grid grid-cols-3 gap-2">
+    <div class="metric has-pop" tabindex="0" style="--metric-color: var(--violet);">
+      <p class="caption">Dernière mesure</p>
+      <p class="metric-value">{{ ('%.1f'|format(wh[0].cm)) | replace('.', ',') }}<span class="metric-unit">cm</span></p>
+      {{ sparkline(wh | reverse | map(attribute='cm') | list) }}
+      <div class="pop left" role="tooltip">Le {{ wh[0].date[8:10] }}/{{ wh[0].date[5:7] }}.<br><span style="color: var(--muted);">La courbe : tes {{ wh | length }} dernières mesures.</span></div>
+    </div>
+    <div class="metric has-pop" tabindex="0" style="--metric-color: var({{ '--good' if waist_trend and waist_trend.change_cm < 0 else '--warning' if waist_trend and waist_trend.change_cm > 0 else '--muted' }});">
+      <p class="caption">Sur 4 semaines</p>
+      <p class="metric-value">{% if waist_trend %}{{ '%+.1f'|format(waist_trend.change_cm) | replace('.', ',') }}<span class="metric-unit">cm</span>{% else %}<span style="color: var(--muted);">–</span>{% endif %}</p>
+      <div class="pop" role="tooltip">{% if waist_trend %}{{ waist_reading[waist_trend.reading] | capitalize }}{% if waist_trend.weight_change_kg is not none %} ; poids {{ '%+.1f'|format(waist_trend.weight_change_kg) | replace('.', ',') }} kg sur la même période{% endif %}.{% else %}Encore une mesure dans 2 à 4 semaines pour voir la tendance.{% endif %}</div>
+    </div>
+    <div class="metric has-pop" tabindex="0" style="--metric-color: var(--accent);">
+      <p class="caption">Depuis le début</p>
+      {% set first = wh[-1].cm %}
+      <p class="metric-value">{{ '%+.1f'|format(wh[0].cm - first) | replace('.', ',') }}<span class="metric-unit">cm</span></p>
+      <div class="pop" role="tooltip" style="left: auto; right: 0; transform: none;">Depuis le {{ wh[-1].date[8:10] }}/{{ wh[-1].date[5:7] }} ({{ ('%.1f'|format(first)) | replace('.', ',') }} cm). Des trophées attendent à −3 et −8 cm.</div>
+    </div>
+  </div>
+  {% if waist_trend %}
+  <p class="text-sm">{{ waist_reading[waist_trend.reading] | capitalize }}{% if waist_trend.weight_change_kg is not none %}
+    (poids {{ '%+.1f'|format(waist_trend.weight_change_kg) | replace('.', ',') }} kg sur la même période){% endif %}.</p>
+  {% endif %}
+  {% else %}
   <p class="text-xs" style="color: var(--text-secondary);">
     Une fois par semaine, le matin à jeun, au niveau du nombril, le mètre
     bien à plat sans serrer. La balance ne distingue pas le gras de l'eau et
     du muscle ; le tour de taille, si.
   </p>
-  {% if waist_trend %}
-  <p class="text-sm">
-    Mesure du {{ waist_trend.latest_date[8:10] }}/{{ waist_trend.latest_date[5:7] }}, comparée à {{ waist_trend.days }} jours plus tôt :
-    {{ waist_reading[waist_trend.reading] }}{% if waist_trend.weight_change_kg is not none %}
-    (poids {{ '%+.1f'|format(waist_trend.weight_change_kg) | replace('.', ',') }} kg sur la même période){% endif %}.
-  </p>
-  {% elif waist_history %}
-  <p class="text-xs" style="color: var(--muted);">Encore une mesure dans 2 à 4 semaines pour voir la tendance.</p>
   {% endif %}
   <form method="post" action="/body/waist" class="flex flex-wrap items-end gap-2">
     <label class="text-xs grid gap-1">Date
@@ -59,41 +81,34 @@
     </label>
     <label class="text-xs grid gap-1">Tour de taille (cm)
       <input type="number" name="cm" step="0.1" min="50" max="200" inputmode="decimal" required
-        value="{{ waist_history[0].cm if waist_history else '' }}"
+        value="{{ wh[0].cm if wh else '' }}"
         class="w-28 rounded-lg border px-2 py-1.5 text-sm num" style="border-color: var(--border); background: var(--surface-1);">
     </label>
-    <button class="btn btn-primary btn-sm">Enregistrer</button>
+    <button class="btn btn-primary btn-sm">{{ icon('plus', 13) }} Enregistrer</button>
   </form>
-  {% if waist_history %}
-  <table class="w-full text-sm">
-    <thead><tr class="text-xs" style="color: var(--muted);">
-      <th class="text-left font-normal py-1">Date</th>
-      <th class="text-right font-normal py-1">Taille</th>
-      <th class="text-right font-normal py-1">Poids</th>
-      <th></th>
-    </tr></thead>
-    <tbody>
-      {% for m in waist_history %}
-      <tr style="border-top: 1px solid var(--border);">
-        <td class="py-1.5">{{ m.date[8:10] }}/{{ m.date[5:7] }}/{{ m.date[2:4] }}</td>
-        <td class="py-1.5 text-right num">{{ ('%.1f'|format(m.cm)) | replace('.', ',') }} cm</td>
-        <td class="py-1.5 text-right num" style="color: var(--text-secondary);">{{ (('%.1f'|format(m.weight_kg)) | replace('.', ',')) ~ ' kg' if m.weight_kg is not none else '–' }}</td>
-        <td class="py-1.5 text-right">
-          <form method="post" action="/body/waist" onsubmit="return confirm('Supprimer cette mesure ?');">
-            <input type="hidden" name="date" value="{{ m.date }}"><input type="hidden" name="delete" value="1">
-            <button class="text-xs link" style="color: var(--muted);">suppr.</button>
-          </form>
-        </td>
-      </tr>
+  {% if wh %}
+  <details class="fold">
+    <summary class="text-xs link cursor-pointer list-none flex items-center gap-1.5">Toutes les mesures ({{ wh | length }}) <span class="fold-chevron">{{ icon('chevron-down', 12) }}</span></summary>
+    <ul class="mt-2">
+      {% for m in wh %}
+      <li class="row-hover flex items-center justify-between gap-2 text-sm">
+        <span class="num">{{ m.date[8:10] }}/{{ m.date[5:7] }}/{{ m.date[2:4] }}</span>
+        <span class="num font-semibold">{{ ('%.1f'|format(m.cm)) | replace('.', ',') }} cm</span>
+        <span class="num text-xs" style="color: var(--text-secondary);">{{ (('%.1f'|format(m.weight_kg)) | replace('.', ',')) ~ ' kg' if m.weight_kg is not none else '–' }}</span>
+        <form method="post" action="/body/waist" onsubmit="return confirm('Supprimer cette mesure ?');">
+          <input type="hidden" name="date" value="{{ m.date }}"><input type="hidden" name="delete" value="1">
+          <button class="text-xs link" style="color: var(--muted);" aria-label="Supprimer la mesure du {{ m.date }}">{{ icon('x', 12) }}</button>
+        </form>
+      </li>
       {% endfor %}
-    </tbody>
-  </table>
+    </ul>
+  </details>
   {% endif %}
-</div>
+</section>
 
 {% if focus_fig %}
 <div class="card p-5">
-  <h2 class="font-semibold text-sm mb-2">À développer, d'après ta dernière analyse</h2>
+  <h2 class="card-title mb-2">{{ icon('dumbbell', 16) }} À développer, d'après ta dernière analyse</h2>
   {{ body_figure(focus_fig, 200) }}
   <p class="text-xs mt-2 text-center" style="color: var(--muted);">{{ focus_labels | join(', ') }}</p>
   {% if focus_moves %}
@@ -109,12 +124,17 @@
 
 <form method="post" action="/body/upload" enctype="multipart/form-data" class="card p-5 space-y-3"
   onsubmit="var b=this.querySelector('button[type=submit]'); b.disabled=true; b.textContent=this.analyze.checked ? 'Analyse en cours (1-2 min)...' : 'Envoi...';">
-  <h2 class="font-semibold text-sm">Nouvelle photo</h2>
+  <h2 class="card-title">{{ icon('plus', 16) }} Nouvelle photo</h2>
   <p class="text-xs" style="color: var(--muted);">
     Conseils : lumière de face, fond neutre, téléphone à hauteur de poitrine à ~2 m, corps entier, bras le long du corps. Même heure (le matin à jeun) et même endroit à chaque fois pour bien comparer.
   </p>
-  <input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required
-    class="block w-full text-sm">
+  <label class="dropzone">
+    {{ icon('plus', 20) }}
+    <span class="text-sm font-medium">Choisir une photo</span>
+    <span class="text-xs dropzone-name" style="color: var(--muted);">JPEG, PNG ou WebP</span>
+    <input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required class="sr-only"
+      onchange="this.closest('.dropzone').querySelector('.dropzone-name').textContent = this.files[0] ? this.files[0].name : ''">
+  </label>
   <label class="block text-sm">
     Pose
     <select name="pose" class="mt-1 w-full rounded-lg border px-3 py-2 text-sm bg-transparent" style="border-color: var(--border);">
@@ -131,23 +151,22 @@
     <input name="analyze" type="checkbox" value="1" checked class="mt-1">
     <span>Analyser maintenant (la photo est envoyée au modèle d'IA pour l'analyse).</span>
   </label>
-  <button type="submit" class="text-sm px-4 py-2 rounded-lg " style="background: var(--accent); color: var(--on-accent);">Enregistrer</button>
+  <button type="submit" class="btn btn-primary">Enregistrer</button>
 </form>
 
 {% for photo in photos %}
 {% set a = photo.analysis %}
 <div class="card p-5 space-y-3">
   <div class="flex items-center justify-between">
-    <p class="text-sm font-medium">{{ photo.local_date }} · {{ poses[photo.pose]|capitalize }}</p>
+    <p class="text-sm font-medium flex items-center gap-2">{{ icon('calendar', 14) }} {{ photo.local_date[8:10] }}/{{ photo.local_date[5:7] }}/{{ photo.local_date[:4] }}
+      <span class="badge" style="--badge: var(--violet);">{{ poses[photo.pose]|capitalize }}</span></p>
     <div class="flex gap-2">
       <form method="post" action="/body/{{ photo.id }}/analyze"
         onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Analyse...';">
-        <button class="text-xs px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--accent-text);">
-          {{ 'Réanalyser' if a else 'Analyser' }}
-        </button>
+        <button class="btn btn-sm">{{ icon('refresh', 12) }} {{ 'Réanalyser' if a else 'Analyser' }}</button>
       </form>
       <form method="post" action="/body/{{ photo.id }}/delete" onsubmit="return confirm('Supprimer cette photo et son analyse ?');">
-        <button class="text-xs px-3 py-1.5 rounded-full border" style="border-color: var(--border); color: var(--critical);">Supprimer</button>
+        <button class="btn btn-sm" style="color: var(--critical);">Supprimer</button>
       </form>
     </div>
   </div>

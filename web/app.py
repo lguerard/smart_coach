@@ -809,6 +809,12 @@ def home(request: Request) -> HTMLResponse:
              int(db.get_setting(conn, user_id, "floors_goal") or 0), ""),
         ) if target
     ]
+    # Quests done since the last look earn their XP now, before the
+    # level below is read, so the bar already shows them.
+    import quests
+
+    xp_granted = quests.award(conn, user_id, date)
+    quest_day = quests.for_day(conn, user_id, date)
     coach_score = achievements.score(conn, user_id)
     player_level = achievements.player_level(conn, user_id)
     new_today = [
@@ -950,6 +956,7 @@ def home(request: Request) -> HTMLResponse:
             "streak": missed_sessions.streak(conn, user_id, date),
             "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
+            "quest_day": quest_day, "xp_granted": xp_granted,
             "new_achievements_today": new_today, "in_deload": in_deload,
             "cal_note": request.query_params.get("cal_note"),
             "pushed": request.query_params.get("pushed"),
@@ -1138,9 +1145,33 @@ def meds_page(request: Request) -> HTMLResponse:
     conn = get_conn()
     user_id = current_user_id(request)
     now = dt.datetime.now(metrics.local_tz(conn, user_id)).replace(tzinfo=None)
+    doses = meds.day(conn, user_id, now)
+    # The last 7 days per item, oldest first, one state a day: taken
+    # (every dose), skipped (noted, some on purpose), missed (a dose
+    # left unnoted), off (nothing planned that day).
+    dots: dict = {}
+    for k in range(7, 0, -1):
+        day = now.date() - dt.timedelta(days=k)
+        per_med: dict = {}
+        for dose in meds.day(conn, user_id, dt.datetime.combine(day, dt.time(23, 59))):
+            per_med.setdefault(dose["med_id"], []).append(dose["status"])
+        for med in meds.list_meds(conn, user_id):
+            statuses = per_med.get(med["id"])
+            state = ("off" if not statuses
+                     else "taken" if all(x == "taken" for x in statuses)
+                     else "skipped" if all(x in ("taken", "skipped") for x in statuses)
+                     else "missed")
+            dots.setdefault(med["id"], []).append(
+                {"state": state, "day": _DAYS_FR[day.weekday()][:3], "num": day.day})
+    planned = [d for days in dots.values() for d in days if d["state"] != "off"]
     return templates.TemplateResponse(
         request, "meds.html", {
-            "doses": meds.day(conn, user_id, now),
+            "doses": doses,
+            "dots": dots,
+            "done_today": sum(d["status"] in ("taken", "skipped") for d in doses),
+            "adherence": (round(100 * sum(d["state"] == "taken" for d in planned) / len(planned))
+                          if planned else None),
+            "meds_streak": achievements._meds_streak(conn, user_id, now.date().isoformat()),
             "items": meds.list_meds(conn, user_id),
             "week": {h["med_id"]: h for h in meds.history(
                 conn, user_id, now.date().isoformat(), 7)},
@@ -2085,13 +2116,17 @@ def data_page(request: Request) -> HTMLResponse:
 
 # Trophies by theme, from their key: the page's filter.
 _TROPHY_GROUPS = (
+    ("defis", "Défis et niveaux", ("quest_", "player_level")),
     ("regularite", "Régularité", ("streak", "comeback", "deload", "perfect_week",
                                   "no_red", "serial", "tenure", "first_sync", "sessions_")),
-    ("seances", "Séances", ("level_", "_master", "training_hours", "calories_burned")),
-    ("nutrition", "Nutrition", ("protein", "hydration", "nutrition")),
+    ("seances", "Séances", ("level_", "_master", "training_hours", "calories_burned",
+                            "rater", "early_bird", "night_owl", "weekend", "long_session",
+                            "epic_session")),
+    ("nutrition", "Nutrition", ("protein", "hydration", "nutrition", "photo_meal")),
     ("sommeil", "Sommeil et récup", ("sleep", "hrv", "readiness", "rhr")),
     ("bouger", "Pas et distance", ("steps", "distance", "elevation", "floors", "step_goal")),
-    ("corps", "Corps", ("weight_", "body_fat", "lean", "recomp", "weigh_in")),
+    ("corps", "Corps", ("weight_", "body_fat", "lean", "recomp", "weigh_in", "waist")),
+    ("sante", "Médicaments", ("meds_",)),
     ("garmin", "Garmin", ("garmin:",)),
 )
 # A name for the player level, so the number means something.
@@ -2141,6 +2176,12 @@ def achievements_page(request: Request) -> HTMLResponse:
         request, "achievements.html", {
             "items": items, "score": achievements.score(conn, user_id),
             "player_level": level, "rank": rank, "next_rank": next_rank,
+            "quests_done": conn.execute(
+                "SELECT COUNT(*) FROM xp_ledger WHERE user_id = ? AND source LIKE "
+                "'quest:%' AND source != 'quest:bonus'", (user_id,)).fetchone()[0],
+            "quest_triples": conn.execute(
+                "SELECT COUNT(*) FROM xp_ledger WHERE user_id = ? AND source = "
+                "'quest:bonus'", (user_id,)).fetchone()[0],
             **_trophy_page(items, date),
             "xp_ledger": achievements.xp_ledger_entries(
                 conn, user_id, limit=100,
