@@ -516,6 +516,81 @@ def admin_reject(user_id: int, request: Request):
 
 # --- Home ---
 
+def _day_word(day: Optional[str], today: str) -> Optional[str]:
+    """``aujourd'hui`` / ``hier`` / ``lundi`` / ``le 03/11``."""
+    if not day:
+        return None
+    gap = (dt.date.fromisoformat(today) - dt.date.fromisoformat(day)).days
+    if gap <= 0:
+        return "aujourd'hui"
+    if gap == 1:
+        return "hier"
+    if gap < 7:
+        return ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+                "dimanche"][dt.date.fromisoformat(day).weekday()]
+    return f"le {day[8:10]}/{day[5:7]}"
+
+
+# The "Données du jour" tiles: what each number is, and its last week.
+# better: +1 when higher is better, -1 when lower is; compare: whether
+# today's value is a whole day already (a night's reading) -- steps or
+# water at 10:00 against yesterday's full day would always look bad.
+TILE_INFO = {
+    "steps_today": ("Pas comptés par la montre aujourd'hui.", 1, False),
+    "resting_hr": ("Fréquence cardiaque au repos, mesurée pendant la nuit. "
+                   "Plus basse = mieux récupéré ; une hausse de 5 bpm et plus "
+                   "annonce souvent fatigue ou maladie.", -1, True),
+    "sleep_score": ("Score de sommeil de la montre (durée, profondeur, réveils).",
+                    1, True),
+    "hydration_ml_today": ("Eau notée aujourd'hui (Health Connect).", 1, False),
+    "training_readiness_score": ("Disponibilité à l'effort selon Garmin : "
+                                 "sommeil, VFC, charge récente.", 1, True),
+    "hrv_last_night_avg": ("Variabilité cardiaque de la nuit. Plus haute = "
+                           "système nerveux reposé ; compare-la à toi-même, "
+                           "pas aux autres.", 1, True),
+    "body_battery_charged": ("Énergie rechargée cette nuit / dépensée "
+                             "aujourd'hui (Body Battery).", 1, True),
+    "stress_avg_level": ("Stress moyen de la journée selon la VFC "
+                         "(0-25 repos, 26-50 bas, 51-75 moyen, 76+ élevé).",
+                         -1, False),
+}
+
+
+def _spark(values: list) -> Optional[str]:
+    """SVG polyline points (100 x 28 box) for a week, gaps skipped."""
+    known = [(i, v) for i, v in enumerate(values) if v is not None]
+    if len(known) < 2:
+        return None
+    low = min(v for _, v in known)
+    high = max(v for _, v in known)
+    span = (high - low) or 1
+    step = 100 / (len(values) - 1)
+    return " ".join(f"{i * step:.1f},{26 - 24 * (v - low) / span:.1f}"
+                    for i, v in known)
+
+
+def _tile_week(conn, user_id: int, date: str, today: dict) -> dict:
+    """Per tile key: ``info``, ``spark`` (7 days, today last), ``avg``
+    (the 6 days before) and, for night readings, ``delta`` and ``good``."""
+    day = dt.date.fromisoformat(date)
+    days = [metrics.daily_wellness(conn, user_id, (day - dt.timedelta(days=n)).isoformat())
+            for n in range(6, 0, -1)] + [today]
+    out = {}
+    for key, (info, better, compare) in TILE_INFO.items():
+        series = [w.get(key) for w in days]
+        series = [float(v) if isinstance(v, (int, float)) else None for v in series]
+        before = [v for v in series[:-1] if v is not None]
+        avg = sum(before) / len(before) if before else None
+        tile = {"info": info, "spark": _spark(series), "avg": avg}
+        now = series[-1]
+        if compare and now is not None and avg is not None:
+            delta = now - avg
+            tile["delta"] = delta
+            tile["good"] = (delta * better) >= 0
+        out[key] = tile
+    return out
+
+
 def _freshness(ran_at: Optional[str], tz) -> dict:
     """One ingestion source's last run, ready to display.
 
@@ -653,9 +728,11 @@ def home(request: Request) -> HTMLResponse:
     )
     tired = [
         {"label": muscles.MUSCLES[m], "state": info["state"],
-         "cause": muscles.ACTIVITY_LABEL_FR.get(
-             info.get("cause", ""), (info.get("cause") or "").replace("_", " "),
-         )}
+         "fatigue": info["fatigue"],
+         "cause": training.SESSION_LABEL_FR.get(
+             info.get("cause", ""), muscles.ACTIVITY_LABEL_FR.get(
+                 info.get("cause", ""), (info.get("cause") or "").replace("_", " "))),
+         "when": _day_word(info.get("cause_date"), date)}
         for m, info in sorted(
             fatigue["muscles"].items(), key=lambda kv: -kv[1]["fatigue"],
         ) if info["state"] != "ready"
@@ -742,6 +819,7 @@ def home(request: Request) -> HTMLResponse:
             "coach_time": os.environ.get("COACH_TIME", "07:45"),
             "session_label_fr_map": training.SESSION_LABEL_FR,
             "wellness": wellness,
+            "tiles": _tile_week(conn, user_id, date, wellness),
             "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
             "new_achievements_today": new_today, "in_deload": in_deload,

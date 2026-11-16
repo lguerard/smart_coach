@@ -63,7 +63,7 @@
         {% for href, ic, label in nav %}
         <a href="{{ href }}" class="navlink {{ 'active' if path == href }}" title="{{ label }}"
            {{ 'aria-current="page"'|safe if path == href }}>
-          {{ icon(ic, 17) }}<span class="hidden xl:inline">{{ label }}</span>
+          {{ icon(ic, 17) }}<span class="hidden {{ 'lg:inline' if path == href else '2xl:inline' }}">{{ label }}</span>
         </a>
         {% endfor %}
       </nav>
@@ -143,6 +143,33 @@
         if (!root.getAttribute('data-theme')) sync();
       });
       sync();
+    })();
+    (() => {
+      // Cards rise in one after the other; numbers count up to their
+      // value. Both skipped when the viewer asked for less motion.
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      document.querySelectorAll('main .card, main .hero-card').forEach((card, i) => {
+        if (card.parentElement.closest('.card, .hero-card')) return;
+        card.style.setProperty('--i', Math.min(i, 12));
+        card.classList.add('rise');
+      });
+      const fmt = (n, decimals, sep) => {
+        const text = n.toFixed(decimals).replace('.', ',');
+        return sep ? text.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : text;
+      };
+      document.querySelectorAll('[data-count]').forEach((el) => {
+        const target = parseFloat(el.dataset.count);
+        if (!isFinite(target)) return;
+        const decimals = (el.dataset.count.split('.')[1] || '').length;
+        const sep = 'sep' in el.dataset;
+        const start = performance.now(), ms = 900;
+        const tick = (now) => {
+          const t = Math.min(1, (now - start) / ms);
+          el.textContent = fmt(target * (1 - Math.pow(1 - t, 3)), decimals, sep);
+          if (t < 1) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
     })();
     (() => {
       const css = getComputedStyle(document.documentElement);

@@ -3,10 +3,38 @@
 {% block title %}Aujourd'hui - Smart Coach{% endblock %}
 {% block container %}max-w-7xl{% endblock %}
 
-{% macro metric(ic, label, value, unit="", color="text-primary") %}
-<div class="metric" style="--metric-color: var(--{{ color }});">
+{# A number that counts up to its value (base.html), shown the same way
+   before and after: thin-space thousands, decimal comma. #}
+{% macro num(value) -%}
+{%- if value is number and value is not sameas true and value is not sameas false -%}
+<span data-count="{{ value }}"{{ ' data-sep' if value >= 1000 }}>{{ ('%.1f' % value) | replace('.', ',') if value is float else ('{:,}'.format(value) | replace(',', ' ') if value >= 1000 else value) }}</span>
+{%- else -%}{{ value }}{%- endif -%}
+{%- endmacro %}
+
+{# Tile: icon + caption, big number. With a ``key`` from ``tiles``
+   (app._tile_week): the week as a sparkline, today against the 6 days
+   before, and a hover card (a tap on a phone) saying what it is. #}
+{% macro metric(ic, label, value, unit="", color="text-primary", key=None) %}
+{% set t = tiles.get(key) if key and tiles is defined else none %}
+{% set liters = key == 'hydration_ml_today' %}
+<div class="metric{{ ' has-pop' if t }}" style="--metric-color: var(--{{ color }});" {{ 'tabindex="0"' | safe if t }}>
   <p class="caption">{{ icon(ic, 13) }}<span class="truncate">{{ label }}</span></p>
-  <p class="metric-value">{% if value is none %}<span style="color: var(--muted);">–</span>{% else %}{{ value }}{% if unit %}<span class="metric-unit">{{ unit }}</span>{% endif %}{% endif %}</p>
+  <p class="metric-value">{% if value is none %}<span style="color: var(--muted);">–</span>{% else %}{{ num(value) }}{% if unit %}<span class="metric-unit">{{ unit }}</span>{% endif %}{% endif %}{% if t and t.delta is defined and (t.delta | abs) >= 0.5 %}<span class="delta {{ 'good' if t.good else 'bad' }}">{{ '▲' if t.delta > 0 else '▼' }}{{ t.delta | abs | round | int }}</span>{% endif %}</p>
+  {% if t and t.spark %}
+  <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="{{ t.spark }}"/>
+    <circle cx="{{ t.spark.split(' ')[-1].split(',')[0] }}" cy="{{ t.spark.split(' ')[-1].split(',')[1] }}" r="2.2"/>
+  </svg>
+  {% endif %}
+  {% if t %}
+  <div class="pop" role="tooltip">
+    {{ t.info }}
+    {% if t.avg is not none %}<br>Moyenne des 6 jours d'avant :
+    <strong>{{ ((t.avg / 1000) | round(1) | string | replace('.', ',')) ~ ' L' if liters else (t.avg | round | int) ~ ((' ' ~ unit) if unit else '') }}</strong>{% endif %}
+    {% if t.delta is defined and (t.delta | abs) >= 0.5 %}<br>Aujourd'hui : <strong style="color: var(--{{ 'good' if t.good else 'warning' }});">{{ '+' if t.delta > 0 }}{{ t.delta | round | int }}</strong> {{ 'mieux que' if t.good else 'moins bien que' }} d'habitude.{% endif %}
+    {% if t.spark %}<br><span style="color: var(--muted);">La courbe : les 7 derniers jours.</span>{% endif %}
+  </div>
+  {% endif %}
 </div>
 {% endmacro %}
 
@@ -154,23 +182,31 @@
     {% set kind = 'rest' if tier == 'rest' else 'recovery' if tier == 'recovery' else entry.session_type %}
     {% set walk = 'Marche active en pente' if values and values.incline_pct else 'Marche de récupération' %}
     {% set title = 'Repos' if tier == 'rest' else walk if tier == 'recovery' else session_label_fr.get(entry.session_type, off_title) %}
-    <div class="hero-card p-5" style="--hero-tint: color-mix(in srgb, var(--{{ status_var }}) 10%, transparent);">
+    <div class="hero-card p-5 sm:p-6" style="--hero-tint: color-mix(in srgb, var(--{{ status_var }}) 16%, transparent); --hero-color: var(--{{ status_var }});">
       <div class="flex items-center justify-between gap-2 mb-3">
         <p class="caption">{{ date_label }}</p>
         {% if entry.status %}
-        <span class="chip-{{ entry.status }} text-xs font-semibold px-2.5 py-1 rounded-full">
-          {{ status_label_fr[entry.status] }}
+        <span class="chip-{{ entry.status }} text-xs font-semibold px-2.5 py-1 rounded-full has-pop" tabindex="0">
+          <span class="live-dot"></span>{{ status_label_fr[entry.status] }}
+          <span class="pop" role="tooltip" style="left: auto; right: 0; transform: none;">
+            {% if entry.status == 'green' %}<strong>Vert</strong> : tout va bien, la séance peut monter d'un cran.
+            {% elif entry.status == 'yellow' %}<strong>Jaune</strong> : un signal est moyen, la séance reste au même niveau.
+            {% else %}<strong>Rouge</strong> : un signal alarme, repos ou marche à la place.{% endif %}
+            {% if status_signals %}<br>Signaux : {% for sig in status_signals %}{{ sig.label | lower }}{{ ', ' if not loop.last }}{% endfor %}.{% endif %}
+          </span>
         </span>
         {% endif %}
       </div>
 
       <div class="flex items-center gap-4">
         {% if readiness is not none %}
-        <div class="ring" style="--pct: {{ readiness }}; --ring-color: var(--{{ status_var }});">
+        <div class="ring has-pop" tabindex="0" style="--size: 92px; --pct: {{ readiness }}; --ring-color: var(--{{ status_var }}); --ring-hole: var(--surface-1);">
           <div class="ring-inner">
-            <span class="ring-value">{{ readiness }}</span>
+            <span class="ring-value" style="font-size: 1.6rem;">{{ num(readiness) }}</span>
             <span class="ring-label">forme</span>
           </div>
+          <span class="pop left" role="tooltip"><strong>Forme {{ readiness }}/100</strong> : disponibilité à l'effort selon Garmin (sommeil, VFC, charge des derniers jours).
+            {% if tiles and tiles.training_readiness_score.avg is not none %}<br>Moyenne de la semaine : <strong>{{ tiles.training_readiness_score.avg | round | int }}</strong>.{% endif %}</span>
         </div>
         {% endif %}
         <div class="flex-1 min-w-0">
@@ -180,7 +216,7 @@
             <span class="badge" style="--badge: var(--violet);">{{ icon('shield', 14) }}deload</span>
             {% endif %}
           </div>
-          <h1 class="text-xl font-semibold mt-1.5">{{ title }}</h1>
+          <h1 class="hero-title mt-2">{{ title }}</h1>
           {% if tier != 'train' and entry.session_type %}
           <p class="text-sm" style="color: var(--text-secondary);">à la place de {{ off_title }} (annulé)</p>
           {% endif %}
@@ -377,15 +413,15 @@
     <div class="card p-4">
       <h2 class="card-title mb-3">{{ icon('activity', 16) }} Données du jour</h2>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {{ metric('footprints', 'Pas', steps, '', 'orange') }}
-        {{ metric('heart-pulse', 'FC repos', rhr, 'bpm', 'red') }}
-        {{ metric('moon', 'Sommeil', sleep_score, '/100', 'violet') }}
-        {{ metric('droplet', 'Hydratation', (hydration / 1000) | round(1) if hydration is not none else none, 'L', 'blue') }}
+        {{ metric('footprints', 'Pas', steps, '', 'orange', 'steps_today') }}
+        {{ metric('heart-pulse', 'FC repos', rhr, 'bpm', 'red', 'resting_hr') }}
+        {{ metric('moon', 'Sommeil', sleep_score, '/100', 'violet', 'sleep_score') }}
+        {{ metric('droplet', 'Hydratation', (hydration / 1000) | round(1) if hydration is not none else none, 'L', 'blue', 'hydration_ml_today') }}
         {% if readiness is not none or hrv is not none or battery_charged is not none or stress_avg is not none %}
-        {{ metric('zap', 'Récupération', readiness, '/100', 'green') }}
-        {{ metric('activity', 'VFC', (hrv | round | int) if hrv is not none else none, 'ms', 'magenta') }}
-        {{ metric('battery', 'Batterie', ('+' ~ battery_charged ~ ' / −' ~ (battery_drained or 0)) if battery_charged is not none else none, '', 'aqua') }}
-        {{ metric('gauge', 'Stress', stress_avg, '/100', 'yellow') }}
+        {{ metric('zap', 'Récupération', readiness, '/100', 'green', 'training_readiness_score') }}
+        {{ metric('activity', 'VFC', (hrv | round | int) if hrv is not none else none, 'ms', 'magenta', 'hrv_last_night_avg') }}
+        {{ metric('battery', 'Batterie', ('+' ~ battery_charged ~ ' / −' ~ (battery_drained or 0)) if battery_charged is not none else none, '', 'aqua', 'body_battery_charged') }}
+        {{ metric('gauge', 'Stress', stress_avg, '/100', 'yellow', 'stress_avg_level') }}
         {% endif %}
       </div>
     </div>
@@ -401,11 +437,21 @@
         <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-idle"/></svg> pas travaillé cette semaine</span>
       </div>
       {% if tired %}
-      <ul class="text-xs mt-3 space-y-1" style="color: var(--text-secondary);">
-        {% for t in tired[:5] %}
-        <li>{{ t.label }} : {{ 'fatigué' if t.state == 'fatigued' else 'en récupération' }}{% if t.cause %} ({{ t.cause }}){% endif %}</li>
+      <ul class="text-xs mt-3 space-y-1.5" style="color: var(--text-secondary);">
+        {% for t in tired[:6] %}
+        <li class="row-hover">
+          <div class="flex items-baseline justify-between gap-2">
+            <span><span class="font-semibold" style="color: var(--text-primary);">{{ t.label }}</span>
+              · {{ 'fatigué' if t.state == 'fatigued' else 'en récupération' }}</span>
+            {% if t.cause %}<span class="truncate" style="color: var(--muted);">{{ t.cause | lower }}{% if t.when %}, {{ t.when }}{% endif %}</span>{% endif %}
+          </div>
+          <div class="fatigue-bar mt-1"><span style="width: {{ [100 * t.fatigue / 1.5, 100] | min | round }}%; background: var(--{{ 'critical' if t.state == 'fatigued' else 'warning' }}); animation-delay: {{ loop.index0 * 80 }}ms;"></span></div>
+        </li>
         {% endfor %}
       </ul>
+      <p class="text-[11px] mt-2" style="color: var(--muted);">Calculé sur les activités enregistrées par la montre ou déclarées faites ; une séance sautée ne compte pas.</p>
+      {% else %}
+      <p class="text-xs mt-3 text-center" style="color: var(--good);">{{ icon('check', 13) }} Tous les muscles sont prêts.</p>
       {% endif %}
     </div>
     {% endif %}
@@ -417,13 +463,13 @@
     <a href="/achievements" class="card p-4 flex items-center gap-3 block">
       <div class="ring" style="--size: 64px; --pct: {{ level_pct }}; --ring-color: var(--accent);">
         <div class="ring-inner">
-          <span class="ring-value" style="font-size: 1.15rem;">{{ player_level.level }}</span>
+          <span class="ring-value" style="font-size: 1.15rem;">{{ num(player_level.level) }}</span>
           <span class="ring-label">niveau</span>
         </div>
       </div>
       <div class="flex-1 min-w-0">
         <p class="caption">Progression</p>
-        <p class="text-sm font-semibold num mt-0.5">{{ player_level.xp_into_level }} / {{ player_level.xp_for_next_level }} <span class="metric-unit">XP</span></p>
+        <p class="text-sm font-semibold num mt-0.5">{{ num(player_level.xp_into_level) }} / {{ player_level.xp_for_next_level }} <span class="metric-unit">XP</span></p>
         <div class="mt-1.5 meter-track"><div class="meter-fill" style="width: {{ level_pct }}%; background: var(--accent);"></div></div>
         <p class="text-xs mt-1.5 truncate" style="color: var(--muted);">
           {{ icon('trophy', 12) }} {{ coach_score.unlocked_points }}/{{ coach_score.total_points }} pts · {{ coach_score.unlocked_count }}/{{ coach_score.total_count }} succès
@@ -466,7 +512,7 @@
         {{ metric('dumbbell', 'Séances', st.sessions, '', 'accent') }}
         {{ metric('timer', 'Durée', st.active_min, 'min', 'orange') }}
         {{ metric('flame', 'Intensité', st.intensity_min, 'min', 'red') }}
-        {{ metric('footprints', 'Pas / j', ('{:,}'.format(st.steps_avg).replace(',', ' ')) if st.steps_avg is not none else none, '', 'orange') }}
+        {{ metric('footprints', 'Pas / j', st.steps_avg, '', 'orange') }}
         <div class="col-span-2">{{ metric('map-pin', 'Distance', st.distance_km, 'km', 'blue') }}</div>
       </div></div>
       {% endfor %}
@@ -496,12 +542,16 @@
       {% for row in target_rows %}
       {% set pct = (100 * row.actual / row.target) | round %}
       {% set fill = 'var(--green)' if pct >= 100 else 'var(--accent)' %}
-      <div class="{{ 'mt-3' if not loop.first }}">
+      {% set left = (row.target - row.actual) | round | int %}
+      <div class="row-hover has-pop {{ 'mt-1.5' if not loop.first }}" tabindex="0">
         <div class="flex items-baseline justify-between text-xs">
-          <span style="color: var(--text-secondary);">{{ row.label }}</span>
-          <span class="num"><span class="font-semibold">{{ row.actual | round | int }}</span><span style="color: var(--muted);"> / {{ row.target }} {{ row.unit }}</span></span>
+          <span style="color: var(--text-secondary);">{{ row.label }}{% if pct >= 100 %} <span style="color: var(--green);">{{ icon('check', 12) }}</span>{% endif %}</span>
+          <span class="num"><span class="font-semibold">{{ num(row.actual | round | int) }}</span><span style="color: var(--muted);"> / {{ row.target }} {{ row.unit }}</span>
+            <span class="font-semibold ml-1" style="color: {{ fill }};">{{ pct | int }}%</span></span>
         </div>
-        <div class="mt-1 meter-track"><div class="meter-fill" style="width: {{ [pct, 100] | min }}%; background: {{ fill }};"></div></div>
+        <div class="mt-1 meter-track"><div class="meter-fill {{ 'done' if pct >= 100 }}" style="width: {{ [pct, 100] | min }}%; background: {{ fill }}; animation-delay: {{ 200 + loop.index0 * 90 }}ms;"></div></div>
+        <span class="pop" role="tooltip">{% if left > 0 %}Encore <strong>{{ left }} {{ row.unit }}</strong> pour atteindre {{ row.target }} {{ row.unit }}.{% else %}Objectif atteint{% if left < 0 %} : <strong>{{ -left }} {{ row.unit }}</strong> au-dessus{% endif %}.{% endif %}
+          {% if row.label == 'Calories' and left < 0 %} Ça ralentit la perte de poids si ça se répète.{% endif %}</span>
       </div>
       {% endfor %}
     </div>
@@ -511,9 +561,9 @@
     <div class="card p-4">
       <h2 class="card-title mb-2">{{ icon('gauge', 16) }} Signaux du jour</h2>
       {% for s in status_signals %}
-      <div class="flex items-center justify-between gap-2 text-xs {{ 'mt-2' if not loop.first }}">
+      <div class="row-hover flex items-center justify-between gap-2 text-xs {{ 'mt-1' if not loop.first }}">
         <span class="flex items-center gap-2">
-          <span class="inline-block w-2 h-2 rounded-full" style="background: var(--{{ 'good' if s.vote == 'green' else 'warning' if s.vote == 'yellow' else 'critical' }});"></span>
+          <span class="inline-block w-2 h-2 rounded-full" style="background: var(--{{ 'good' if s.vote == 'green' else 'warning' if s.vote == 'yellow' else 'critical' }}); box-shadow: 0 0 8px var(--{{ 'good' if s.vote == 'green' else 'warning' if s.vote == 'yellow' else 'critical' }});"></span>
           {{ s.label }}
         </span>
         <span class="text-right" style="color: var(--muted);">{{ s.detail }}</span>

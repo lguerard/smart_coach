@@ -189,9 +189,13 @@ def _coach_day(conn: sqlite3.Connection, user_id: int, day: str):
     actual = done_sessions.actual_type(conn, user_id, day, planned, tier)
     if not actual:
         return None
+    # Only an activity of unknown type that day (a walk the watch caught
+    # by itself): the session is assumed, not known done.
+    known = done_sessions.done_on(conn, user_id, day)
+    confirmed = bool(known and known["source"] in ("declared", "detected"))
     if actual == planned and (tier or "train") == "train":
-        return actual, row["level"] or 0
-    return actual, training.get_level(conn, user_id, actual)
+        return actual, row["level"] or 0, confirmed
+    return actual, training.get_level(conn, user_id, actual), confirmed
 
 
 def _stimulus(conn, user_id, row, coach) -> tuple[float, dict, str]:
@@ -202,11 +206,12 @@ def _stimulus(conn, user_id, row, coach) -> tuple[float, dict, str]:
     )
     key = _plain(label).replace(" ", "_")
     if coach and key in STRENGTH_LABELS | {"running_treadmill", "walking"}:
-        session_type, level = coach
+        session_type, level, confirmed = coach
         circuit = session_type != "treadmill" and key in STRENGTH_LABELS
-        treadmill = session_type == "treadmill" and key in (
-            "running_treadmill", "walking",
-        )
+        # A walk is the treadmill session only when that session is known
+        # done: a skipped one plus a walk to the shop stays a walk.
+        treadmill = session_type == "treadmill" and (
+            key == "running_treadmill" or (key == "walking" and confirmed))
         if circuit or treadmill:
             return 1.0, session_muscle_weights(
                 session_type, level, row["local_date"],
@@ -248,8 +253,9 @@ def muscle_fatigue(
 
     Returns:
         dict: ``muscles`` -> {key: {fatigue, state, week_volume,
-        cause}} for every muscle (``cause`` = the activity label that
-        contributes most now, when any), and ``activities`` counted.
+        cause, cause_date}} for every muscle (``cause`` = the activity
+        label that contributes most now, ``cause_date`` the day of the
+        activity weighing most, when any), and ``activities`` counted.
     """
     import metrics
 
@@ -268,8 +274,8 @@ def muscle_fatigue(
         (user_id, start, date),
     ).fetchall()
     week_start = at - dt.timedelta(days=7)
-    state = {m: {"fatigue": 0.0, "week_volume": 0.0, "_cause": {}}
-             for m in MUSCLES}
+    state = {m: {"fatigue": 0.0, "week_volume": 0.0, "_cause": {},
+                 "_top": (None, 0.0)} for m in MUSCLES}
     counted = 0
     for row in rows:
         end = dt.datetime.fromisoformat(row["end_utc"])
@@ -299,12 +305,15 @@ def muscle_fatigue(
             state[muscle]["_cause"][label] = (
                 state[muscle]["_cause"].get(label, 0.0) + now
             )
+            if now >= state[muscle]["_top"][1]:
+                state[muscle]["_top"] = (row["local_date"], now)
             if end >= week_start:
                 state[muscle]["week_volume"] += amount * weight
     result = {}
     for muscle, values in state.items():
         fatigue = values["fatigue"]
         causes = values.pop("_cause")
+        top_day = values.pop("_top")[0]
         result[muscle] = {
             "fatigue": round(fatigue, 2),
             "week_volume": round(values["week_volume"], 2),
@@ -313,7 +322,8 @@ def muscle_fatigue(
                 else "recovering" if fatigue >= RECOVERING_AT
                 else "ready"
             ),
-            **({"cause": max(causes, key=causes.get)} if causes else {}),
+            **({"cause": max(causes, key=causes.get), "cause_date": top_day}
+               if causes else {}),
         }
     return {"muscles": result, "activities": counted}
 
@@ -446,7 +456,28 @@ if __name__ == "__main__":
     assert after["chest"]["state"] == "fatigued", after["chest"]
     # Harder sessions weigh more: RPE 8 counts above a plain one.
     assert after["chest"]["fatigue"] > 1.0
+    assert after["chest"]["cause_date"] == "2026-10-06"
     # A rest day's log row does not turn a strength session into it.
     assert _coach_day(conn, uid, "2026-10-07") is None
+
+    # The reported case: a treadmill session skipped, a walk caught by
+    # the watch that day. The walk stays a walk (light calves), not the
+    # treadmill session.
+    conn.execute(
+        "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+        "session_type, level, message, tier) VALUES (?, '2026-10-12T06:00', "
+        "'2026-10-12', 'green', 'treadmill', 6, 'm', 'train')", (uid,),
+    )
+    conn.commit()
+    _session("shop-walk", "2026-10-12", 17, 40, label="walking")
+    at = dt.datetime(2026, 10, 12, 20, 0, tzinfo=dt.timezone.utc)
+    walk = muscle_fatigue(conn, uid, "2026-10-12", at=at)["muscles"]
+    assert walk["calves"]["cause"] == "walking", walk["calves"]
+    assert walk["quads"]["state"] != "fatigued", walk["quads"]
+    # Said done (treadmill without the watch workout): it is the session.
+    import done_sessions
+    done_sessions.declare(conn, uid, "2026-10-12", "treadmill", today="2026-10-12")
+    session = muscle_fatigue(conn, uid, "2026-10-12", at=at)["muscles"]
+    assert session["calves"]["cause"] == "treadmill", session["calves"]
 
     print("muscles.py: all checks passed")

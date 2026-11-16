@@ -276,3 +276,162 @@ details > summary.list-none::-webkit-details-marker { display: none; }
 .move-art .ground { stroke: var(--border); stroke-width: 2; }
 .move-art .prop { stroke: var(--muted); stroke-width: 2; fill: none; }
 @media (prefers-reduced-motion: reduce) { .move-art animate, .move-art animateMotion { display: none; } }
+
+/* ------------------------------------------------------------------
+   Motion layer: depth, hover, entrance, animated numbers. Everything
+   here is decoration on top of the flat look above -- with reduced
+   motion asked for, it all stands still and the page reads the same.
+   ------------------------------------------------------------------ */
+@property --pct { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --spin { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+/* A soft aurora behind the page, tinted by the accent. */
+body {
+  background-image:
+    radial-gradient(900px 520px at 8% -8%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+    radial-gradient(760px 460px at 100% 0%, color-mix(in srgb, var(--violet) 12%, transparent), transparent 70%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+.card, .hero-card {
+  position: relative;
+  transition: transform 0.25s cubic-bezier(.2,.8,.2,1), box-shadow 0.25s, border-color 0.25s;
+}
+@media (hover: hover) {
+  .card:hover, .hero-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+    box-shadow: 0 14px 34px -18px color-mix(in srgb, var(--accent) 55%, rgba(0,0,0,0.6));
+  }
+}
+
+/* Entrance: cards rise in, one after the other (--i set by base.html). */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+.rise { animation: rise 0.55s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i, 0) * 55ms); }
+
+/* The day's card: a slow glowing border in the status colour. */
+.hero-card {
+  border-radius: 18px; overflow: hidden; isolation: isolate;
+  background:
+    radial-gradient(120% 90% at 0% 0%, var(--hero-tint, transparent), transparent 60%),
+    linear-gradient(160deg, color-mix(in srgb, var(--hero-color, var(--accent)) 7%, var(--surface-1)), var(--surface-1));
+}
+.hero-card::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px;
+  background: conic-gradient(from var(--spin), transparent 0 55%,
+    color-mix(in srgb, var(--hero-color, var(--accent)) 85%, transparent) 75%, transparent 92%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: spin 7s linear infinite; pointer-events: none; z-index: -1;
+}
+@keyframes spin { to { --spin: 360deg; } }
+.hero-title {
+  font-size: clamp(1.35rem, 3.2vw, 1.75rem); font-weight: 700; letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+/* Rings and meters fill up on arrival. */
+.ring { animation: ring-fill 1.2s cubic-bezier(.2,.8,.2,1) both; position: relative; }
+@keyframes ring-fill { from { --pct: 0; } }
+.ring::after {
+  content: ""; position: absolute; inset: -6px; border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--ring-color, var(--accent)) 30%, transparent), transparent 70%);
+  z-index: -1; opacity: 0.7;
+}
+.meter-fill { transform-origin: left; animation: grow 1s cubic-bezier(.2,.8,.2,1) both; animation-delay: 0.2s; }
+@keyframes grow { from { transform: scaleX(0); } }
+.meter-track { height: 7px; }
+.meter-fill.done { box-shadow: 0 0 10px color-mix(in srgb, var(--green) 70%, transparent); }
+
+/* Metric tiles: lift, a coloured edge, a week sparkline, a hover card. */
+.metric {
+  position: relative; transition: transform 0.2s, background 0.2s, box-shadow 0.2s;
+  border: 1px solid transparent; outline: none;
+}
+.metric::before {
+  content: ""; position: absolute; left: 10px; right: 10px; top: 0; height: 2px;
+  border-radius: 0 0 4px 4px; background: var(--metric-color, var(--accent)); opacity: 0.55;
+  transition: opacity 0.2s, left 0.2s, right 0.2s;
+}
+.metric[tabindex] { cursor: help; }
+@media (hover: hover) {
+  .metric:hover { transform: translateY(-2px) scale(1.015); background: color-mix(in srgb, var(--metric-color, var(--accent)) 9%, var(--surface-2)); }
+  .metric:hover::before { opacity: 1; left: 0; right: 0; }
+}
+.metric:focus-visible, .metric:focus-within { border-color: color-mix(in srgb, var(--metric-color, var(--accent)) 45%, transparent); }
+.metric .caption .ic {
+  width: 20px; height: 20px; padding: 3px; border-radius: 6px;
+  background: color-mix(in srgb, var(--metric-color, var(--muted)) 16%, transparent);
+}
+.spark { display: block; width: 100%; height: 22px; margin-top: 0.35rem; overflow: visible; }
+.spark polyline {
+  fill: none; stroke: var(--metric-color, var(--accent)); stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke;
+  stroke-dasharray: 400; stroke-dashoffset: 400; animation: draw 1.4s 0.3s ease-out forwards;
+}
+.spark circle { fill: var(--metric-color, var(--accent)); }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.delta {
+  display: inline-flex; align-items: center; gap: 0.15rem; font-size: 0.66rem; font-weight: 650;
+  padding: 0.05rem 0.4rem; border-radius: 999px; margin-left: 0.35rem; vertical-align: 0.2em;
+}
+.delta.good { color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); }
+.delta.bad { color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
+
+/* Hover card: hover on a computer, tap (focus) on a phone. */
+.pop {
+  position: absolute; left: 50%; bottom: calc(100% + 8px); z-index: 30;
+  width: max-content; max-width: min(260px, 80vw);
+  transform: translate(-50%, 4px) scale(0.97); opacity: 0; pointer-events: none;
+  background: var(--surface-1-solid); color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 10px; padding: 0.55rem 0.7rem;
+  font-size: 0.72rem; line-height: 1.4; font-weight: 450; text-transform: none; letter-spacing: 0;
+  box-shadow: 0 14px 30px -12px rgba(0,0,0,0.45);
+  transition: opacity 0.18s, transform 0.18s;
+}
+.pop strong { color: var(--text-primary); font-weight: 600; }
+.has-pop { position: relative; }
+.has-pop:hover > .pop, .has-pop:focus > .pop, .has-pop:focus-within > .pop {
+  opacity: 1; transform: translate(-50%, 0) scale(1);
+}
+.pop.left { left: 0; transform: translate(0, 4px) scale(0.97); }
+.has-pop:hover > .pop.left, .has-pop:focus > .pop.left, .has-pop:focus-within > .pop.left { transform: translate(0, 0) scale(1); }
+
+/* Rows that react: signals, goals, tired muscles. */
+.row-hover { border-radius: 8px; transition: background 0.15s, transform 0.15s; padding: 0.3rem 0.45rem; margin: 0 -0.45rem; }
+@media (hover: hover) { .row-hover:hover { background: var(--surface-2); transform: translateX(2px); } }
+
+/* Status pill with a live dot. */
+.live-dot { position: relative; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 0.35rem; vertical-align: 0.05em; }
+.live-dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: currentColor; animation: ping 1.8s cubic-bezier(0,0,.2,1) infinite; }
+@keyframes ping { 75%, 100% { transform: scale(2.4); opacity: 0; } }
+
+/* Buttons: a touch of glow and a press. */
+.btn { transition: background 0.15s, color 0.15s, transform 0.1s, box-shadow 0.2s, border-color 0.2s; }
+.btn:active { transform: scale(0.97); }
+@media (hover: hover) {
+  .btn-primary:hover { box-shadow: 0 6px 20px -6px color-mix(in srgb, var(--accent) 80%, transparent); }
+  .btn:not(.btn-primary):hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+}
+
+/* Body map: the muscle under the pointer lights up. */
+svg path[class^="bm-"] { transition: filter 0.15s, opacity 0.15s; }
+@media (hover: hover) {
+  svg:hover path[class^="bm-"]:not(.bm-body) { opacity: 0.7; }
+  svg path[class^="bm-"]:not(.bm-body):hover { opacity: 1; filter: brightness(1.25) drop-shadow(0 0 4px currentColor); }
+}
+.fatigue-bar { height: 4px; border-radius: 999px; background: var(--grid); overflow: hidden; }
+.fatigue-bar > span { display: block; height: 100%; border-radius: 999px; transform-origin: left; animation: grow 0.9s cubic-bezier(.2,.8,.2,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rise, .ring, .meter-fill, .spark polyline, .fatigue-bar > span, .hero-card::before, .live-dot::after { animation: none !important; }
+  .spark polyline { stroke-dashoffset: 0; }
+  .card, .hero-card, .metric, .btn, .row-hover { transition: none !important; }
+  .card:hover, .hero-card:hover, .metric:hover { transform: none !important; }
+}
+/* Tiles sit in 2 or 4 columns: the card opens inward, never off-screen. */
+.metric:nth-child(odd) > .pop { left: 0; transform: translate(0, 4px) scale(0.97); }
+.metric:nth-child(even) > .pop { left: auto; right: 0; transform: translate(0, 4px) scale(0.97); }
+.metric.has-pop:hover > .pop, .metric.has-pop:focus > .pop, .metric.has-pop:focus-within > .pop { transform: translate(0, 0) scale(1); }
+body { overflow-x: clip; }
