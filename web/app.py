@@ -76,7 +76,7 @@ import training
 import training_load
 from ingest import garmin_api
 from ingest.parse_health_connect import EXERCISE_TYPE_LABELS
-from web.icons import icon, session_badge
+from web.icons import SESSION_STYLE, icon, session_badge
 from web.move_art import for_variant as move_art
 
 APP_DIR = Path(__file__).parent
@@ -516,6 +516,79 @@ def admin_reject(user_id: int, request: Request):
 
 # --- Home ---
 
+def _week_strip(conn, user_id: int, date: str, today_entry, today_tier) -> list[dict]:
+    """Monday to Sunday of this week, one chip per day: what was done,
+    missed or rested, today, and what is planned next.
+
+    ``state``: done, other (something else than the plan), missed,
+    rest, recovery, today, planned, unknown (no morning run that day).
+    """
+    monday = dt.date.fromisoformat(date) - dt.timedelta(
+        days=dt.date.fromisoformat(date).weekday())
+    days = []
+    for k in range(7):
+        day = (monday + dt.timedelta(days=k)).isoformat()
+        kind, label, state = None, "Repos", "rest"
+        if day < date:
+            log = conn.execute(
+                "SELECT session_type, tier FROM coach_log WHERE user_id = ? AND "
+                "local_date = ? ORDER BY id DESC LIMIT 1", (user_id, day)).fetchone()
+            known = done_sessions.done_on(conn, user_id, day)
+            done_type = known["session_type"] if known else None
+            planned = log["session_type"] if log else None
+            tier = (log["tier"] if log else None) or "train"
+            if done_type in training.SESSION_LABEL_FR:
+                kind, state = done_type, "done"
+                label = training.SESSION_LABEL_FR[done_type]
+            elif known and known["source"] == "activity" and planned and tier == "train":
+                kind, state = planned, "done"
+                label = training.SESSION_LABEL_FR.get(planned, planned)
+            elif done_type == done_sessions.OTHER:
+                kind, state, label = None, "other", "Autre activité"
+            elif log is None:
+                template = missed_sessions.day_template(conn, user_id, day)
+                if template.get("session_type"):
+                    kind, state = template["session_type"], "unknown"
+                    label = training.SESSION_LABEL_FR.get(kind, kind)
+            elif tier == "rest" or not planned:
+                kind, state = "rest", "rest"
+            elif tier == "recovery":
+                kind, state, label = "recovery", "recovery", "Marche"
+            else:
+                kind, state = planned, "missed"
+                label = training.SESSION_LABEL_FR.get(planned, planned)
+        elif day == date:
+            state = "today"
+            if today_tier == "rest":
+                kind = "rest"
+            elif today_tier == "recovery":
+                kind, label = "recovery", "Marche"
+            elif today_entry and today_entry["session_type"]:
+                kind = today_entry["session_type"]
+                label = training.SESSION_LABEL_FR.get(kind, kind)
+            else:
+                template = missed_sessions.day_template(conn, user_id, day)
+                kind = template.get("session_type") or "rest"
+                label = training.SESSION_LABEL_FR.get(kind, "Repos")
+        else:
+            template = missed_sessions.day_template(conn, user_id, day)
+            if template.get("session_type"):
+                kind, state = template["session_type"], "planned"
+                label = training.SESSION_LABEL_FR.get(kind, kind)
+        ic, colour = SESSION_STYLE.get(kind or "", ("target", "accent"))
+        days.append({
+            "date": day, "letter": "LMMJVSD"[k], "num": int(day[8:10]),
+            "name": _DAYS_FR[k], "label": label, "state": state,
+            "icon": ic, "colour": colour,
+        })
+    return days
+
+
+def _greeting(conn, user_id: int) -> str:
+    hour = dt.datetime.now(metrics.local_tz(conn, user_id)).hour
+    return "Bonsoir" if hour >= 18 or hour < 4 else "Bonjour"
+
+
 def _day_word(day: Optional[str], today: str) -> Optional[str]:
     """``aujourd'hui`` / ``hier`` / ``lundi`` / ``le 03/11``."""
     if not day:
@@ -820,6 +893,8 @@ def home(request: Request) -> HTMLResponse:
             "session_label_fr_map": training.SESSION_LABEL_FR,
             "wellness": wellness,
             "tiles": _tile_week(conn, user_id, date, wellness),
+            "week_strip": _week_strip(conn, user_id, date, entry, tier),
+            "greeting": _greeting(conn, user_id),
             "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
             "new_achievements_today": new_today, "in_deload": in_deload,

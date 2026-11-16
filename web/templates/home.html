@@ -65,6 +65,40 @@
 {% set battery_drained = wellness.get("body_battery_drained") %}
 {% set stress_avg = wellness.get("stress_avg_level") %}
 
+{# ---------- Welcome band: who, today in one line, the week ---------- #}
+{% set done_week = week_strip | selectattr('state', 'equalto', 'done') | list | length %}
+{% set planned_week = week_strip | selectattr('state', 'in', ['done', 'missed', 'today', 'planned', 'unknown']) | rejectattr('icon', 'equalto', 'bed') | list | length %}
+<section class="welcome card p-4 sm:p-5">
+  <div class="min-w-0">
+    <p class="caption">{{ date_label }}</p>
+    <h1 class="welcome-title mt-1">{{ greeting }}{% if username %} <span class="grad-text">{{ username | capitalize }}</span>{% endif %}</h1>
+    <p class="text-sm mt-1.5" style="color: var(--text-secondary);">
+      {% if entry %}
+        {% if tier == 'rest' %}Repos aujourd'hui{% elif tier == 'recovery' %}Marche de récupération aujourd'hui{% else %}{{ session_label_fr.get(entry.session_type, off_title) }} ce soir{% if entry.level is not none %}, niveau {{ entry.level }}{% endif %}{% endif %}{% if readiness is not none %} · forme <strong style="color: var(--text-primary);">{{ readiness }}</strong>{% endif %}{% if steps is not none %} · <strong style="color: var(--text-primary);">{{ '{:,}'.format(steps) | replace(',', ' ') }}</strong> pas{% endif %}
+      {% else %}Le coach n'a pas encore tourné aujourd'hui.{% endif %}
+    </p>
+  </div>
+  <div class="min-w-0">
+    <div class="flex items-center justify-between mb-2">
+      <p class="caption">Cette semaine</p>
+      <p class="text-xs num" style="color: var(--muted);"><strong style="color: var(--text-primary);">{{ done_week }}</strong> / {{ planned_week }} séances</p>
+    </div>
+    <ol class="week-strip" aria-label="La semaine">
+      {% for d in week_strip %}
+      <li class="day has-pop is-{{ d.state }}" tabindex="0" style="--day: var(--{{ d.colour }});">
+        <span class="day-letter">{{ d.letter }}</span>
+        <span class="day-dot">{% if d.state == 'done' %}{{ icon('check', 14) }}{% elif d.state == 'missed' %}{{ icon('x', 13) }}{% elif d.state in ('rest',) %}<span class="day-rest"></span>{% else %}{{ icon(d.icon, 14) }}{% endif %}</span>
+        <span class="day-num num">{{ d.num }}</span>
+        <span class="pop {{ 'left' if loop.index0 < 2 }}" role="tooltip" {% if loop.index0 >= 5 %}style="left: auto; right: 0; transform: none;"{% endif %}>
+          <strong>{{ d.name | capitalize }} {{ d.num }}</strong> · {{ d.label }}<br>
+          {{ {'done': 'Faite', 'other': 'Autre chose que le plan', 'missed': 'Pas faite', 'rest': 'Repos', 'recovery': 'Marche de récupération', 'today': "Aujourd'hui", 'planned': 'Prévue', 'unknown': "Le coach n'a pas tourné ce jour-là"}[d.state] }}
+        </span>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+</section>
+
 <div class="home-grid">
 
   {# ---------- Centre: today's session and the coach ---------- #}
@@ -184,7 +218,7 @@
     {% set title = 'Repos' if tier == 'rest' else walk if tier == 'recovery' else session_label_fr.get(entry.session_type, off_title) %}
     <div class="hero-card p-5 sm:p-6" style="--hero-tint: color-mix(in srgb, var(--{{ status_var }}) 16%, transparent); --hero-color: var(--{{ status_var }});">
       <div class="flex items-center justify-between gap-2 mb-3">
-        <p class="caption">{{ date_label }}</p>
+        <p class="caption">Séance du jour</p>
         {% if entry.status %}
         <span class="chip-{{ entry.status }} text-xs font-semibold px-2.5 py-1 rounded-full has-pop" tabindex="0">
           <span class="live-dot"></span>{{ status_label_fr[entry.status] }}
@@ -216,7 +250,7 @@
             <span class="badge" style="--badge: var(--violet);">{{ icon('shield', 14) }}deload</span>
             {% endif %}
           </div>
-          <h1 class="hero-title mt-2">{{ title }}</h1>
+          <h2 class="hero-title mt-2">{{ title }}</h2>
           {% if tier != 'train' and entry.session_type %}
           <p class="text-sm" style="color: var(--text-secondary);">à la place de {{ off_title }} (annulé)</p>
           {% endif %}
