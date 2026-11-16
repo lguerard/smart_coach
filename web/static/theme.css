@@ -294,7 +294,9 @@ body {
   background-repeat: no-repeat;
 }
 
-.card, .hero-card {
+/* Never on a card positioned on purpose (the phone's "Plus" menu is an
+   absolute .card). */
+.card:not(.absolute):not(.fixed), .hero-card {
   position: relative;
   transition: box-shadow 0.25s, border-color 0.25s;
 }
@@ -626,3 +628,154 @@ body { overflow-x: clip; }
 .night-facts { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.9rem; font-size: 0.75rem; }
 .night-facts dt { color: var(--muted); }
 .night-facts dd { color: var(--text-primary); }
+
+/* Séances: a week per card, a row per session with its own colour. */
+.session-list { display: flex; flex-direction: column; }
+.session-row {
+  display: flex; gap: 0.8rem; align-items: flex-start; padding: 0.75rem 0.5rem; margin: 0 -0.5rem;
+  border-radius: 12px; scroll-margin-top: 5rem; transition: background 0.15s;
+}
+.session-row + .session-row { border-top: 1px solid var(--border); }
+@media (hover: hover) { .session-row:hover { background: var(--surface-2); } }
+.session-row:target { background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); box-shadow: inset 3px 0 0 var(--accent); }
+.session-icon {
+  width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0; display: grid; place-items: center;
+  color: var(--day); background: color-mix(in srgb, var(--day) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--day) 25%, transparent);
+}
+.session-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; flex-shrink: 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.12rem 0.5rem; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 550; color: var(--chip, var(--text-secondary));
+  background: color-mix(in srgb, var(--chip, var(--muted)) 13%, transparent);
+}
+.zone-bar { display: flex; height: 7px; max-width: 260px; border-radius: 999px; overflow: visible; background: var(--grid); outline: none; cursor: help; }
+.zone-bar > span:not(.pop) { height: 100%; }
+.zone-bar > span:not(.pop):first-child { border-radius: 999px 0 0 999px; }
+.zone-bar > span:not(.pop):nth-last-child(2) { border-radius: 0 999px 999px 0; }
+.z1 { background: #8b93a1; } .z2 { background: var(--blue); } .z3 { background: var(--green); }
+.z4 { background: var(--yellow); } .z5 { background: var(--red); }
+.zone-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 0.35rem; vertical-align: 0; }
+.hr-curve { position: relative; width: 120px; cursor: crosshair; }
+.hr-curve .spark { height: 34px; margin-top: 0; }
+.hr-curve::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: var(--x, 0); width: 1px;
+  background: var(--text-primary); opacity: 0; pointer-events: none;
+}
+.hr-curve.is-hover::after { opacity: 0.6; }
+.route-thumb { width: 72px; height: 44px; opacity: 0.85; }
+.fix-form { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; display: flex; gap: 0.4rem; }
+
+/* Programme: the week as planned, and one card per session type. */
+.plan-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.4rem; }
+@media (max-width: 767px) {
+  .plan-week { grid-template-columns: repeat(7, 7.2rem); overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 0.3rem; }
+  .plan-day { scroll-snap-align: start; }
+}
+.plan-day {
+  position: relative; border-radius: 14px; padding: 0.6rem 0.55rem 0.55rem; min-width: 0;
+  background: var(--surface-2); border: 1px solid transparent; transition: border-color 0.2s, background 0.2s;
+}
+.plan-day::before { content: ""; position: absolute; left: 10px; right: 10px; top: 0; height: 2px; border-radius: 0 0 3px 3px; background: var(--day); opacity: 0.7; }
+.plan-day.is-rest::before { display: none; }
+@media (hover: hover) { .plan-day:hover { border-color: color-mix(in srgb, var(--day) 45%, transparent); } }
+.plan-day.is-today { background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.plan-name { font-size: 0.62rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.plan-day.is-today .plan-name { color: var(--accent-text); }
+.plan-icon {
+  display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; margin: 0.4rem 0 0.35rem;
+  color: var(--day); background: color-mix(in srgb, var(--day) 16%, transparent);
+}
+.plan-day.is-rest .plan-icon { color: var(--muted); background: transparent; border: 1px dashed var(--border); }
+.plan-label { font-size: 0.74rem; font-weight: 600; line-height: 1.2; color: var(--text-primary); }
+.plan-day.is-rest .plan-label { color: var(--muted); font-weight: 500; }
+.plan-meta { font-size: 0.66rem; color: var(--muted); margin-top: 0.15rem; }
+.plan-level {
+  display: inline-block; margin-top: 0.35rem; font-size: 0.62rem; font-weight: 700; padding: 0.05rem 0.4rem;
+  border-radius: 999px; color: var(--day); background: color-mix(in srgb, var(--day) 14%, transparent);
+}
+.prog-block::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 70px; border-radius: 16px 16px 0 0; pointer-events: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--day) 12%, transparent), transparent);
+}
+.move-row { border-radius: 10px; padding-left: 0.4rem; padding-right: 0.4rem; margin: 0 -0.4rem; transition: background 0.15s; }
+@media (hover: hover) { .move-row:hover { background: var(--surface-2); } }
+
+/* Trophies: metal per tier, a medal with its progress ring, filters. */
+.tier-bronze { --tier: #d08a4a; --tier-2: #8a5124; }
+.tier-silver { --tier: #b9c4d0; --tier-2: #6d7a88; }
+.tier-gold { --tier: #f2c14e; --tier-2: #b07d12; }
+.tier-platinum { --tier: #a9c7ff; --tier-2: #8a6cf0; }
+.trophy-hero::before {
+  content: ""; position: absolute; inset: 0; border-radius: 16px; pointer-events: none;
+  background: radial-gradient(60% 120% at 0% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+              radial-gradient(50% 120% at 100% 100%, color-mix(in srgb, var(--violet) 14%, transparent), transparent 70%);
+}
+.medals { display: flex; gap: 0.6rem; }
+.medal-count { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; outline: none; cursor: help; }
+.medal-disc {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff8 0, transparent 35%), linear-gradient(135deg, var(--tier), var(--tier-2));
+  box-shadow: 0 4px 14px -4px var(--tier), inset 0 0 0 2px color-mix(in srgb, #fff 25%, transparent);
+}
+.trophy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.6rem; }
+.trophy {
+  position: relative; display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 1rem 0.7rem 0.85rem; border-radius: 14px; background: var(--surface-2);
+  border: 1px solid transparent; outline: none; cursor: help; transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+.trophy[hidden] { display: none; }
+@media (hover: hover) {
+  .trophy:hover { border-color: color-mix(in srgb, var(--tier) 55%, transparent); box-shadow: 0 12px 28px -16px var(--tier); }
+}
+.trophy:focus-visible { border-color: var(--tier); }
+.trophy-medal {
+  --pct: 100; position: relative; width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: conic-gradient(var(--tier) calc(var(--pct) * 1%), var(--grid) 0);
+  animation: ring-fill 1.2s cubic-bezier(.2,.8,.2,1) backwards;
+}
+.trophy-medal > span {
+  width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; font-size: 1.6rem;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, #fff 35%, transparent) 0, transparent 40%),
+              linear-gradient(135deg, color-mix(in srgb, var(--tier) 70%, var(--surface-1)), color-mix(in srgb, var(--tier-2) 70%, var(--surface-1)));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, #fff 18%, transparent);
+}
+.is-won .trophy-medal { box-shadow: 0 8px 22px -8px var(--tier); }
+.trophy-medal.is-locked > span { background: var(--surface-1); filter: grayscale(1); opacity: 0.55; }
+.trophy.is-locked .text-sm { color: var(--text-secondary); }
+.trophy-tier { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tier); margin-top: 0.2rem; }
+.tier-gold.is-won .trophy-medal > span, .tier-platinum.is-won .trophy-medal > span { position: relative; overflow: hidden; }
+.tier-gold.is-won .trophy-medal > span::after, .tier-platinum.is-won .trophy-medal > span::after {
+  content: ""; position: absolute; inset: -40%; transform: translateX(-120%) rotate(25deg);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, #fff 55%, transparent), transparent);
+  animation: shine 4.5s ease-in-out infinite;
+}
+@keyframes shine { 0%, 70% { transform: translateX(-120%) rotate(25deg); } 100% { transform: translateX(120%) rotate(25deg); } }
+.trophy-new {
+  position: absolute; top: 0.45rem; right: 0.45rem; font-size: 0.58rem; font-weight: 750; letter-spacing: 0.05em;
+  text-transform: uppercase; padding: 0.1rem 0.4rem; border-radius: 999px; color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent), var(--violet));
+}
+.near { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem; border-radius: 12px; background: var(--surface-2); }
+.near .trophy-medal { width: 52px; height: 52px; }
+.near .trophy-medal > span { width: 42px; height: 42px; font-size: 1.25rem; }
+.filter-chip {
+  font-size: 0.72rem; font-weight: 550; padding: 0.25rem 0.65rem; border-radius: 999px;
+  color: var(--text-secondary); background: var(--surface-2); border: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.filter-chip[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .trophy-medal { animation: none; }
+  .tier-gold.is-won .trophy-medal > span::after, .tier-platinum.is-won .trophy-medal > span::after { animation: none; display: none; }
+}
+.trophy-hero .pop { bottom: auto; top: calc(100% + 8px); }
+/* Phone widths: a session card never wider than the screen (a long
+   option in a select would push it), a trophy's card as wide as itself. */
+.prog-block { min-width: 0; }
+.prog-block select, .prog-block input { max-width: 100%; }
+.trophy > .pop { left: 0; right: 0; width: auto; max-width: none; transform: translateY(4px) scale(0.97); }
+.trophy.has-pop:hover > .pop, .trophy.has-pop:focus > .pop { transform: translateY(0) scale(1); }
+/* Menus that float over the page: solid, so what is under never shows. */
+.card.absolute { background: var(--surface-1-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }

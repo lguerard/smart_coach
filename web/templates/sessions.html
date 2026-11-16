@@ -7,6 +7,23 @@
 {% endblock %}
 
 {% block content %}
+{% set sm = summary %}
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+  {% for ic, label, value, unit, colour, series, info in [
+      ('dumbbell', 'Séances', sm.count, '', 'accent', sm.count_weeks, 'Séances enregistrées sur 30 jours, toutes activités.'),
+      ('timer', 'Minutes', sm.minutes, 'min', 'orange', sm.minutes_weeks, "Temps d'activité sur 30 jours."),
+      ('flame', 'Calories actives', sm.kcal, 'kcal', 'red', sm.kcal_weeks, 'Calories dépensées pendant les séances, selon la montre (elle les surestime souvent).'),
+      ('heart-pulse', 'Pouls moyen', sm.avg_hr, 'bpm', 'magenta', sm.hr_weeks, 'Pouls moyen des séances avec cardio.'),
+  ] %}
+  <div class="metric has-pop" tabindex="0" style="--metric-color: var(--{{ colour }});">
+    <p class="caption">{{ icon(ic, 13) }}<span class="truncate">{{ label }}</span></p>
+    <p class="metric-value">{% if value is none %}<span style="color: var(--muted);">–</span>{% else %}{{ value }}{% if unit %}<span class="metric-unit">{{ unit }}</span>{% endif %}{% endif %}</p>
+    {{ sparkline(series) }}
+    <div class="pop" role="tooltip">{{ info }}<br><span style="color: var(--muted);">La courbe : semaine par semaine, sur 8 semaines.</span></div>
+  </div>
+  {% endfor %}
+</div>
+
 
 <div id="notes" class="card p-4" style="scroll-margin-top: 4.5rem;">
   <h2 class="card-title mb-1">{{ icon('target', 16) }} Noter mes séances</h2>
@@ -86,73 +103,97 @@
   {% endif %}
 </div>
 
-<p class="text-xs px-1" style="color: var(--muted);">
-  La categorie vient de l'auto-detection Garmin (parfois peu fiable pour
-  le tapis/calisthenie) -- la duree et la date sont toujours exactes.
-  Corrige-la si besoin.
-</p>
-
-<div class="card divide-y" style="border-color: var(--border);">
-  {% for s in sessions %}
-  <div id="session-{{ s.uuid }}" class="p-4 relative" style="border-color: var(--border); scroll-margin-top: 1rem;">
-    <div class="flex items-center justify-between gap-3">
-      <div class="min-w-0">
-        <p class="text-sm font-medium truncate">
-          {{ s.title if s.title else (s.date ~ " - " ~ s.duration_min ~ " min") }}
-        </p>
-        <p class="text-xs mt-0.5 capitalize" style="color: var(--muted);">
-          {% if s.title %}{{ s.date }} - {{ s.duration_min }} min - {% endif %}
-          {{ "categorie" if s.is_corrected else "categorie Garmin" }} : {{ s.label }}
-          {% if s.rpe %} - RPE {{ s.rpe }}{% endif %}
-        </p>
-        {% if s.avg_hr or s.kcal %}
+{% for week in weeks %}
+<section class="card p-4 session-week">
+  <div class="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+    <h2 class="card-title">{{ icon('calendar', 16) }} {{ week.label }}</h2>
+    <p class="text-xs num" style="color: var(--muted);">
+      <strong style="color: var(--text-primary);">{{ week.sessions | length }}</strong> séance{{ 's' if week.sessions | length > 1 }}
+      · <strong style="color: var(--text-primary);">{{ week.minutes }}</strong> min
+      {% if week.kcal %}· <strong style="color: var(--text-primary);">{{ week.kcal }}</strong> kcal{% endif %}
+    </p>
+  </div>
+  <ul class="session-list">
+    {% for s in week.sessions %}
+    <li id="session-{{ s.uuid }}" class="session-row" style="--day: var(--{{ s.style.colour }});">
+      <span class="session-icon">{{ icon(s.style.icon, 18) }}</span>
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-semibold truncate">{{ s.title or s.label | capitalize }}</p>
         <p class="text-xs mt-0.5" style="color: var(--muted);">
-          {% if s.avg_hr %}&#10084; {{ s.avg_hr }} bpm moy / {{ s.max_hr }} max{% endif %}
-          {% if s.avg_hr and s.kcal %} - {% endif %}
-          {% if s.kcal %}{{ s.kcal }} kcal{% endif %}
+          {{ day_label(s.date) | capitalize }} · {{ s.start_hm }}
+          · <span class="capitalize">{{ s.label }}</span>{% if not s.is_corrected %} <span title="Catégorie détectée par Garmin, parfois peu fiable pour le tapis et la calisthénie">(Garmin)</span>{% endif %}
         </p>
-        {% endif %}
-        {% if s.notes %}
-        <p class="text-xs mt-1" style="color: var(--text-secondary);">{{ s.notes }}</p>
-        {% endif %}
+        <div class="flex flex-wrap gap-1.5 mt-1.5">
+          <span class="chip">{{ icon('timer', 12) }}<span class="num">{{ s.duration_min }}</span> min</span>
+          {% if s.avg_hr %}<span class="chip" style="--chip: var(--red);">{{ icon('heart-pulse', 12) }}<span class="num">{{ s.avg_hr }}</span> moy · <span class="num">{{ s.max_hr }}</span> max</span>{% endif %}
+          {% if s.kcal %}<span class="chip" style="--chip: var(--orange);">{{ icon('flame', 12) }}<span class="num">{{ s.kcal }}</span> kcal</span>{% endif %}
+          {% if s.rpe %}<span class="chip" style="--chip: var(--violet);">RPE <span class="num">{{ s.rpe }}</span></span>{% endif %}
+        </div>
         {% if s.hr_zones %}
-        <div class="flex mt-2 rounded-full overflow-hidden" style="height: 6px; max-width: 220px;">
-          {% set zone_colors = ["#6b7280", "#3b82f6", "#22c55e", "#eab308", "#ef4444"] %}
-          {% for pct in s.hr_zones %}
-          {% if pct > 0 %}
-          <div style="width: {{ pct }}%; background: {{ zone_colors[loop.index0] }};" title="Z{{ loop.index }}: {{ pct }}%"></div>
-          {% endif %}
-          {% endfor %}
+        {% set zone_names = ['Z1 · très facile', 'Z2 · endurance', 'Z3 · tempo', 'Z4 · seuil', 'Z5 · maximum'] %}
+        <div class="zone-bar has-pop mt-2" tabindex="0">
+          {% for pct in s.hr_zones %}{% if pct > 0 %}<span class="z{{ loop.index }}" style="width: {{ pct }}%;"></span>{% endif %}{% endfor %}
+          <span class="pop left" role="tooltip"><strong>Temps par zone cardiaque</strong><br>
+            {% for pct in s.hr_zones %}{% if pct > 0 %}<span class="zone-dot z{{ loop.index }}"></span>{{ zone_names[loop.index0] }} : <strong>{{ pct | round | int }} %</strong><br>{% endif %}{% endfor %}</span>
         </div>
         {% endif %}
+        {% if s.notes %}<p class="text-xs mt-1.5" style="color: var(--text-secondary);">{{ s.notes }}</p>{% endif %}
       </div>
-      {% if s.route_points %}
-      <svg viewBox="0 0 100 60" class="shrink-0" style="width: 60px; height: 36px; opacity: 0.8;">
-        <polyline points="{{ s.route_points }}" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-      </svg>
-      {% endif %}
-      <details class="shrink-0">
-        <summary class="text-xs px-2 py-1 rounded-full border cursor-pointer list-none"
-          style="border-color: var(--border); color: var(--accent-text);">
-          corriger
-        </summary>
-        <form method="post" action="/sessions/{{ s.uuid }}/label"
-          class="absolute mt-2 mr-4 right-4 flex gap-2 card p-2" style="z-index: 5;">
-          <input name="label" placeholder="{{ s.auto_label }}" value="{{ s.label if s.is_corrected else '' }}"
-            class="rounded-lg border px-2 py-1 text-xs bg-transparent w-32" style="border-color: var(--border);">
-          <button type="submit" class="text-xs px-2 py-1 rounded-lg " style="background: var(--accent); color: var(--on-accent);">OK</button>
-        </form>
-      </details>
-    </div>
-  </div>
-  {% else %}
-  <p class="p-5 text-sm text-center" style="color: var(--muted);">Aucune seance enregistree.</p>
-  {% endfor %}
-</div>
+      <div class="session-side">
+        {% if s.hr_curve %}
+        <div class="hr-curve" data-curve="{{ s.hr_curve | tojson | forceescape }}" data-minutes="{{ s.duration_min }}" style="--metric-color: var(--red);">
+          {{ sparkline(s.hr_curve) }}
+        </div>
+        {% elif s.route_points %}
+        <svg viewBox="0 0 100 60" class="route-thumb" aria-hidden="true">
+          <polyline points="{{ s.route_points }}" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+        </svg>
+        {% endif %}
+        <details class="relative">
+          <summary class="text-xs link cursor-pointer list-none">corriger</summary>
+          <form method="post" action="/sessions/{{ s.uuid }}/label" class="fix-form card p-2">
+            <input name="label" placeholder="{{ s.auto_label }}" value="{{ s.label if s.is_corrected else '' }}"
+              class="rounded-lg border px-2 py-1 text-xs w-32" style="border-color: var(--border);">
+            <button type="submit" class="btn btn-primary btn-sm">OK</button>
+          </form>
+        </details>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<div class="card p-5 text-sm text-center" style="color: var(--muted);">Aucune séance enregistrée.</div>
+{% endfor %}
 
 {% endblock %}
 
 {% block scripts %}
+<div id="hr-tip" class="float-tip" role="tooltip" hidden></div>
+<script>
+  // A session's heart-rate line: the minute and the pulse under the pointer.
+  (() => {
+    const tip = document.getElementById('hr-tip');
+    document.querySelectorAll('.hr-curve').forEach((box) => {
+      const curve = JSON.parse(box.dataset.curve);
+      const minutes = Number(box.dataset.minutes) || curve.length;
+      const lo = Math.min(...curve), hi = Math.max(...curve);
+      box.addEventListener('pointermove', (e) => {
+        const r = box.getBoundingClientRect();
+        const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+        const i = Math.round(t * (curve.length - 1));
+        tip.textContent = `${Math.round(t * minutes)} min · ${curve[i]} bpm` +
+          (curve[i] === hi ? ' · le plus haut' : curve[i] === lo ? ' · le plus bas' : '');
+        tip.hidden = false;
+        tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, e.clientX - tip.offsetWidth / 2)) + 'px';
+        tip.style.top = (r.top - tip.offsetHeight - 8) + 'px';
+        box.style.setProperty('--x', (t * 100) + '%');
+        box.classList.add('is-hover');
+      });
+      box.addEventListener('pointerleave', () => { tip.hidden = true; box.classList.remove('is-hover'); });
+    });
+  })();
+</script>
 {% if route_features %}
 <script>
 const routeFeatures = {{ route_features|tojson }};

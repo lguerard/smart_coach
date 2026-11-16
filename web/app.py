@@ -122,6 +122,7 @@ templates = Jinja2Templates(
 # old copy fetches the new one after an update instead of keeping it.
 THEME_VERSION = hashlib.sha256(
     (APP_DIR / "static" / "theme.css").read_bytes()).hexdigest()[:10]
+templates.env.globals.update(session_style=SESSION_STYLE)
 templates.env.globals.update(icon=icon, session_badge=session_badge,
                              move_art=move_art, theme_version=THEME_VERSION)
 
@@ -1726,6 +1727,87 @@ def _route_svg_points(
     return " ".join(points)
 
 
+# Activity name or category -> (icon, colour, kind label) for the
+# Sessions list: the plan's own sessions first, then common activities.
+_ACTIVITY_STYLES = (
+    (("marche", "walk", "rando", "hik"), ("walk", "aqua")),
+    (("course", "run", "footing"), ("footprints", "orange")),
+    (("velo", "vélo", "bik", "cycl"), ("activity", "blue")),
+    (("nat", "swim"), ("droplet", "blue")),
+    (("yoga", "pilates", "mobil"), ("activity", "violet")),
+    (("muscu", "strength", "renfo", "weight", "calisth", "circuit"), ("dumbbell", "violet")),
+)
+
+
+def _activity_style(title: Optional[str], label: Optional[str]) -> dict:
+    """``{icon, colour}`` for one activity, from its name or category."""
+    kind = done_sessions.detected_type(title, label)
+    if kind:
+        icon_name, colour = SESSION_STYLE.get(kind, ("target", "accent"))
+        return {"icon": icon_name, "colour": colour}
+    text = f"{title or ''} {label or ''}".lower()
+    for words, (icon_name, colour) in _ACTIVITY_STYLES:
+        if any(w in text for w in words):
+            return {"icon": icon_name, "colour": colour}
+    return {"icon": "zap", "colour": "accent"}
+
+
+def _hr_curve(conn, user_id: int, uuid: str, points: int = 48) -> list:
+    """The session's heart rate, averaged down to ``points`` values."""
+    bpm = [r[0] for r in conn.execute(
+        "SELECT bpm FROM exercise_hr_samples WHERE user_id = ? AND "
+        "exercise_uuid = ? ORDER BY epoch_utc", (user_id, uuid))]
+    if len(bpm) < 4:
+        return []
+    size = max(1, len(bpm) // points)
+    return [round(sum(bpm[i:i + size]) / len(bpm[i:i + size]))
+            for i in range(0, len(bpm), size)]
+
+
+def _session_weeks(items: list) -> list:
+    """The list cut in weeks (Monday first), newest first, with totals."""
+    weeks: dict = {}
+    for item in items:
+        day = dt.date.fromisoformat(item["date"])
+        monday = (day - dt.timedelta(days=day.weekday())).isoformat()
+        week = weeks.setdefault(monday, {"monday": monday, "sessions": [],
+                                         "minutes": 0, "kcal": 0})
+        week["sessions"].append(item)
+        week["minutes"] += item["duration_min"] or 0
+        week["kcal"] += item["kcal"] or 0
+    for week in weeks.values():
+        monday = dt.date.fromisoformat(week["monday"])
+        week["label"] = f"Semaine du {monday.day} {_MONTHS_FR[monday.month - 1]}"
+    return list(weeks.values())
+
+
+def _session_summary(items: list, today: str) -> dict:
+    """The last 30 days in four numbers, and 8 weeks of each as a line."""
+    since = (dt.date.fromisoformat(today) - dt.timedelta(days=29)).isoformat()
+    recent = [i for i in items if i["date"] >= since]
+    hrs = [i["avg_hr"] for i in recent if i["avg_hr"]]
+    monday = dt.date.fromisoformat(today) - dt.timedelta(
+        days=dt.date.fromisoformat(today).weekday())
+    weeks = []
+    for k in range(7, -1, -1):
+        start = (monday - dt.timedelta(weeks=k)).isoformat()
+        end = (monday - dt.timedelta(weeks=k - 1)).isoformat()
+        weeks.append([i for i in items if start <= i["date"] < end])
+    return {
+        "count": len(recent),
+        "minutes": sum(i["duration_min"] or 0 for i in recent),
+        "kcal": sum(i["kcal"] or 0 for i in recent),
+        "avg_hr": round(sum(hrs) / len(hrs)) if hrs else None,
+        "count_weeks": [len(w) for w in weeks],
+        "minutes_weeks": [sum(i["duration_min"] or 0 for i in w) for w in weeks],
+        "kcal_weeks": [sum(i["kcal"] or 0 for i in w) for w in weeks],
+        "hr_weeks": [
+            (round(sum(i["avg_hr"] for i in w if i["avg_hr"])
+                   / len([i for i in w if i["avg_hr"]]))
+             if any(i["avg_hr"] for i in w) else None) for w in weeks],
+    }
+
+
 @app.get("/sessions", response_class=HTMLResponse)
 def sessions(request: Request) -> HTMLResponse:
     """Browsable table of recent exercise sessions."""
@@ -1780,6 +1862,9 @@ def sessions(request: Request) -> HTMLResponse:
                 if max_hr_est and hr else []
             ),
             "route_points": _route_svg_points(conn, user_id, row["uuid"]),
+            "style": _activity_style(row["title"], row["label_override"] or auto_label),
+            "hr_curve": _hr_curve(conn, user_id, row["uuid"]),
+            "start_hm": start.astimezone(metrics.local_tz(conn, user_id)).strftime("%H:%M"),
         })
 
     # Join every GPS-tracked session (all history) back to its own
@@ -1831,6 +1916,9 @@ def sessions(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "sessions.html", {
             "sessions": items, "route_features": route_features,
+            "weeks": _session_weeks(items),
+            "day_label": date_label_fr,
+            "summary": _session_summary(items, today_str(conn, user_id)),
             "rateable": training.rateable_sessions(
                 conn, user_id, today_str(conn, user_id),
             ),
@@ -1995,6 +2083,48 @@ def data_page(request: Request) -> HTMLResponse:
 
 # --- Achievements ---
 
+# Trophies by theme, from their key: the page's filter.
+_TROPHY_GROUPS = (
+    ("regularite", "Régularité", ("streak", "comeback", "deload", "perfect_week",
+                                  "no_red", "serial", "tenure", "first_sync", "sessions_")),
+    ("seances", "Séances", ("level_", "_master", "training_hours", "calories_burned")),
+    ("nutrition", "Nutrition", ("protein", "hydration", "nutrition")),
+    ("sommeil", "Sommeil et récup", ("sleep", "hrv", "readiness", "rhr")),
+    ("bouger", "Pas et distance", ("steps", "distance", "elevation", "floors", "step_goal")),
+    ("corps", "Corps", ("weight_", "body_fat", "lean", "recomp", "weigh_in")),
+    ("garmin", "Garmin", ("garmin:",)),
+)
+# A name for the player level, so the number means something.
+_RANKS = ((1, "Recrue"), (3, "Régulier"), (6, "Athlète"), (10, "Machine"),
+          (15, "Élite"), (20, "Légende"))
+
+
+def _trophy_page(items: list, today: str) -> dict:
+    """Group, near-done and recent trophies, tier counts."""
+    for item in items:
+        item["group"] = next((key for key, _, words in _TROPHY_GROUPS
+                              if any(w in item["key"] for w in words)), "regularite")
+        item["new"] = bool(item["unlocked"] and item["unlocked_at"] and (
+            dt.date.fromisoformat(today)
+            - dt.date.fromisoformat(item["unlocked_at"][:10])).days <= 7)
+    # Reached but not unlocked yet: the check runs with the morning.
+    for item in items:
+        item["reached"] = bool(not item["unlocked"] and item["progress"]
+                               and item["progress"]["pct"] >= 100)
+    near = sorted((i for i in items if not i["unlocked"] and i["progress"]
+                   and 0 < i["progress"]["pct"] < 100),
+                  key=lambda i: -i["progress"]["pct"])[:3]
+    tiers = {}
+    for tier in ("bronze", "silver", "gold", "platinum"):
+        mine = [i for i in items if i["tier"] == tier]
+        tiers[tier] = {"won": sum(i["unlocked"] for i in mine), "total": len(mine)}
+    groups = [(key, label, sum(1 for i in items if i["group"] == key))
+              for key, label, _ in _TROPHY_GROUPS]
+    return {"near": near, "tiers": tiers,
+            "reached": [i for i in items if i.get("reached")],
+            "groups": [g for g in groups if g[2]]}
+
+
 @app.get("/achievements", response_class=HTMLResponse)
 def achievements_page(request: Request) -> HTMLResponse:
     """Xbox-style achievement grid: unlocked first, then locked (with
@@ -2004,10 +2134,14 @@ def achievements_page(request: Request) -> HTMLResponse:
     user_id = current_user_id(request)
     date = today_str(conn, user_id)
     items = achievements.all_achievements_with_status(conn, user_id, date)
+    level = achievements.player_level(conn, user_id)
+    rank = [name for at, name in _RANKS if level["level"] >= at][-1]
+    next_rank = next(((at, name) for at, name in _RANKS if at > level["level"]), None)
     return templates.TemplateResponse(
         request, "achievements.html", {
             "items": items, "score": achievements.score(conn, user_id),
-            "player_level": achievements.player_level(conn, user_id),
+            "player_level": level, "rank": rank, "next_rank": next_rank,
+            **_trophy_page(items, date),
             "xp_ledger": achievements.xp_ledger_entries(
                 conn, user_id, limit=100,
             ),
@@ -2104,8 +2238,29 @@ def programme_page(request: Request) -> HTMLResponse:
     """Edit the circuits: own moves in, library moves out."""
     conn = get_conn()
     user_id = current_user_id(request)
+    # The week as planned, today marked: the same days the watch and
+    # the agenda get (a session moved to tomorrow included).
+    today = today_str(conn, user_id)
+    monday = dt.date.fromisoformat(today) - dt.timedelta(
+        days=dt.date.fromisoformat(today).weekday())
+    week = []
+    for k in range(7):
+        day = (monday + dt.timedelta(days=k)).isoformat()
+        template = missed_sessions.day_template(conn, user_id, day)
+        kind = template.get("session_type")
+        icon_name, colour = SESSION_STYLE.get(kind or "rest", ("target", "accent"))
+        week.append({
+            "name": _DAYS_FR[k], "num": int(day[8:10]), "today": day == today,
+            "label": training.SESSION_LABEL_FR.get(kind, template.get("title") or "Repos")
+                     if kind else "Repos",
+            "start": template.get("start") if kind else None,
+            "minutes": template.get("duration_min") if kind else None,
+            "level": training.get_level(conn, user_id, kind) if kind else None,
+            "icon": icon_name, "colour": colour, "rest": not kind,
+        })
     return templates.TemplateResponse(
         request, "programme.html", {
+            "week": week, "level_max": training.LEVEL_MAX,
             "blocks": _programme_blocks(conn, user_id),
             "picker": custom_moves.GARMIN_PICKER,
             "session_label_fr": training.SESSION_LABEL_FR,

@@ -13,6 +13,17 @@
     programme suivent ton niveau ; ceux que tu ajoutes gardent la quantité
     que tu choisis.
   </p>
+  <div class="plan-week mt-4" aria-label="Ta semaine">
+    {% for d in week %}
+    <div class="plan-day{{ ' is-today' if d.today }}{{ ' is-rest' if d.rest }}" style="--day: var(--{{ d.colour }});">
+      <p class="plan-name">{{ d.name[:3] }} <span class="num">{{ d.num }}</span></p>
+      <span class="plan-icon">{{ icon(d.icon, 17) }}</span>
+      <p class="plan-label">{{ d.label }}</p>
+      {% if d.start %}<p class="plan-meta num">{{ d.start }} · {{ d.minutes }} min</p>{% endif %}
+      {% if d.level is not none %}<span class="plan-level num">niv. {{ d.level }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
 </div>
 
 {% if error %}
@@ -63,10 +74,20 @@
 
 <div class="grid gap-4 lg:grid-cols-2 items-start">
 {% for b in blocks %}
-<section class="card p-4">
-  <div class="flex items-center justify-between gap-2">
-    <h2 class="card-title">{{ session_badge(b.type, b.label) }}</h2>
-    <span class="text-xs" style="color: var(--muted);">niveau {{ b.level }}</span>
+{% set bstyle = session_style.get(b.type, ('target', 'accent')) %}
+<section class="card p-4 prog-block" style="--day: var(--{{ bstyle[1] }});">
+  <div class="flex items-center justify-between gap-3">
+    <div class="flex items-center gap-3 min-w-0">
+      <span class="session-icon">{{ icon(bstyle[0], 20) }}</span>
+      <div class="min-w-0">
+        <h2 class="text-base font-semibold truncate">{{ b.label }}</h2>
+        <p class="text-xs" style="color: var(--muted);">{{ b.library | rejectattr('removed') | list | length + b.own | length }} mouvements</p>
+      </div>
+    </div>
+    <div class="ring ring-sm has-pop" tabindex="0" style="--size: 50px; --pct: {{ (b.level or 0) * 100 / level_max }}; --ring-color: var(--day); --ring-hole: var(--surface-1);">
+      <div class="ring-inner"><span class="ring-value" style="font-size: 0.95rem;">{{ b.level }}</span><span class="ring-label" style="font-size: 0.5rem;">niveau</span></div>
+      <span class="pop" role="tooltip" style="left: auto; right: 0; transform: none;"><strong>Niveau {{ b.level }} sur {{ level_max }}</strong> : il monte quand la séance est faite sans difficulté ou notée « trop facile », et redescend après une pause.</span>
+    </div>
   </div>
   <p class="text-xs mt-2 p-2.5 rounded-lg" style="background: var(--surface-2); color: var(--text-secondary);">{{ b.summary }}</p>
 
@@ -82,12 +103,12 @@
   <p class="caption mt-4 mb-1.5">Mouvements du programme</p>
   <ul class="divide-y" style="border-color: var(--border);">
     {% for m in b.library %}
-    <li class="py-1.5 flex items-center justify-between gap-2" style="border-color: var(--border);">
+    <li class="move-row py-1.5 flex items-center justify-between gap-2" style="border-color: var(--border);">
       <div class="min-w-0 flex items-center gap-3">
         {% if not m.removed %}{{ move_art(m.key, 52, m.name) }}{% endif %}
         <div class="min-w-0">
         <p class="text-sm {{ 'line-through' if m.removed }}" style="{{ 'color: var(--muted);' if m.removed }}">
-          {{ m.name }} <span class="text-xs" style="color: var(--muted);">{{ m.amount }}{% if m.fixed %} · fixé depuis Garmin{% endif %}</span>
+          {{ m.name }} {% if not m.removed %}<span class="chip" style="--chip: var(--day);"><span class="num">{{ m.amount }}</span></span>{% endif %}{% if m.fixed %} <span class="text-xs" style="color: var(--muted);">· fixé depuis Garmin</span>{% endif %}
         </p>
         {% if m.cue and not m.removed %}
         <details class="text-xs mt-0.5">
@@ -120,7 +141,7 @@
   {% if b.own %}
   <ul class="divide-y" style="border-color: var(--border);">
     {% for m in b.own %}
-    <li class="py-1.5 flex items-start justify-between gap-2" style="border-color: var(--border);">
+    <li class="move-row py-1.5 flex items-start justify-between gap-2" style="border-color: var(--border);">
       <div class="min-w-0">
         <p class="text-sm">{{ m.name }}
           <span class="text-xs" style="color: var(--muted);">{{ m.amount }}{{ ' s' if m.unit == 'sec' else ' reps' }} ·
