@@ -181,7 +181,8 @@ def start_job(user_id: int, events: AsyncIterator[dict],
         except Exception as error:  # noqa: BLE001 -- the reader is told
             print(f"assistant: user {user_id}: {type(error).__name__}: {error}")
             job.push({"type": "error", "text": text(
-                _language_of(user_id), "unreachable")})
+                _language_of(user_id), "internal").format(
+                    detail=type(error).__name__)})
         finally:
             try:
                 await events.aclose()
@@ -268,8 +269,17 @@ TEXTS = {
         "deadline": "Le modèle local a mis trop de temps à répondre "
                     "(il est peut-être occupé par une autre tâche). "
                     "Réessaie dans un moment.",
-        "unreachable": "Impossible de joindre le modèle local. Réessaie "
-                       "dans un moment.",
+        "unreachable": "Impossible de joindre le modèle local ({url}) : "
+                       "Ollama est arrêté, ou le conteneur du coach n'est "
+                       "pas sur son réseau. Réessaie dans un moment.",
+        "model_missing": "Le modèle « {model} » n'est pas installé dans "
+                         "Ollama. Sur le serveur : docker exec <conteneur "
+                         "ollama> ollama pull {model}",
+        "model_error": "Le modèle local a renvoyé une erreur : {detail}",
+        "cut": "Le modèle local a coupé sa réponse en cours (redémarré ou "
+               "occupé ailleurs). Réessaie dans un moment.",
+        "internal": "Erreur interne du coach ({detail}). Elle est notée "
+                    "dans les journaux du serveur.",
         "empty": "Le modèle n'a rien répondu. Reformule ta question ?",
         "final_round": "Dernier tour : plus d'outils. Réponds maintenant "
                        "avec ce que tu as déjà, recommandation comprise.",
@@ -282,8 +292,17 @@ TEXTS = {
         "too_long": "Message too long: please shorten your question.",
         "deadline": "The local model took too long to answer (it may be "
                     "busy with another job). Try again in a moment.",
-        "unreachable": "Could not reach the local model. Try again in a "
-                       "moment.",
+        "unreachable": "Could not reach the local model ({url}): Ollama "
+                       "is down, or the coach's container is not on its "
+                       "network. Try again in a moment.",
+        "model_missing": "The model \"{model}\" is not installed in Ollama. "
+                         "On the server: docker exec <ollama container> "
+                         "ollama pull {model}",
+        "model_error": "The local model returned an error: {detail}",
+        "cut": "The local model cut its answer short (restarted or busy "
+               "elsewhere). Try again in a moment.",
+        "internal": "Internal error in the coach ({detail}). It is in the "
+                    "server logs.",
         "empty": "The model gave no answer. Could you rephrase?",
         "final_round": "Last round: no more tools. Answer now with what "
                        "you already have, recommendation included.",
@@ -2147,6 +2166,25 @@ def action_label(name: str, data: dict, language: str) -> str:
     return name
 
 
+def explain_error(language: str, error: Exception) -> str:
+    """What went wrong with Ollama, in words the person can act on:
+    unreachable (network), the model not installed, an error from the
+    model itself, an answer cut short."""
+    import httpx
+
+    if isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return text(language, "unreachable").format(url=OLLAMA_URL or "?")
+    if isinstance(error, (httpx.ReadError, httpx.RemoteProtocolError)):
+        return text(language, "cut")
+    message = str(error)
+    if "not found" in message and ("model" in message or "404" in message):
+        return text(language, "model_missing").format(model=MODEL)
+    if isinstance(error, httpx.HTTPError):
+        return text(language, "unreachable").format(url=OLLAMA_URL or "?")
+    detail = message.removeprefix("ollama").strip(" :")[:160] or type(error).__name__
+    return text(language, "model_error").format(detail=detail)
+
+
 def make_client():
     """The HTTP client for Ollama (the self-check swaps in a fake)."""
     import httpx
@@ -2296,8 +2334,8 @@ async def chat_events(
     except TimeoutError:
         yield {"type": "error", "text": text(language, "deadline")}
     except (httpx.HTTPError, RuntimeError, ValueError) as error:
-        print(f"assistant: user {user_id}: {error}")
-        yield {"type": "error", "text": text(language, "unreachable")}
+        print(f"assistant: user {user_id}: {type(error).__name__}: {error}")
+        yield {"type": "error", "text": explain_error(language, error)}
     finally:
         if own_client:
             await client.aclose()

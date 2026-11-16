@@ -397,9 +397,37 @@ tool_text = json.dumps([m for m in seen[1]["messages"] if m["role"] == "tool"],
                        ensure_ascii=False)
 assert "poulet b" in tool_text and "poulet a" not in tool_text
 
-# Ollama down, and the deadline: a clean error in the user's language.
+# Ollama failing, and the deadline: a clean error in the user's
+# language, that says which failure it is.
 events, _ = asyncio.run(collect(A, question, [500]))
-assert events[-2] == {"type": "error", "text": assistant.text("fr", "unreachable")}
+assert events[-2]["type"] == "error" and "erreur" in events[-2]["text"] \
+    and "boom" in events[-2]["text"], events[-2]
+
+
+async def failing(raise_or_respond):
+    async def handler(request):
+        return raise_or_respond(request)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return [e async for e in assistant.chat_events(A, "alice", question, client=client)]
+
+
+def down(request):
+    raise httpx.ConnectError("Name or service not known", request=request)
+
+
+def missing(request):
+    return httpx.Response(404, json={"error": f"model '{assistant.MODEL}' not found"})
+
+
+def cut(request):
+    raise httpx.RemoteProtocolError("peer closed connection", request=request)
+
+
+said = asyncio.run(failing(down))[-2]["text"]
+assert said.startswith("Impossible de joindre") and assistant.OLLAMA_URL in said, said
+said = asyncio.run(failing(missing))[-2]["text"]
+assert f"ollama pull {assistant.MODEL}" in said, said
+assert "coupé" in asyncio.run(failing(cut))[-2]["text"]
 assistant.DEADLINE_SEC = 0.3
 events, _ = asyncio.run(collect(A, question, [words("trop tard")], delay=1.0))
 assert events[-2] == {"type": "error", "text": assistant.text("fr", "deadline")}, events
