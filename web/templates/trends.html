@@ -34,17 +34,17 @@
 </div>
 {% endif %}
 
-<div class="card p-4">
+<div class="card p-4 jump" id="pas">
   <h2 class="font-semibold text-sm mb-3">Pas -- 30 jours</h2>
   <div style="height: 200px;"><canvas id="stepsChart"></canvas></div>
 </div>
 
-<div class="card p-4">
+<div class="card p-4 jump" id="fc-repos">
   <h2 class="font-semibold text-sm mb-3">FC repos -- 30 jours</h2>
   <div style="height: 200px;"><canvas id="rhrChart"></canvas></div>
 </div>
 
-<div class="card p-4">
+<div class="card p-4 jump" id="sommeil">
   <h2 class="font-semibold text-sm mb-1">Score de sommeil -- 30 jours</h2>
   <p class="text-xs mb-3" style="color: var(--muted);">
     La ligne : le score de la montre. Les points : ce que tu as dit le
@@ -53,13 +53,28 @@
   <div style="height: 200px;"><canvas id="sleepChart"></canvas></div>
 </div>
 
-<div class="card p-4">
+<div class="card p-4 jump" id="recuperation">
   <h2 class="font-semibold text-sm mb-1">Recuperation Garmin -- 30 jours</h2>
   <p class="text-xs mb-3" style="color: var(--muted);">
     VFC (variabilite de la frequence cardiaque, en ms) et score de
     preparation Garmin (0-100) -- absents avant la synchro Garmin.
   </p>
   <div style="height: 200px;"><canvas id="recoveryChart"></canvas></div>
+</div>
+
+<div class="card p-4 jump" id="hydratation">
+  <h2 class="font-semibold text-sm mb-1">Hydratation -- 30 jours</h2>
+  <p class="text-xs mb-3" style="color: var(--muted);">En litres ; la ligne pointillée : ton objectif.</p>
+  <div style="height: 200px;"><canvas id="waterChart"></canvas></div>
+</div>
+
+<div class="card p-4 jump" id="stress">
+  <h2 class="font-semibold text-sm mb-1">Stress et Body Battery -- 30 jours</h2>
+  <p class="text-xs mb-3" style="color: var(--muted);">
+    Barres : l'énergie rechargée (au-dessus) et dépensée (en dessous) chaque jour.
+    Ligne : le stress moyen (0-25 repos, 26-50 bas, 51-75 moyen, 76+ élevé).
+  </p>
+  <div style="height: 220px;"><canvas id="stressChart"></canvas></div>
 </div>
 
 <div class="card p-4">
@@ -76,9 +91,12 @@
   </p>
   {% if latest_load %}
   <div class="grid grid-cols-3 gap-2 mb-3">
-    <div class="stat-tile"><div class="stat-value">{{ "%.0f"|format(latest_load.ctl) }}</div><div class="stat-label">Forme (CTL)</div></div>
-    <div class="stat-tile"><div class="stat-value">{{ "%.0f"|format(latest_load.atl) }}</div><div class="stat-label">Fatigue (ATL)</div></div>
-    <div class="stat-tile"><div class="stat-value">{{ "%+.0f"|format(latest_load.tsb) }}</div><div class="stat-label">Forme nette (TSB)</div></div>
+    <div class="stat-tile has-pop" tabindex="0"><div class="stat-value">{{ "%.0f"|format(latest_load.ctl) }}</div><div class="stat-label">Forme (CTL)</div>
+      <div class="pop left" role="tooltip">Ta charge moyenne des 42 derniers jours : ce que ton corps a l'habitude d'encaisser. Elle monte lentement quand tu t'entraînes régulièrement.</div></div>
+    <div class="stat-tile has-pop" tabindex="0"><div class="stat-value">{{ "%.0f"|format(latest_load.atl) }}</div><div class="stat-label">Fatigue (ATL)</div>
+      <div class="pop" role="tooltip">Ta charge des 7 derniers jours : elle réagit vite, à chaque grosse séance.</div></div>
+    <div class="stat-tile has-pop" tabindex="0"><div class="stat-value">{{ "%+.0f"|format(latest_load.tsb) }}</div><div class="stat-label">Forme nette (TSB)</div>
+      <div class="pop" role="tooltip" style="left: auto; right: 0; transform: none;">Forme moins fatigue. Positif : reposé, prêt à pousser. Un peu négatif : tu progresses. Très négatif (sous −20) : risque de trop en faire.</div></div>
   </div>
   {% endif %}
   <div style="height: 200px;"><canvas id="loadChart"></canvas></div>
@@ -164,6 +182,35 @@ new Chart(document.getElementById('recoveryChart'), {
       y: { grid: { color: grid }, position: 'left' },
       y1: { position: 'right', grid: { display: false }, suggestedMin: 0, suggestedMax: 100 },
     } },
+});
+
+new Chart(document.getElementById('waterChart'), {
+  type: 'bar',
+  data: { labels: dates, datasets: [
+    { label: 'Eau (L)', data: {{ water_values|tojson }}, backgroundColor: css.getPropertyValue('--blue'), borderRadius: 4, maxBarThickness: 10 },
+    {% if water_target %}
+    { type: 'line', label: 'Objectif', data: dates.map(() => {{ '%.2f' % water_target }}), borderColor: muted,
+      borderWidth: 1, borderDash: [4,4], pointRadius: 0 },
+    {% endif %}
+  ]},
+  options: { plugins: { legend: { display: false } },
+    scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
+              y: { grid: { color: grid }, suggestedMin: 0 } } },
+});
+
+new Chart(document.getElementById('stressChart'), {
+  data: { labels: dates, datasets: [
+    { type: 'bar', label: 'Rechargée', data: {{ charged_values|tojson }}, yAxisID: 'y',
+      backgroundColor: css.getPropertyValue('--aqua'), borderRadius: 3, maxBarThickness: 10, stack: 'b' },
+    { type: 'bar', label: 'Dépensée', data: {{ drained_values|tojson }}, yAxisID: 'y',
+      backgroundColor: css.getPropertyValue('--orange'), borderRadius: 3, maxBarThickness: 10, stack: 'b' },
+    { type: 'line', label: 'Stress moyen', data: {{ stress_values|tojson }}, yAxisID: 'y1',
+      borderColor: css.getPropertyValue('--yellow'), borderWidth: 2, pointRadius: 0, tension: 0.3, spanGaps: true },
+  ]},
+  options: { plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } },
+    scales: { x: { stacked: true, grid: { display: false }, ticks: { maxTicksLimit: 6 } },
+              y: { stacked: true, grid: { color: grid } },
+              y1: { position: 'right', grid: { display: false }, suggestedMin: 0, suggestedMax: 100 } } },
 });
 
 const levelColors = { treadmill: c1, lower_body: c2, upper_body: c3, calisthenics: c4 };

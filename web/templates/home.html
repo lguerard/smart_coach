@@ -17,15 +17,14 @@
 {% macro metric(ic, label, value, unit="", color="text-primary", key=None) %}
 {% set t = tiles.get(key) if key and tiles is defined else none %}
 {% set liters = key == 'hydration_ml_today' %}
-<div class="metric{{ ' has-pop' if t }}" style="--metric-color: var(--{{ color }});" {{ 'tabindex="0"' | safe if t }}>
+{% set jump = {'steps_today': 'pas', 'resting_hr': 'fc-repos', 'sleep_score': 'sommeil',
+               'hydration_ml_today': 'hydratation', 'training_readiness_score': 'recuperation',
+               'hrv_last_night_avg': 'recuperation', 'body_battery_charged': 'stress',
+               'stress_avg_level': 'stress'}.get(key) %}
+<div class="metric{{ ' has-pop' if t }}" style="--metric-color: var(--{{ color }});" {{ 'tabindex="0"' | safe if t }}{% if jump %} data-href="/trends#{{ jump }}"{% endif %}>
   <p class="caption">{{ icon(ic, 13) }}<span class="truncate">{{ label }}</span></p>
   <p class="metric-value">{% if value is none %}<span style="color: var(--muted);">–</span>{% else %}{{ num(value) }}{% if unit %}<span class="metric-unit">{{ unit }}</span>{% endif %}{% endif %}{% if t and t.delta is defined and (t.delta | abs) >= 0.5 %}<span class="delta {{ 'good' if t.good else 'bad' }}">{{ '▲' if t.delta > 0 else '▼' }}{{ t.delta | abs | round | int }}</span>{% endif %}</p>
-  {% if t and t.spark %}
-  <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
-    <polyline points="{{ t.spark }}"/>
-    <circle cx="{{ t.spark.split(' ')[-1].split(',')[0] }}" cy="{{ t.spark.split(' ')[-1].split(',')[1] }}" r="2.2"/>
-  </svg>
-  {% endif %}
+  {% if t and t.spark %}{{ sparkline(t.series) }}{% endif %}
   {% if t %}
   <div class="pop" role="tooltip">
     {{ t.info }}
@@ -33,6 +32,7 @@
     <strong>{{ ((t.avg / 1000) | round(1) | string | replace('.', ',')) ~ ' L' if liters else (t.avg | round | int) ~ ((' ' ~ unit) if unit else '') }}</strong>{% endif %}
     {% if t.delta is defined and (t.delta | abs) >= 0.5 %}<br>Aujourd'hui : <strong style="color: var(--{{ 'good' if t.good else 'warning' }});">{{ '+' if t.delta > 0 }}{{ t.delta | round | int }}</strong> {{ 'mieux que' if t.good else 'moins bien que' }} d'habitude.{% endif %}
     {% if t.spark %}<br><span style="color: var(--muted);">La courbe : les 7 derniers jours.</span>{% endif %}
+    {% if jump %}<br><a class="pop-link" href="/trends#{{ jump }}">Voir 30 jours →</a>{% endif %}
   </div>
   {% endif %}
 </div>
@@ -81,17 +81,28 @@
   <div class="min-w-0">
     <div class="flex items-center justify-between mb-2">
       <p class="caption">Cette semaine</p>
-      <p class="text-xs num" style="color: var(--muted);"><strong style="color: var(--text-primary);">{{ done_week }}</strong> / {{ planned_week }} séances</p>
+      <p class="text-xs num flex items-center gap-2" style="color: var(--muted);">
+        {% if streak >= 2 %}<span class="streak has-pop" tabindex="0">{{ icon('flame', 13) }}{{ streak }}
+          <span class="pop" role="tooltip" style="left: auto; right: 0; transform: none;"><strong>{{ streak }} séances prévues faites d'affilée.</strong><br>Les jours de repos ne comptent pas ; une séance manquée remet à zéro.</span></span>{% endif %}
+        <span><strong style="color: var(--text-primary);">{{ done_week }}</strong> / {{ planned_week }} séances</span></p>
     </div>
     <ol class="week-strip" aria-label="La semaine">
       {% for d in week_strip %}
-      <li class="day has-pop is-{{ d.state }}" tabindex="0" style="--day: var(--{{ d.colour }});">
+      <li class="day has-pop is-{{ d.state }}{{ ' is-today' if d.today }}{{ ' can-act' if d.actions }}" tabindex="0" style="--day: var(--{{ d.colour }});">
         <span class="day-letter">{{ d.letter }}</span>
         <span class="day-dot">{% if d.state == 'done' %}{{ icon('check', 14) }}{% elif d.state == 'missed' %}{{ icon('x', 13) }}{% elif d.state in ('rest',) %}<span class="day-rest"></span>{% else %}{{ icon(d.icon, 14) }}{% endif %}</span>
         <span class="day-num num">{{ d.num }}</span>
-        <span class="pop {{ 'left' if loop.index0 < 2 }}" role="tooltip" {% if loop.index0 >= 5 %}style="left: auto; right: 0; transform: none;"{% endif %}>
+        <span class="pop {{ 'left' if loop.index0 < 2 }}{{ ' interactive' if d.actions }}" role="tooltip" {% if loop.index0 >= 5 %}style="left: auto; right: 0; transform: none;"{% endif %}>
           <strong>{{ d.name | capitalize }} {{ d.num }}</strong> · {{ d.label }}<br>
           {{ {'done': 'Faite', 'other': 'Autre chose que le plan', 'missed': 'Pas faite', 'rest': 'Repos', 'recovery': 'Marche de récupération', 'today': "Aujourd'hui", 'planned': 'Prévue', 'unknown': "Le coach n'a pas tourné ce jour-là"}[d.state] }}
+          {% if d.actions %}
+          <form method="post" action="/missed" class="day-actions">
+            <input type="hidden" name="date" value="{{ d.date }}">
+            {% for a in d.actions %}
+            <button name="choice" value="{{ a }}" class="btn btn-sm {{ 'btn-primary' if a == 'nowatch' }}">{{ {'nowatch': 'Faite', 'none': 'Pas faite', 'tomorrow': 'Demain'}[a] }}</button>
+            {% endfor %}
+          </form>
+          {% endif %}
         </span>
       </li>
       {% endfor %}
@@ -113,8 +124,18 @@
     </div>
     {% endif %}
 
+    {# ---------- To do: every question waiting for an answer, in one card ---------- #}
+    {% set todo_count = (1 if ask_sleep and not sleep_felt else 0) + (1 if pending_feedback else 0)
+                        + (1 if progress_offer else 0) + (1 if heavier_bell and not progress_offer else 0) %}
+    {% if todo_count or ask_sleep %}
+    <div class="card p-4 todo-card {{ 'all-done' if not todo_count }}">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="card-title">{{ icon('check', 16) }} {{ 'À faire' if todo_count else 'Tout est à jour' }}</h2>
+        {% if todo_count %}<span class="todo-count num">{{ todo_count }}</span>{% endif %}
+      </div>
+      <div class="todo-list">
     {% if ask_sleep %}
-    <div class="card p-4" id="sommeil" {% if not sleep_felt %}style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);"{% endif %}>
+    <div class="todo-item {{ 'is-done' if sleep_felt }}" id="sommeil">
       <form method="post" action="/sleep" class="flex flex-wrap items-center justify-between gap-2">
         <p class="text-sm font-semibold">{{ icon('moon', 15) }}
           {% if sleep_felt %}Ta nuit : {{ {'good': 'bien dormi', 'ok': 'nuit normale', 'bad': 'mal dormi'}[sleep_felt] }}{% else %}Comment as-tu dormi ?{% endif %}</p>
@@ -133,7 +154,7 @@
     {% endif %}
 
     {% if pending_feedback %}
-    <div class="card p-4" style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);">
+    <div class="todo-item">
       <p class="text-sm font-semibold">
         Comment était la séance
         {{ session_label_fr_map.get(pending_feedback.session_type, pending_feedback.session_type) | lower }}
@@ -167,7 +188,7 @@
 
 {% if progress_offer %}
     {% set po = progress_offer %}
-    <div class="card p-4 text-sm" id="progression" style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);">
+    <div class="todo-item text-sm" id="progression">
       <p class="card-title">{{ icon('kettlebell', 16) }} Trop facile : plus lourd ou plus long ?</p>
       <p class="text-xs mt-1" style="color: var(--text-secondary);">
         Ta séance {{ po.label | lower }} du {{ po.date[8:10] }}/{{ po.date[5:7] }} était trop facile.
@@ -192,13 +213,16 @@
     {% endif %}
 
 {% if heavier_bell and not progress_offer %}
-    <div class="card p-4 text-sm" style="border-color: color-mix(in srgb, var(--accent) 50%, transparent);">
+    <div class="todo-item text-sm">
       <p class="card-title">{{ icon('kettlebell', 16) }} Tu plafonnes à {{ '%g' % heavier_bell.current }} kg</p>
       <p class="text-xs mt-1" style="color: var(--text-secondary);">
         {{ heavier_bell.types | join(', ') }} : tu es en haut de la progression avec ce poids.
         Passe à une kettlebell de {{ '%g' % heavier_bell.next }} kg, puis indique-la dans
         <a href="/settings" class="link">Réglages</a> : les niveaux repartiront plus bas pour démarrer en douceur.
       </p>
+    </div>
+    {% endif %}
+      </div>
     </div>
     {% endif %}
 
@@ -463,7 +487,10 @@
     {% if recovery_fig %}
     <div class="card p-5">
       <h2 class="card-title mb-2">{{ icon('flame', 16) }} Récupération musculaire</h2>
-      {{ body_figure(recovery_fig) }}
+      <div class="muscle-map">{{ body_figure(recovery_fig) }}</div>
+      <div id="muscle-detail" class="muscle-detail" aria-live="polite">
+        <p class="text-xs text-center" style="color: var(--muted);">{{ icon('target', 12) }} Touche un muscle pour le détail.</p>
+      </div>
       <div class="flex flex-wrap justify-center gap-3 text-xs mt-2" style="color: var(--muted);">
         <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-hot"/></svg> fatigué</span>
         <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-warm"/></svg> en récupération</span>
@@ -603,7 +630,9 @@
         <span class="text-right" style="color: var(--muted);">{{ s.detail }}</span>
       </div>
       {% endfor %}
-      <p class="text-xs mt-3" style="color: var(--muted);">
+      <details class="fold mt-3">
+      <summary class="text-xs link cursor-pointer">Comment c'est calculé ?</summary>
+      <p class="text-xs mt-2" style="color: var(--muted);">
         Vert quand rien n'est rouge et que peu de signaux sont moyens
         (batterie et stress comptent pour moitié) ; rouge sur une FC de
         repos ou une VFC alarmante, deux « trop dure », ou deux signaux
@@ -614,6 +643,7 @@
         seulement — les autres n'ont pas de donnée aujourd'hui.
         {% endif %}
       </p>
+      </details>
       {% if assistant.enabled and entry and entry.status %}
       {% set colour = {'green': 'vert', 'yellow': 'jaune', 'red': 'rouge'}.get(entry.status, entry.status) %}
       <button type="button" class="text-xs link mt-2" data-assistant-open
@@ -669,10 +699,11 @@
     {% endif %}
 
     {% if desk_break and desk_break['items'] %}
-    <div class="card p-4">
-      <h2 class="card-title mb-1">{{ icon('laptop', 16) }} Pause bureau
-        <span class="text-xs font-normal ml-auto" style="color: var(--muted);">~{{ desk_break.total_min }} min, silencieux</span>
-      </h2>
+    <details class="card p-4 fold">
+      <summary class="card-title cursor-pointer list-none">{{ icon('laptop', 16) }} Pause bureau
+        <span class="text-xs font-normal ml-auto" style="color: var(--muted);">~{{ desk_break.total_min }} min · {{ desk_break['items'] | length }} mouvements</span>
+        <span class="fold-chevron">{{ icon('chevron-down', 14) }}</span>
+      </summary>
       {% if desk_break.gentle_only %}
       <p class="text-xs mb-2" style="color: var(--muted);">Journée douce : mobilité et respiration seulement.</p>
       {% endif %}
@@ -689,7 +720,7 @@
       {% for note in desk_break.notes %}
       <p class="text-xs mt-2" style="color: var(--text-secondary);">{{ note }}</p>
       {% endfor %}
-    </div>
+    </details>
     {% endif %}
   </aside>
 </div>
@@ -716,6 +747,57 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+  // Body map: a muscle tapped (or pointed at) says how tired it is,
+  // from what, and when it is ready again.
+  (() => {
+    const info = {{ muscle_info | tojson }};
+    const box = document.getElementById('muscle-detail');
+    if (!box) return;
+    const words = { fatigued: 'fatigué', recovering: 'en récupération', ready: 'prêt' };
+    const colour = { fatigued: 'critical', recovering: 'warning', ready: 'good' };
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    let pinned = null;
+    const show = (key) => {
+      const m = info[key];
+      if (!m) return;
+      document.querySelectorAll('.muscle-map path.is-picked').forEach((p) => p.classList.remove('is-picked'));
+      document.querySelectorAll(`.muscle-map path[data-muscle="${key}"]`).forEach((p) => p.classList.add('is-picked'));
+      const state = !m.worked && m.state === 'ready' ? 'pas travaillé cette semaine' : words[m.state];
+      box.innerHTML =
+        `<div class="flex items-baseline justify-between gap-2">
+           <span class="text-sm font-semibold">${esc(m.label)}</span>
+           <span class="text-xs font-semibold" style="color: var(--${colour[m.state]});">${esc(state)}</span>
+         </div>
+         <div class="fatigue-bar mt-1.5"><span style="width: ${m.pct}%; background: var(--${colour[m.state]});"></span></div>
+         <p class="text-xs mt-1.5" style="color: var(--text-secondary);">` +
+        (m.cause ? `Surtout ${esc(m.cause.toLowerCase())}${m.when ? ', ' + esc(m.when) : ''}. ` : '') +
+        (m.ready_in ? `Prêt dans environ <strong>${esc(m.ready_in)}</strong>.` : (m.worked ? 'Prêt à travailler.' : 'Rien ne l\'a sollicité ces 7 derniers jours.')) +
+        `</p>`;
+    };
+    document.querySelectorAll('.muscle-map path[data-muscle]').forEach((p) => {
+      p.addEventListener('click', () => { pinned = p.dataset.muscle; show(pinned); });
+      p.addEventListener('mouseenter', () => show(p.dataset.muscle));
+      p.addEventListener('mouseleave', () => { if (pinned) show(pinned); });
+    });
+  })();
+</script>
+<script>
+  // A tile opens its 30-day chart: a click on a computer; on a phone
+  // the first tap shows what it is, the link in it goes on.
+  (() => {
+    const hover = matchMedia('(hover: hover)').matches;
+    document.querySelectorAll('.metric[data-href]').forEach((tile) => {
+      tile.addEventListener('click', (e) => {
+        if (e.target.closest('a')) return;
+        if (hover) location.href = tile.dataset.href;
+      });
+      tile.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') location.href = tile.dataset.href;
+      });
+    });
+  })();
+</script>
 <script>
   (() => {
     const buttons = document.querySelectorAll('[data-period]');

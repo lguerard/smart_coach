@@ -58,7 +58,7 @@ def figure(gender: str, classes: dict, titles: dict) -> dict:
 
     Returns:
         dict: ``{"front"|"back": {"viewBox": str, "parts": [{d, cls,
-        title}]}}``, or ``{}`` when the path file is missing (the
+        title, key}]}}`` (``key`` the muscle, None for the body outline), or ``{}`` when the path file is missing (the
         template then shows nothing).
     """
     views = _paths().get(gender) or {}
@@ -70,7 +70,8 @@ def figure(gender: str, classes: dict, titles: dict) -> dict:
             cls = classes.get(muscle, "bm-base") if muscle else "bm-body"
             title = titles.get(muscle, "") if muscle else ""
             for d in part["paths"]:
-                parts.append({"d": d, "cls": cls, "title": title})
+                parts.append({"d": d, "cls": cls, "title": title,
+                              "key": muscle})
         out[side] = {"viewBox": " ".join(f"{v:g}" for v in view["viewBox"]),
                      "parts": parts}
     return out

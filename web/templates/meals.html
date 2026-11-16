@@ -86,10 +86,21 @@
   </p>
   <div class="grid grid-cols-4 gap-2 mt-3">
     {% for key, label, unit, color in [('kcal', 'Calories', '', 'orange'), ('protein_g', 'Protéines', 'g', 'accent'), ('carbs_g', 'Glucides', 'g', 'blue'), ('fat_g', 'Lipides', 'g', 'yellow')] %}
-    <div class="metric" style="--metric-color: var(--{{ color }});">
+    {% set ikey = 'calories_kcal' if key == 'kcal' else key %}
+    {% set series = week_intake | map(attribute=ikey, default=none) | list %}
+    {% set known = series | reject('none') | list %}
+    <div class="metric has-pop" tabindex="0" style="--metric-color: var(--{{ color }});">
       <p class="caption">{{ label }}</p>
       <p class="metric-value" style="font-size: 1.15rem;">{{ g[key] }}<span class="metric-unit">{{ unit }}</span></p>
       {% if g.saved and g.saved[key] != g[key] %}<p class="text-[10px] num" style="color: var(--muted);">avant {{ g.saved[key] }}</p>{% endif %}
+      {{ sparkline(series) }}
+      <div class="pop" role="tooltip">
+        <strong>Objectif : {{ g[key] }} {{ unit or 'kcal' }}</strong> par jour.
+        {% if known %}<br>Les 7 derniers jours, tu as mangé en moyenne
+        <strong>{{ ((known | sum) / (known | length)) | round | int }} {{ unit or 'kcal' }}</strong>
+        ({{ known | length }} jour{{ 's' if known | length > 1 }} noté{{ 's' if known | length > 1 }}).{% endif %}
+        <br><span style="color: var(--muted);">La courbe : ce que tu as noté chaque jour.</span>
+      </div>
     </div>
     {% endfor %}
   </div>

@@ -9,7 +9,7 @@
     <svg viewBox="{{ fig[side].viewBox }}" style="height: {{ height }}px; width: auto;" role="img"
       aria-label="{{ 'Vue de face' if side == 'front' else 'Vue de dos' }}">
       {% for p in fig[side].parts %}
-      <path d="{{ p.d }}" class="{{ p.cls }}">{% if p.title %}<title>{{ p.title }}</title>{% endif %}</path>
+      <path d="{{ p.d }}" class="{{ p.cls }}"{% if p.key %} data-muscle="{{ p.key }}"{% endif %}>{% if p.title %}<title>{{ p.title }}</title>{% endif %}</path>
       {% endfor %}
     </svg>
     <figcaption class="text-xs" style="color: var(--muted);">{{ 'face' if side == 'front' else 'dos' }}</figcaption>

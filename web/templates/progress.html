@@ -152,10 +152,11 @@
 {% endif %}
 
 <div class="grid grid-cols-2 gap-3">
-  <div class="card p-4">
-    <p class="text-xs" style="color: var(--muted);">Poids (14j)</p>
+  <div class="card p-4 big-stat has-pop" tabindex="0" style="--metric-color: var(--blue);">
+    <div class="pop left" role="tooltip">Moyenne de tes pesées des 14 derniers jours, comparée aux 14 jours d'avant : une moyenne gomme l'eau et le repas de la veille.<br><span style="color: var(--muted);">La courbe : tes 28 dernières pesées.</span></div>
+    <p class="caption">Poids (14j)</p>
     {% if bundle.weight_trend_14d %}
-    <p class="text-2xl font-semibold mt-1">
+    <p class="text-2xl font-semibold mt-1 big-num">
       {{ bundle.weight_trend_14d.current_avg }} kg
     </p>
     <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if bundle.weight_trend_14d.delta < 0 else 'var(--text-secondary)' }};">
@@ -194,11 +195,13 @@
       Sur {{ wp.recent_step.days }}j : {{ '%+.2f'|format(wp.recent_step.change) }} kg
     </p>
     {% endif %}
+    {{ sparkline(weight_values[-28:]) if weight_values is defined else '' }}
   </div>
-  <div class="card p-4">
-    <p class="text-xs" style="color: var(--muted);">Balance calorique (7j)</p>
+  <div class="card p-4 big-stat has-pop" tabindex="0" style="--metric-color: var(--orange);">
+    <div class="pop left" role="tooltip">Ce que tu as mangé moins ce que tu as dépensé, en moyenne par jour noté. Négatif = déficit : c'est ce qui fait baisser le poids.<br><span style="color: var(--muted);">La courbe : les calories notées chaque jour.</span></div>
+    <p class="caption">Balance calorique (7j)</p>
     {% if bundle.calorie_balance_7d %}
-    <p class="text-2xl font-semibold mt-1">
+    <p class="text-2xl font-semibold mt-1 big-num">
       {{ '%+d'|format(bundle.calorie_balance_7d.avg_balance_kcal) }} kcal/j
     </p>
     <p class="text-xs mt-0.5" style="color: var(--muted);">
@@ -207,22 +210,26 @@
     {% else %}
     <p class="text-sm mt-1" style="color: var(--muted);">Pas encore de nutrition loguee</p>
     {% endif %}
+    {{ sparkline(calorie_values[-7:]) if calorie_values is defined else '' }}
   </div>
-  <div class="card p-4">
-    <p class="text-xs" style="color: var(--muted);">Proteines (7j)</p>
+  <div class="card p-4 big-stat has-pop" tabindex="0" style="--metric-color: var(--aqua);">
+    <div class="pop left" role="tooltip">Protéines par jour sur la semaine. Assez de protéines, c'est ce qui garde le muscle pendant que le poids baisse.<br><span style="color: var(--muted);">La courbe : jour par jour.</span></div>
+    <p class="caption">Proteines (7j)</p>
     {% if bundle.protein_7d %}
-    <p class="text-2xl font-semibold mt-1">{{ bundle.protein_7d.avg_protein_g }} g/j</p>
+    <p class="text-2xl font-semibold mt-1 big-num">{{ bundle.protein_7d.avg_protein_g }} g/j</p>
     {% if bundle.protein_7d.target_g %}
     <p class="text-xs mt-0.5" style="color: var(--muted);">objectif {{ bundle.protein_7d.target_g }} g/j</p>
     {% endif %}
     {% else %}
     <p class="text-sm mt-1" style="color: var(--muted);">Pas encore de nutrition loguee</p>
     {% endif %}
+    {{ sparkline(protein_values[-7:]) if protein_values is defined else '' }}
   </div>
-  <div class="card p-4">
-    <p class="text-xs" style="color: var(--muted);">Masse grasse (28j)</p>
+  <div class="card p-4 big-stat has-pop" tabindex="0" style="--metric-color: var(--magenta);">
+    <div class="pop left" role="tooltip">Moyenne des 28 derniers jours de la balance, comparée aux 28 d'avant. Les balances à impédance varient beaucoup d'un jour à l'autre : seule la tendance compte.</div>
+    <p class="caption">Masse grasse (28j)</p>
     {% if bundle.body_fat_trend_28d %}
-    <p class="text-2xl font-semibold mt-1">{{ bundle.body_fat_trend_28d.current_avg }} %</p>
+    <p class="text-2xl font-semibold mt-1 big-num">{{ bundle.body_fat_trend_28d.current_avg }} %</p>
     <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if bundle.body_fat_trend_28d.delta < 0 else 'var(--text-secondary)' }};">
       {{ '%+.2f'|format(bundle.body_fat_trend_28d.delta) }} pt vs periode precedente
     </p>
@@ -230,10 +237,11 @@
     <p class="text-sm mt-1" style="color: var(--muted);">Pas assez de donnees</p>
     {% endif %}
   </div>
-  <div class="card p-4">
-    <p class="text-xs" style="color: var(--muted);">Masse maigre (28j)</p>
+  <div class="card p-4 big-stat has-pop" tabindex="0" style="--metric-color: var(--green);">
+    <div class="pop left" role="tooltip">Tout ce qui n'est pas de la graisse (muscle, eau, os). Si elle tient pendant que le poids baisse, tu perds bien de la graisse et pas du muscle.</div>
+    <p class="caption">Masse maigre (28j)</p>
     {% if bundle.lean_mass_trend_28d %}
-    <p class="text-2xl font-semibold mt-1">{{ bundle.lean_mass_trend_28d.current_avg }} kg</p>
+    <p class="text-2xl font-semibold mt-1 big-num">{{ bundle.lean_mass_trend_28d.current_avg }} kg</p>
     <p class="text-xs mt-0.5" style="color: {{ 'var(--good)' if bundle.lean_mass_trend_28d.delta >= 0 else 'var(--critical)' }};">
       {{ '%+.2f'|format(bundle.lean_mass_trend_28d.delta) }} kg -- {{ "muscle maintenu" if bundle.lean_mass_trend_28d.delta >= 0 else "attention muscle" }}
     </p>

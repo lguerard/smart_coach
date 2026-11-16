@@ -221,6 +221,33 @@ def week_sessions(conn: sqlite3.Connection, user_id: int, date: str) -> dict:
     return {"planned": len(rows), "done": done}
 
 
+def streak(conn: sqlite3.Connection, user_id: int, date: str,
+           max_days: int = 120) -> int:
+    """Planned training sessions done in a row, up to ``date``.
+
+    Counted back from ``date``: rest, recovery and unplanned days are
+    skipped, a planned session done adds one, the first one missed ends
+    it. Today counts once done, and never breaks it before then.
+    """
+    rows = conn.execute(
+        "SELECT c.local_date, c.session_type FROM coach_log c WHERE c.user_id = ? "
+        "AND c.local_date BETWEEN ? AND ? AND COALESCE(c.tier, 'train') = 'train' "
+        "AND c.session_type IS NOT NULL AND c.id = (SELECT MAX(id) FROM coach_log "
+        "WHERE user_id = c.user_id AND local_date = c.local_date) "
+        "ORDER BY c.local_date DESC", (user_id, _plus(date, -max_days), date),
+    ).fetchall()
+    count = 0
+    for row in rows:
+        known = done_sessions.done_on(conn, user_id, row["local_date"])
+        done = bool(known) and known["session_type"] not in (
+            done_sessions.NOTHING, done_sessions.OTHER)
+        if done:
+            count += 1
+        elif row["local_date"] != date:
+            break
+    return count
+
+
 if __name__ == "__main__":
     import tempfile
     from pathlib import Path
@@ -323,4 +350,19 @@ if __name__ == "__main__":
     # The week: planned against done.
     week = week_sessions(conn, other, "2026-10-26")
     assert week == {"planned": 2, "done": 1}, week
+
+    # The streak: 10-20 missed, 10-22 done, rest days in between skipped.
+    assert streak(conn, other, "2026-10-26") == 1
+    for date in ("2026-10-24", "2026-10-25"):
+        conn.execute(
+            "INSERT INTO coach_log (user_id, created_at, local_date, status, "
+            "session_type, level, message, tier) VALUES (?, 'x', ?, 'green', "
+            "'lower_body', 5, 'm', 'train')", (other, date))
+    done_sessions.declare(conn, other, "2026-10-24", "lower_body", today="2026-10-24")
+    # 10-25 planned, nothing recorded, already past: the streak is over.
+    assert streak(conn, other, "2026-10-26") == 0
+    # Seen on 10-25 itself: today, not done yet, does not break it.
+    assert streak(conn, other, "2026-10-25") == 2
+    done_sessions.declare(conn, other, "2026-10-25", "lower_body", today="2026-10-25")
+    assert streak(conn, other, "2026-10-26") == 3
     print("missed_sessions.py: all checks passed")

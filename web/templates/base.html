@@ -157,6 +157,22 @@
         const text = n.toFixed(decimals).replace('.', ',');
         return sep ? text.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : text;
       };
+      // Any tile's plain number counts up too, on every page: the first
+      // bit of text of a .metric-value / .stat-value, when it is a number.
+      document.querySelectorAll('.metric-value, .stat-value, .ring-value').forEach((el) => {
+        if (el.querySelector('[data-count]')) return;
+        const node = el.firstChild;
+        if (!node || node.nodeType !== 3) return;
+        const m = node.nodeValue.match(/^\s*([+\u2212-]?)(\d[\d\u202f ]*)(?:,(\d+))?\s*$/);
+        if (!m) return;
+        const span = document.createElement('span');
+        const plain = m[2].replace(/[\u202f ]/g, '') + (m[3] ? '.' + m[3] : '');
+        span.dataset.count = plain;
+        if (m[2].length > 3) span.dataset.sep = '';
+        span.dataset.sign = m[1];
+        span.textContent = node.nodeValue.trim();
+        el.replaceChild(span, node);
+      });
       document.querySelectorAll('[data-count]').forEach((el) => {
         const target = parseFloat(el.dataset.count);
         if (!isFinite(target)) return;
@@ -165,7 +181,7 @@
         const start = performance.now(), ms = 900;
         const tick = (now) => {
           const t = Math.min(1, (now - start) / ms);
-          el.textContent = fmt(target * (1 - Math.pow(1 - t, 3)), decimals, sep);
+          el.textContent = (el.dataset.sign || '') + fmt(target * (1 - Math.pow(1 - t, 3)), decimals, sep);
           if (t < 1) requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);
@@ -178,6 +194,9 @@
       Chart.defaults.borderColor = v('--grid');
       Chart.defaults.font.family = "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif";
       Chart.defaults.font.size = 11;
+      // Every chart sits in a box of fixed height: fill its width too,
+      // instead of keeping a 2:1 shape (a 200 px box made it 400 px wide).
+      Chart.defaults.maintainAspectRatio = false;
       // Crosshair-style hover: nearest x, no need to hit the mark.
       Chart.defaults.interaction = { mode: 'index', intersect: false };
       Object.assign(Chart.defaults.plugins.tooltip, {

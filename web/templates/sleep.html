@@ -20,20 +20,27 @@
 </div>
 {% else %}
 <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-  <div class="metric" style="--metric-color: var({{ '--critical' if report.sleep_min < 360 else '--warning' if report.sleep_min < 420 else '--good' }});">
+  <div class="metric has-pop" tabindex="0" style="--metric-color: var({{ '--critical' if report.sleep_min < 360 else '--warning' if report.sleep_min < 420 else '--good' }});">
     <p class="caption">Sommeil estimé</p>
     <p class="metric-value">{{ duration(report.sleep_min) }}</p>
     <p class="text-xs" style="color: var(--muted);">par nuit · objectif 7 h à 9 h</p>
+    {{ sparkline(report.nights | reverse | map(attribute='sleep_min') | list) }}
+    <div class="pop" role="tooltip">Le temps au lit moins les réveils que Smart Coach repère au pouls, en moyenne sur les nuits enregistrées.
+      <br><span style="color: var(--muted);">La courbe : nuit par nuit.</span></div>
   </div>
-  <div class="metric" style="--metric-color: var(--muted);">
+  <div class="metric has-pop" tabindex="0" style="--metric-color: var(--muted);">
+    <div class="pop" role="tooltip">Le sommeil compté par la montre. Elle manque souvent les réveils courts : Smart Coach les cherche dans le pouls.</div>
     <p class="caption">Selon la montre</p>
     <p class="metric-value">{{ duration(report.watch_sleep_min) }}</p>
     <p class="text-xs" style="color: var(--muted);">{{ duration(report.in_bed_min) }} au lit</p>
   </div>
-  <div class="metric" style="--metric-color: var(--orange);">
+  <div class="metric has-pop" tabindex="0" style="--metric-color: var(--orange);">
+    <div class="pop" role="tooltip">Un réveil probable : le pouls monte quelques minutes au-dessus de la nuit, souvent quand tu te lèves.
+      <br><span style="color: var(--muted);">La courbe : réveils par nuit.</span></div>
     <p class="caption">Réveils probables</p>
     <p class="metric-value">{{ ('%g' % report.wakes_per_night).replace('.', ',') if report.wakes_per_night is not none else '–' }}</p>
     <p class="text-xs" style="color: var(--muted);">par nuit</p>
+    {% if report.wakes_per_night is not none %}{{ sparkline(report.nights | reverse | map(attribute='wakes') | map('length') | list) }}{% endif %}
   </div>
   <div class="metric" style="--metric-color: var(--blue);">
     <p class="caption">Coucher</p>
@@ -45,7 +52,8 @@
     <p class="metric-value">{{ report.wake.median }}</p>
     <p class="text-xs" style="color: var(--muted);">en médiane</p>
   </div>
-  <div class="metric" style="--metric-color: var({{ '--critical' if report.debt_min >= 420 else '--warning' if report.debt_min > 0 else '--good' }});">
+  <div class="metric has-pop" tabindex="0" style="--metric-color: var({{ '--critical' if report.debt_min >= 420 else '--warning' if report.debt_min > 0 else '--good' }});">
+    <div class="pop" role="tooltip">Ce qu'il manque sur une semaine pour dormir 7 h 30 par nuit, au rythme de tes nuits actuelles. Au-delà de 7 h de manque, la récupération en pâtit.</div>
     <p class="caption">Manque sur 7 nuits</p>
     <p class="metric-value">{{ duration(report.debt_min) }}</p>
     <p class="text-xs" style="color: var(--muted);">par rapport à 7 h 30</p>

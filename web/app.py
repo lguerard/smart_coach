@@ -17,6 +17,7 @@ path except /login and /static behind having a valid session.
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 import webauthn
+from markupsafe import Markup
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import (
     HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
@@ -528,7 +530,7 @@ def _week_strip(conn, user_id: int, date: str, today_entry, today_tier) -> list[
     days = []
     for k in range(7):
         day = (monday + dt.timedelta(days=k)).isoformat()
-        kind, label, state = None, "Repos", "rest"
+        kind, label, state, actions = None, "Repos", "rest", []
         if day < date:
             log = conn.execute(
                 "SELECT session_type, tier FROM coach_log WHERE user_id = ? AND "
@@ -557,6 +559,8 @@ def _week_strip(conn, user_id: int, date: str, today_entry, today_tier) -> list[
             else:
                 kind, state = planned, "missed"
                 label = training.SESSION_LABEL_FR.get(planned, planned)
+                # Said "done" after all; "not done" only when unsaid.
+                actions = ["nowatch"] + ([] if known else ["none"])
         elif day == date:
             state = "today"
             if today_tier == "rest":
@@ -566,6 +570,13 @@ def _week_strip(conn, user_id: int, date: str, today_entry, today_tier) -> list[
             elif today_entry and today_entry["session_type"]:
                 kind = today_entry["session_type"]
                 label = training.SESSION_LABEL_FR.get(kind, kind)
+                known = done_sessions.done_on(conn, user_id, day)
+                if known and known["session_type"] in training.SESSION_LABEL_FR:
+                    state = "done"
+                elif not known or known["session_type"] is None:
+                    actions = ["nowatch", "none"] + (
+                        ["tomorrow"] if missed_sessions.can_postpone(conn, user_id, day)
+                        else [])
             else:
                 template = missed_sessions.day_template(conn, user_id, day)
                 kind = template.get("session_type") or "rest"
@@ -579,7 +590,8 @@ def _week_strip(conn, user_id: int, date: str, today_entry, today_tier) -> list[
         days.append({
             "date": day, "letter": "LMMJVSD"[k], "num": int(day[8:10]),
             "name": _DAYS_FR[k], "label": label, "state": state,
-            "icon": ic, "colour": colour,
+            "icon": ic, "colour": colour, "actions": actions,
+            "today": day == date,
         })
     return days
 
@@ -642,6 +654,23 @@ def _spark(values: list) -> Optional[str]:
                     for i, v in known)
 
 
+def sparkline(values: list) -> Markup:
+    """A small line of ``values`` (oldest first) for any tile; empty
+    with fewer than two known points. Coloured by the tile's
+    ``--metric-color`` (theme.css ``.spark``)."""
+    points = _spark(list(values))
+    if not points:
+        return Markup("")
+    x, y = points.split(" ")[-1].split(",")
+    return Markup(
+        '<svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" '
+        f'aria-hidden="true"><polyline points="{points}"/>'
+        f'<polyline class="dot" points="{x},{y} {x},{y}"/></svg>')
+
+
+templates.env.globals["sparkline"] = sparkline
+
+
 def _tile_week(conn, user_id: int, date: str, today: dict) -> dict:
     """Per tile key: ``info``, ``spark`` (7 days, today last), ``avg``
     (the 6 days before) and, for night readings, ``delta`` and ``good``."""
@@ -654,7 +683,7 @@ def _tile_week(conn, user_id: int, date: str, today: dict) -> dict:
         series = [float(v) if isinstance(v, (int, float)) else None for v in series]
         before = [v for v in series[:-1] if v is not None]
         avg = sum(before) / len(before) if before else None
-        tile = {"info": info, "spark": _spark(series), "avg": avg}
+        tile = {"info": info, "spark": _spark(series), "series": series, "avg": avg}
         now = series[-1]
         if compare and now is not None and avg is not None:
             delta = now - avg
@@ -810,6 +839,24 @@ def home(request: Request) -> HTMLResponse:
             fatigue["muscles"].items(), key=lambda kv: -kv[1]["fatigue"],
         ) if info["state"] != "ready"
     ]
+    # Every muscle for the body map's tap: how tired, from what, when,
+    # and in how long it is ready again (the fatigue halves every
+    # HALF_LIFE_H hours; "ready" below RECOVERING_AT).
+    muscle_info = {}
+    for m, info in fatigue["muscles"].items():
+        hours = (muscles.HALF_LIFE_H * math.log2(info["fatigue"] / muscles.RECOVERING_AT)
+                 if info["fatigue"] > muscles.RECOVERING_AT else 0)
+        muscle_info[m] = {
+            "label": muscles.MUSCLES[m], "state": info["state"],
+            "pct": min(100, round(100 * info["fatigue"] / 1.5)),
+            "cause": training.SESSION_LABEL_FR.get(
+                info.get("cause", ""), muscles.ACTIVITY_LABEL_FR.get(
+                    info.get("cause", ""), (info.get("cause") or "").replace("_", " "))),
+            "when": _day_word(info.get("cause_date"), date),
+            "ready_in": (None if not hours else
+                         f"{round(hours)} h" if hours < 36 else f"{round(hours / 24)} jours"),
+            "worked": info["week_volume"] > 0,
+        }
     # Yesterday's movement against the goals, and the silent desk break
     # picked from it -- the same two the morning message is given.
     movement = metrics.movement_summary(conn, user_id, date)
@@ -866,6 +913,7 @@ def home(request: Request) -> HTMLResponse:
             "progress_offer": progression_choice.offer(conn, user_id, date),
             "yesterday_session": yesterday_session,
             "recovery_fig": recovery_fig, "tired": tired,
+            "muscle_info": muscle_info,
             "level_reason": (
                 entry["level_reason"] if entry and "level_reason" in entry.keys()
                 else None
@@ -895,6 +943,7 @@ def home(request: Request) -> HTMLResponse:
             "tiles": _tile_week(conn, user_id, date, wellness),
             "week_strip": _week_strip(conn, user_id, date, entry, tier),
             "greeting": _greeting(conn, user_id),
+            "streak": missed_sessions.streak(conn, user_id, date),
             "target_rows": target_rows,
             "coach_score": coach_score, "player_level": player_level,
             "new_achievements_today": new_today, "in_deload": in_deload,
@@ -1568,8 +1617,34 @@ def trends(request: Request) -> HTMLResponse:
     ).fetchall()
     readiness_by_date = {r["local_date"]: r["score"] for r in readiness_rows}
 
+    # Water, stress, Body Battery: the dashboard tiles link here too.
+    # Water as the dashboard counts it: Garmin's total when it has one.
+    def by_date(sql):
+        return {r[0]: r[1] for r in conn.execute(sql, (user_id, dates[0]))}
+
+    water = by_date("SELECT local_date, SUM(volume_ml) FROM hydration WHERE "
+                    "user_id = ? AND local_date >= ? GROUP BY local_date")
+    water.update({d: v for d, v in by_date(
+        "SELECT local_date, volume_ml FROM garmin_hydration WHERE user_id = ? "
+        "AND local_date >= ?").items() if v is not None})
+    stress = by_date("SELECT local_date, avg_level FROM garmin_stress WHERE "
+                     "user_id = ? AND local_date >= ?")
+    battery = conn.execute(
+        "SELECT local_date, charged, drained FROM garmin_body_battery WHERE "
+        "user_id = ? AND local_date >= ?", (user_id, dates[0])).fetchall()
+    charged = {r["local_date"]: r["charged"] for r in battery}
+    drained = {r["local_date"]: r["drained"] for r in battery}
+
     return templates.TemplateResponse(
         request, "trends.html", {
+            "water_values": [round(water[d] / 1000, 2) if water.get(d) else None
+                             for d in dates],
+            "water_target": (progress.macro_targets(conn, user_id, date)
+                             .get("hydration_target_ml") or 0) / 1000,
+            "stress_values": [stress.get(d) for d in dates],
+            "charged_values": [charged.get(d) for d in dates],
+            "drained_values": [-drained[d] if drained.get(d) is not None else None
+                               for d in dates],
             "dates": dates,
             "steps_values": [steps_by_date.get(d) for d in dates],
             "step_goal": int(
@@ -2458,6 +2533,12 @@ def meals_page(request: Request) -> HTMLResponse:
             "mfp_text": meals.mfp_text,
             "remaining": progress.remaining_today(conn, user_id, date),
             "mfp_goal": mfp_goals.goal(conn, user_id, date),
+            # The 7 days before today, for the goal tiles' lines.
+            "week_intake": [
+                progress.intake_for_date(
+                    conn, user_id,
+                    (dt.date.fromisoformat(date) - dt.timedelta(days=n)).isoformat())
+                for n in range(7, 0, -1)],
             "fixes": nutrition_fixes.active(conn, user_id),
             "yesterday": (dt.date.fromisoformat(date)
                           - dt.timedelta(days=1)).isoformat(),

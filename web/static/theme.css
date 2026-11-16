@@ -368,10 +368,14 @@ body {
 .spark polyline {
   fill: none; stroke: var(--metric-color, var(--accent)); stroke-width: 1.8;
   stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke;
-  stroke-dasharray: 400; stroke-dashoffset: 400; animation: draw 1.4s 0.3s ease-out forwards;
 }
-.spark circle { fill: var(--metric-color, var(--accent)); }
-@keyframes draw { to { stroke-dashoffset: 0; } }
+/* Drawn left to right: the box is unveiled, the line itself never dashed
+   (a dash pattern breaks on a stretched, non-scaling line). */
+.spark { animation: unveil 1.3s 0.3s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes unveil { from { clip-path: inset(-4px 100% -4px -4px); } to { clip-path: inset(-4px -4px -4px -4px); } }
+/* The last point: a zero-length line with round caps stays a round dot
+   however the box is stretched. */
+.spark polyline.dot { stroke-width: 5; }
 .delta {
   display: inline-flex; align-items: center; gap: 0.15rem; font-size: 0.66rem; font-weight: 650;
   padding: 0.05rem 0.4rem; border-radius: 999px; margin-left: 0.35rem; vertical-align: 0.2em;
@@ -425,8 +429,7 @@ svg path[class^="bm-"] { transition: filter 0.15s, opacity 0.15s; }
 .fatigue-bar > span { display: block; height: 100%; border-radius: 999px; transform-origin: left; animation: grow 0.9s cubic-bezier(.2,.8,.2,1) both; }
 
 @media (prefers-reduced-motion: reduce) {
-  .rise, .ring, .meter-fill, .spark polyline, .fatigue-bar > span, .hero-card::before, .live-dot::after { animation: none !important; }
-  .spark polyline { stroke-dashoffset: 0; }
+  .rise, .ring, .meter-fill, .spark, .fatigue-bar > span, .hero-card::before, .live-dot::after { animation: none !important; }
   .card, .hero-card, .metric, .btn, .row-hover { transition: none !important; }
   .card:hover, .hero-card:hover, .metric:hover { transform: none !important; }
 }
@@ -532,3 +535,71 @@ body { overflow-x: clip; }
 .hero-card .chip-yellow > .pop, .hero-card .chip-red > .pop {
   bottom: auto; top: calc(100% + 8px);
 }
+
+/* "À faire": the questions waiting for an answer, one card. */
+.todo-card:not(.all-done) { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.todo-card:not(.all-done)::after {
+  content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0;
+  background: linear-gradient(var(--accent), var(--violet));
+}
+.todo-count {
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; display: grid; place-items: center;
+  font-size: 0.72rem; font-weight: 700; color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 50%, var(--violet)));
+  box-shadow: 0 4px 14px -4px var(--accent);
+}
+.todo-list { display: flex; flex-direction: column; }
+.todo-item { padding: 0.8rem 0 0.15rem; margin-top: 0.65rem; border-top: 1px solid var(--border); }
+.todo-item.is-done { order: 9; opacity: 0.8; }
+.todo-card.all-done .todo-item { padding-top: 0.6rem; }
+
+/* Tendances, opened from a dashboard tile: the chart asked for glows. */
+.jump { scroll-margin-top: 76px; }
+.jump:target { animation: spotlight 2.4s ease-out 0.3s; border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+@keyframes spotlight { 0%, 30% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent), 0 18px 40px -16px var(--accent); } }
+/* A tile that leads somewhere. */
+.metric[data-href] .pop .pop-link { display: inline-block; margin-top: 0.35rem; color: var(--accent-text); font-weight: 600; }
+@media (hover: hover) { .metric[data-href] { cursor: pointer; } }
+/* A tapped (focused) hover card takes taps itself: its link works. */
+.has-pop:focus > .pop, .has-pop:focus-within > .pop { pointer-events: auto; }
+
+/* The week's chips that take an answer (today, a missed day). */
+.week-strip .can-act { cursor: pointer; }
+.week-strip .can-act .day-dot { outline: 2px solid color-mix(in srgb, var(--day) 40%, transparent); outline-offset: 2px; }
+.pop.interactive::before { content: ""; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
+.has-pop:hover > .pop.interactive { pointer-events: auto; }
+.day-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.5rem; }
+.streak {
+  display: inline-flex; align-items: center; gap: 0.2rem; font-weight: 700; color: var(--orange);
+  padding: 0.1rem 0.45rem; border-radius: 999px; background: color-mix(in srgb, var(--orange) 15%, transparent);
+  outline: none; cursor: help;
+}
+.streak .ic { animation: flicker 1.6s ease-in-out infinite; }
+@keyframes flicker { 50% { transform: scale(1.15) rotate(-6deg); filter: drop-shadow(0 0 4px var(--orange)); } }
+@media (prefers-reduced-motion: reduce) { .streak .ic { animation: none; } }
+
+/* Folded sections: a chevron that turns. */
+.fold > summary::-webkit-details-marker { display: none; }
+.fold-chevron { display: inline-flex; transition: transform 0.2s; color: var(--muted); }
+.fold[open] .fold-chevron { transform: rotate(180deg); }
+.fold > summary.card-title { margin-bottom: 0; }
+.fold[open] > summary.card-title { margin-bottom: 0.25rem; }
+
+/* Body map: the muscle picked stays lit, its detail below. */
+.muscle-map path[data-muscle] { cursor: pointer; }
+.muscle-map path.is-picked { filter: brightness(1.3) drop-shadow(0 0 5px currentColor); opacity: 1 !important; stroke: var(--text-primary) !important; }
+.muscle-detail {
+  margin-top: 0.6rem; padding: 0.6rem 0.75rem; border-radius: 12px; min-height: 3.4rem;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.stat-tile { position: relative; transition: transform 0.2s, background 0.2s; outline: none; }
+@media (hover: hover) { .stat-tile:hover { transform: translateY(-2px); background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); } }
+
+/* Progrès: the big figures, coloured like the tiles. */
+.big-stat { overflow: visible; }
+.big-stat::before {
+  content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 2px; border-radius: 0 0 4px 4px;
+  background: var(--metric-color, var(--accent)); opacity: 0.7;
+}
+.big-stat .big-num { color: var(--metric-color, var(--text-primary)); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.big-stat { cursor: help; outline: none; }
