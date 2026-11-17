@@ -2,6 +2,23 @@
 {% block title %}Donnees - Smart Coach{% endblock %}
 {% block content %}
 
+<section class="card p-4">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="min-w-0" style="flex: 1 1 16rem;">
+      <h2 class="card-title">{{ icon('database', 16) }} Exporter toutes mes données</h2>
+      <p class="text-xs mt-1" style="color: var(--muted);">
+        Tout ce que Smart Coach a sur toi, en un fichier : séances, sommeil, repas,
+        poids, niveaux, trophées, messages… Sans tes photos de Corps, sans tes passkeys
+        ni les réglages qui ouvriraient un accès (sujet ntfy, sauvegarde).
+      </p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="/data/export.json" class="btn btn-primary btn-sm" download>{{ icon('database', 13) }} JSON</a>
+      <a href="/data/export.zip" class="btn btn-sm" download>{{ icon('copy', 13) }} CSV (tableur)</a>
+    </div>
+  </div>
+</section>
+
 <div class="flex items-center justify-between px-1">
   <p class="text-xs" style="color: var(--muted);">
     Toutes les donnees ingerees (Garmin + Health Connect), un jour par

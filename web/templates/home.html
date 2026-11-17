@@ -330,6 +330,10 @@
         <p class="text-xs mt-1.5" style="color: var(--muted);">Le conseil du coach ne change pas. Si tu te sens malade ou fiévreux, mieux vaut te reposer.</p>
       </div>
       {% endif %}
+      {% if tier in ('train', 'recovery') or anyway %}
+      <a href="/seance" class="btn btn-primary mt-3 w-full sm:w-auto" style="padding: 0.6rem 1.1rem;">{{ icon('zap', 15) }} Faire la séance guidée</a>
+      <p class="text-[11px] mt-1" style="color: var(--muted);">Sans la montre : chaque exercice à l'écran, minuteur et repos compris.</p>
+      {% endif %}
       {% if cal_note %}
       <p class="text-xs mt-2" style="color: var(--yellow);">{{ cal_note }}</p>
       {% endif %}
@@ -486,17 +490,36 @@
 
     {% if recovery_fig %}
     <div class="card p-5">
-      <h2 class="card-title mb-2">{{ icon('flame', 16) }} Récupération musculaire</h2>
-      <div class="muscle-map">{{ body_figure(recovery_fig) }}</div>
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <h2 class="card-title">{{ icon('flame', 16) }} Muscles</h2>
+        <div class="seg" role="group" aria-label="Vue">
+          <button type="button" data-map="fatigue" aria-pressed="true">Fatigue</button>
+          <button type="button" data-map="volume" aria-pressed="false">Volume 7 j</button>
+          <button type="button" data-map="neglect" aria-pressed="false">Délaissés</button>
+        </div>
+      </div>
+      <div class="muscle-map" data-map-panel="fatigue">{{ body_figure(recovery_fig) }}
+        <div class="map-legend">
+          <span><i class="bm-hot"></i> fatigué</span><span><i class="bm-warm"></i> en récupération</span>
+          <span><i class="bm-ok"></i> prêt</span><span><i class="bm-idle"></i> pas travaillé cette semaine</span>
+        </div>
+      </div>
+      <div class="muscle-map" data-map-panel="volume" hidden>{{ body_figure(volume_fig) }}
+        <div class="map-legend">
+          <span><i class="bm-v3"></i> le plus travaillé</span><span><i class="bm-v2"></i> moyen</span>
+          <span><i class="bm-v1"></i> peu</span><span><i class="bm-idle"></i> rien sur 7 jours</span>
+        </div>
+      </div>
+      <div class="muscle-map" data-map-panel="neglect" hidden>{{ body_figure(neglect_fig) }}
+        <div class="map-legend">
+          <span><i class="bm-base"></i> travaillé cette semaine</span><span><i class="bm-n1"></i> 8 à 14 j</span>
+          <span><i class="bm-n2"></i> 15 à 30 j</span><span><i class="bm-n3"></i> plus d'un mois</span>
+        </div>
+      </div>
       <div id="muscle-detail" class="muscle-detail" aria-live="polite">
         <p class="text-xs text-center" style="color: var(--muted);">{{ icon('target', 12) }} Touche un muscle pour le détail.</p>
       </div>
-      <div class="flex flex-wrap justify-center gap-3 text-xs mt-2" style="color: var(--muted);">
-        <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-hot"/></svg> fatigué</span>
-        <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-warm"/></svg> en récupération</span>
-        <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-ok"/></svg> prêt</span>
-        <span><svg width="10" height="10"><rect width="10" height="10" rx="2" class="bm-idle"/></svg> pas travaillé cette semaine</span>
-      </div>
+
       {% if tired %}
       <ul class="text-xs mt-3 space-y-1.5" style="color: var(--text-secondary);">
         {% for t in tired[:6] %}
@@ -823,8 +846,17 @@
          <p class="text-xs mt-1.5" style="color: var(--text-secondary);">` +
         (m.cause ? `Surtout ${esc(m.cause.toLowerCase())}${m.when ? ', ' + esc(m.when) : ''}. ` : '') +
         (m.ready_in ? `Prêt dans environ <strong>${esc(m.ready_in)}</strong>.` : (m.worked ? 'Prêt à travailler.' : 'Rien ne l\'a sollicité ces 7 derniers jours.')) +
+        `</p><p class="text-xs mt-1" style="color: var(--muted);">` +
+        `Volume de la semaine : <strong style="color: var(--text-primary);">${m.volume_pct} %</strong> du muscle le plus travaillé · ` +
+        (m.last ? `dernier travail : <strong style="color: var(--text-primary);">${esc(m.last)}</strong>` : 'pas travaillé depuis 2 mois') +
         `</p>`;
     };
+    // Fatigue / volume / neglected: one figure shown at a time.
+    document.querySelectorAll('[data-map]').forEach((b) => b.addEventListener('click', () => {
+      document.querySelectorAll('[data-map]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      document.querySelectorAll('[data-map-panel]').forEach((panel) => { panel.hidden = panel.dataset.mapPanel !== b.dataset.map; });
+      if (pinned) show(pinned);
+    }));
     document.querySelectorAll('.muscle-map path[data-muscle]').forEach((p) => {
       p.addEventListener('click', () => { pinned = p.dataset.muscle; show(pinned); });
       p.addEventListener('mouseenter', () => show(p.dataset.muscle));

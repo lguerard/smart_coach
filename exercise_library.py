@@ -752,6 +752,30 @@ def variant_for(
     return variant
 
 
+def alternatives(slot: str, equipment: Optional[dict] = None) -> list[dict]:
+    """Every move of this slot's family, easiest first, once each:
+    what a move can be replaced by (``custom_moves`` swaps, the guided
+    session's "autre exercice")."""
+    seen, out = set(), []
+    for index, rung in enumerate(ladder(slot, equipment)["rungs"]):
+        for variant in rung:
+            if variant["key"] not in seen:
+                seen.add(variant["key"])
+                out.append({**variant, "rung": index})
+    return out
+
+
+def variant_by_key(slot: str, key: str, equipment: Optional[dict] = None) -> Optional[dict]:
+    """One move of the slot's family, in ``session_variants``' shape."""
+    lad = ladder(slot, equipment)
+    for variant in alternatives(slot, equipment):
+        if variant["key"] == key:
+            return {"key": variant["key"], "name": variant["name"], "cue": variant["cue"],
+                    "garmin": list(variant["garmin"]),
+                    "muscles": variant["muscles"] or lad["muscles"], "swapped": True}
+    return None
+
+
 def next_step(
     slot: str, level: int, equipment: Optional[dict] = None,
 ) -> Optional[str]:

@@ -154,6 +154,39 @@
   <button type="submit" class="btn btn-primary">Enregistrer</button>
 </form>
 
+{% if photos | length >= 2 %}
+{# Before / after: two photos one over the other, a handle to slide.
+   Blurred like every photo here until tapped, blurred again when the
+   page is left. #}
+{% set newest = photos[0] %}
+{% set same_pose = photos | selectattr('pose', 'equalto', newest.pose) | list %}
+{% set oldest = same_pose[-1] if same_pose | length > 1 else photos[-1] %}
+<section class="card p-5 space-y-3">
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <h2 class="card-title">{{ icon('activity', 16) }} Avant / après</h2>
+    <div class="flex flex-wrap gap-2 text-xs">
+      {% for side, chosen in [('before', oldest), ('after', newest)] %}
+      <label class="flex items-center gap-1.5" style="color: var(--muted);">{{ 'Avant' if side == 'before' else 'Après' }}
+        <select data-compare="{{ side }}" class="rounded-lg border px-2 py-1 text-xs" style="border-color: var(--border);">
+          {% for p in photos %}
+          <option value="{{ p.id }}" {{ 'selected' if p.id == chosen.id }}>{{ p.local_date[8:10] }}/{{ p.local_date[5:7] }}/{{ p.local_date[2:4] }} · {{ poses[p.pose] }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="compare privacy-blur" id="compare" style="--cut: 50%;" title="Touche pour révéler">
+    <img data-side="before" src="/body/photo/{{ oldest.id }}" alt="Photo privée, avant" loading="lazy">
+    <img data-side="after" src="/body/photo/{{ newest.id }}" alt="Photo privée, après" loading="lazy">
+    <span class="compare-line" aria-hidden="true"></span>
+    <span class="compare-tag left">avant</span><span class="compare-tag right">après</span>
+  </div>
+  <input type="range" min="0" max="100" value="50" id="compare-range" class="w-full" aria-label="Glisser entre avant et après">
+  <p class="text-xs" style="color: var(--muted);">Touche l'image pour la révéler ; elle se refloute quand tu quittes l'onglet. Pour bien comparer : même pose, même lumière, même heure.</p>
+</section>
+{% endif %}
+
 {% for photo in photos %}
 {% set a = photo.analysis %}
 <div class="card p-5 space-y-3">
@@ -285,6 +318,20 @@
 </form>
 {% endif %}
 
+<script>
+  // Before / after: the slider moves the cut, the selects swap photos,
+  // a tap reveals (and hides again) both at once.
+  (() => {
+    const box = document.getElementById('compare');
+    if (!box) return;
+    const range = document.getElementById('compare-range');
+    range.addEventListener('input', () => box.style.setProperty('--cut', range.value + '%'));
+    box.addEventListener('click', () => box.classList.toggle('revealed'));
+    document.querySelectorAll('[data-compare]').forEach((select) => select.addEventListener('change', () => {
+      box.querySelector(`img[data-side="${select.dataset.compare}"]`).src = '/body/photo/' + select.value;
+    }));
+  })();
+</script>
 <script>
   // Shared office: anything revealed is blurred again as soon as the
   // page is hidden (tab switch, phone locked, app switcher).

@@ -38,21 +38,7 @@
      never printed here. The home page widens it for its three columns. #}
   {% if false %}{% block container %}max-w-5xl xl:max-w-6xl{% endblock %}{% endif %}
   {% set path = request.url.path %}
-  {% set nav = [
-    ("/", "sun", "Aujourd'hui"),
-    ("/progress", "trending-up", "Progrès"),
-    ("/trends", "activity", "Tendances"),
-    ("/sommeil", "moon", "Sommeil"),
-    ("/messages", "message", "Messages"),
-    ("/sessions", "dumbbell", "Séances"),
-    ("/programme", "kettlebell", "Programme"),
-    ("/repas", "flame", "Repas"),
-    ("/medicaments", "pill", "Médicaments"),
-    ("/data", "database", "Données"),
-    ("/achievements", "trophy", "Trophées"),
-    ("/body", "lock", "Corps"),
-    ("/settings", "sliders", "Réglages"),
-  ] %}
+  {# The menu: app.NAV less the pages hidden in Settings > Modules. #}
   <header class="sticky top-0 z-20" style="background: color-mix(in srgb, var(--bg-0) 88%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--border);">
     <div class="{{ self.container() }} mx-auto flex items-center justify-between gap-3 px-4 h-14">
       <a href="/" class="font-semibold flex items-center gap-2 shrink-0">

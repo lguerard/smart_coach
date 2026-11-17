@@ -29,6 +29,25 @@
   </div>
 
   <div class="card p-4 space-y-3">
+    <h2 class="font-semibold text-sm">Modules</h2>
+    <p class="text-xs" style="color: var(--muted);">
+      Les pages cochées sont dans le menu. Décocher en retire une du menu
+      sans rien effacer : ses données continuent d'être collectées, et elle
+      revient dès que tu la recoches.
+    </p>
+    <input type="hidden" name="modules_form" value="1">
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      {% for path, ic, label in all_nav %}
+      <label class="option btn justify-start cursor-pointer {{ 'opacity-60' if path in always_shown }}">
+        <input type="checkbox" name="show:{{ path }}" value="1" class="sr-only"
+          {{ 'checked' if path not in hidden_pages }} {{ 'disabled checked' if path in always_shown }}>
+        {{ icon(ic, 15) }} {{ label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card p-4 space-y-3">
     <h2 class="font-semibold text-sm">Objectifs</h2>
     <label class="block text-sm">
       Fuseau horaire

@@ -328,6 +328,31 @@ def muscle_fatigue(
     return {"muscles": result, "activities": counted}
 
 
+def last_worked(
+    conn: sqlite3.Connection, user_id: int, date: str, days: int = 60,
+    at_least: float = 0.3,
+) -> dict:
+    """The last day each muscle really worked (a weight of ``at_least``
+    in an activity), over ``days`` days up to ``date``; None when it
+    did not in that span. The map's "neglected" view."""
+    start = (dt.date.fromisoformat(date) - dt.timedelta(days=days)).isoformat()
+    last: dict = {m: None for m in MUSCLES}
+    for row in conn.execute(
+        "SELECT uuid, local_date, start_utc, end_utc, exercise_type, "
+        "label_override, rpe FROM exercise_sessions WHERE user_id = ? "
+        "AND local_date BETWEEN ? AND ? ORDER BY local_date",
+        (user_id, start, date),
+    ).fetchall():
+        intensity, weights, _ = _stimulus(
+            conn, user_id, row, _coach_day(conn, user_id, row["local_date"]))
+        if intensity <= 0:
+            continue
+        for muscle, weight in weights.items():
+            if muscle in last and weight >= at_least:
+                last[muscle] = row["local_date"]
+    return last
+
+
 def session_vote(
     fatigue: dict, weights: dict,
 ) -> Optional[tuple[str, str, str]]:
@@ -459,6 +484,11 @@ if __name__ == "__main__":
     assert after["chest"]["cause_date"] == "2026-10-06"
     # A rest day's log row does not turn a strength session into it.
     assert _coach_day(conn, uid, "2026-10-07") is None
+
+    # The neglected view: the hike worked the legs, never the chest.
+    last = last_worked(conn, uid, "2026-10-12")
+    assert last["quads"] == "2026-10-05" and last["chest"] == "2026-10-06", last
+    assert last_worked(conn, uid, "2026-10-03")["quads"] is None
 
     # The reported case: a treadmill session skipped, a walk caught by
     # the watch that day. The walk stays a walk (light calves), not the

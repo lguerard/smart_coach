@@ -805,6 +805,17 @@ CREATE TABLE IF NOT EXISTS custom_moves (
 );
 CREATE INDEX IF NOT EXISTS idx_custom_moves_user
     ON custom_moves(user_id, session_type);
+-- A programme move replaced by another of its family (custom_moves
+-- swaps): the slot keeps its amount and its place, the move changes.
+CREATE TABLE IF NOT EXISTS slot_swaps (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    session_type TEXT NOT NULL,
+    circuit TEXT NOT NULL DEFAULT '',
+    slot TEXT NOT NULL,
+    variant_key TEXT NOT NULL,
+    PRIMARY KEY (user_id, session_type, circuit, slot)
+);
+
 CREATE TABLE IF NOT EXISTS removed_moves (
     user_id INTEGER NOT NULL REFERENCES users(id),
     session_type TEXT NOT NULL,

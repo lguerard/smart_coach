@@ -90,6 +90,20 @@
     </div>
   </div>
   <p class="text-xs mt-2 p-2.5 rounded-lg" style="background: var(--surface-2); color: var(--text-secondary);">{{ b.summary }}</p>
+  {% set ns = b.next_step %}
+  <details class="next-step fold mt-2" {{ 'open' if ns.changes | length <= 3 }}>
+    <summary class="cursor-pointer list-none flex items-center gap-2 text-xs font-semibold">
+      <span class="next-badge">{{ icon('trending-up', 12) }} {{ 'Niveau max' if ns.at_max else 'Niveau ' ~ (b.level + 1) }}</span>
+      <span style="color: var(--text-secondary);">{{ 'La suite' if ns.at_max else 'Ce qui change au prochain palier' }}</span>
+      <span class="fold-chevron ml-auto">{{ icon('chevron-down', 12) }}</span>
+    </summary>
+    {% if ns.changes %}
+    <ul class="mt-2 space-y-1 text-xs">
+      {% for c in ns.changes %}<li class="flex gap-2"><span style="color: var(--day);">↗</span><span>{{ c }}</span></li>{% endfor %}
+    </ul>
+    {% endif %}
+    <p class="text-xs mt-2" style="color: var(--muted);">{% if ns.at_max %}{{ ns.how }}{% else %}Le niveau {{ ns.how }}.{% endif %}</p>
+  </details>
 
   {% if b.fixed_rounds %}
   <form method="post" action="/programme/override/clear" class="flex items-center justify-between gap-2 mt-3 text-sm">
@@ -110,11 +124,40 @@
         <p class="text-sm {{ 'line-through' if m.removed }}" style="{{ 'color: var(--muted);' if m.removed }}">
           {{ m.name }} {% if not m.removed %}<span class="chip" style="--chip: var(--day);"><span class="num">{{ m.amount }}</span></span>{% endif %}{% if m.fixed %} <span class="text-xs" style="color: var(--muted);">· fixé depuis Garmin</span>{% endif %}
         </p>
-        {% if m.cue and not m.removed %}
+        {% if m.swapped %}<p class="text-[11px]" style="color: var(--violet);">{{ icon('refresh', 11) }} remplace « {{ m.planned_name }} »</p>{% endif %}
+        {% if not m.removed %}
+        <div class="flex flex-wrap gap-x-3">
+        {% if m.cue %}
         <details class="text-xs mt-0.5">
           <summary class="cursor-pointer link">Comment le faire</summary>
           <p class="mt-1 leading-relaxed" style="color: var(--text-secondary);">{{ m.cue }}</p>
         </details>
+        {% endif %}
+        {% if m.alts %}
+        <details class="text-xs mt-0.5">
+          <summary class="cursor-pointer link">Remplacer</summary>
+          <form method="post" action="/programme/swap" class="flex flex-wrap items-center gap-1.5 mt-1">
+            <input type="hidden" name="session_type" value="{{ b.type }}">
+            <input type="hidden" name="circuit" value="{{ b.circuit }}">
+            <input type="hidden" name="slot" value="{{ m.slot }}">
+            <select name="variant_key" class="rounded-lg border px-2 py-1 text-xs" style="border-color: var(--border); max-width: 14rem;">
+              {% for a in m.alts %}<option value="{{ a.key }}">{{ a.name }}</option>{% endfor %}
+            </select>
+            <button class="btn btn-sm">OK</button>
+          </form>
+          <p class="mt-1" style="color: var(--muted);">Même quantité, même place dans le circuit, et sur la montre aussi.</p>
+        </details>
+        {% endif %}
+        {% if m.swapped %}
+        <form method="post" action="/programme/swap" class="mt-0.5">
+          <input type="hidden" name="session_type" value="{{ b.type }}">
+          <input type="hidden" name="circuit" value="{{ b.circuit }}">
+          <input type="hidden" name="slot" value="{{ m.slot }}">
+          <input type="hidden" name="variant_key" value="">
+          <button class="text-xs link">Remettre l'original</button>
+        </form>
+        {% endif %}
+        </div>
         {% endif %}
         </div>
       </div>

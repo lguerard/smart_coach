@@ -1333,6 +1333,63 @@ def steady_progress(
     return f"{STEADY_SESSIONS} seances faites a ce niveau sans difficulte"
 
 
+# Session values other than a move's amount, named for the next-step
+# lines: (label, unit).
+_STEP_LABELS = {
+    "speed_kmh": ("vitesse", " km/h"), "incline_pct": ("inclinaison", " %"),
+    "duration_min": ("durée", " min"), "rounds": ("tours", ""),
+    "rest_sec": ("repos entre exercices", " s"),
+}
+
+
+def next_step_fr(
+    conn: sqlite3.Connection, user_id: int, session_type: str, level: int,
+    date: Optional[str] = None,
+) -> dict:
+    """What the next level of this session changes, line by line, and
+    how to get there -- the Programme page's "Prochain palier".
+
+    Returns:
+        dict: ``at_max`` (level 10), ``changes`` (French lines, "squat
+        sur chaise : 20 → squat : 12"), ``how`` (what raises the level;
+        at the top, the heavier kettlebell when one applies).
+    """
+    if level >= LEVEL_MAX:
+        bell = heavier_bell_hint(conn, user_id)
+        return {"at_max": True, "changes": [], "how": (
+            f"Niveau maximum. La suite : une kettlebell de {bell['next']:g} kg "
+            "(à indiquer dans Réglages), les niveaux repartent plus bas."
+            if bell else "Niveau maximum : la séance ne monte plus avec ce matériel.")}
+    now = user_session_values(conn, user_id, session_type, level, date)
+    nxt = user_session_values(conn, user_id, session_type, level + 1, date)
+    variants_now = now.get("variants") or {}
+    variants_next = nxt.get("variants") or {}
+    changes = []
+    for key, before in now.items():
+        after = nxt.get(key)
+        if key in ("variants", "tours") or not isinstance(before, (int, float)):
+            continue
+        name_now = variants_now.get(key, {}).get("name")
+        name_next = variants_next.get(key, {}).get("name")
+        if before == after and name_now == name_next:
+            continue
+        label, unit = _STEP_LABELS.get(
+            key, (name_now or key, " s" if key.endswith("_sec") else ""))
+        def fr(n):
+            return f"{n:g}".replace(".", ",")
+        if name_now and name_next and name_now != name_next:
+            changes.append(f"{name_now} {fr(before)}{unit} → {name_next} "
+                           f"{fr(after)}{unit} (exercice plus dur)")
+        else:
+            changes.append(f"{label} : {fr(before)}{unit} → {fr(after)}{unit}")
+    how = (
+        "monte dès la prochaine séance de ce type"
+        if steady_progress(conn, user_id, session_type, date or "9999", level)
+        else f"monte après {STEADY_SESSIONS} séances faites à ce niveau sans "
+             "difficulté, ou une seule notée « trop facile »")
+    return {"at_max": False, "changes": changes, "how": how}
+
+
 def progress_hint(
     conn: sqlite3.Connection, user_id: int, session_type: str, date: str,
     level: int,
@@ -3448,4 +3505,13 @@ if __name__ == "__main__":
     set_level(hb, hu, "kettlebell", 9)
     assert lower_levels_for_heavier_bell(hb, hu, 12, 14)["kettlebell"] == (9, 7)
 
+    # The next step, in words: a treadmill level adds speed; the top
+    # level says so instead.
+    step_conn = db.connect(Path(tempfile.mkdtemp()) / "step.db")
+    db.init_db(step_conn)
+    step_uid = db.create_user(step_conn, "step", "password1234")
+    step = next_step_fr(step_conn, step_uid, "treadmill", 3, "2026-11-17")
+    assert step["changes"] == ["vitesse : 6,1 km/h → 6,3 km/h"], step
+    assert "trop facile" in step["how"]
+    assert next_step_fr(step_conn, step_uid, "treadmill", LEVEL_MAX)["at_max"]
     print("training.py: all checks passed")

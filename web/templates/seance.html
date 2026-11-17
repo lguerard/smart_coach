@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Séance - Smart Coach{% endblock %}
+{% block content %}
+
+{% if not steps %}
+<section class="card p-6 text-center">
+  <p class="text-sm" style="color: var(--text-secondary);">Pas de séance à faire aujourd'hui : c'est un jour de repos.</p>
+  <a href="/" class="btn btn-sm mt-3">Retour à l'accueil</a>
+</section>
+{% else %}
+{% set moves = steps | selectattr('kind', 'equalto', 'move') | list %}
+
+{# ---------- Before: what is coming ---------- #}
+<section class="card p-5" id="g-start">
+  <p class="caption">Séance guidée</p>
+  <h1 class="welcome-title mt-1">{{ title }}</h1>
+  <p class="text-sm mt-1" style="color: var(--text-secondary);">
+    {% if level is not none %}Niveau {{ level }} · {% endif %}{{ moves | length }} exercice{{ 's' if moves | length > 1 }}{% if minutes %} · environ {{ minutes }} min{% endif %}
+  </p>
+  {% if already_done %}<p class="text-xs mt-2" style="color: var(--good);">{{ icon('check', 12) }} Déjà notée faite aujourd'hui.</p>{% endif %}
+  <ol class="g-preview mt-3">
+    {% for s in moves %}{% if loop.index0 < 12 %}
+    <li><span class="num">{{ s.amount if s.unit == 'reps' else s.amount ~ ' s' if s.amount < 600 else (s.amount // 60) ~ ' min' }}</span> {{ s.name }}{% if s.round and s.rounds > 1 and loop.first %} <span style="color: var(--muted);">× {{ s.rounds }} tours</span>{% endif %}</li>
+    {% endif %}{% endfor %}
+    {% if moves | length > 12 %}<li style="color: var(--muted);">…</li>{% endif %}
+  </ol>
+  <button type="button" id="g-go" class="btn btn-primary mt-4" style="font-size: 1rem; padding: 0.7rem 1.4rem;">{{ icon('zap', 16) }} Démarrer</button>
+  <p class="text-xs mt-2" style="color: var(--muted);">L'écran reste allumé pendant la séance. Un bip annonce les 3 dernières secondes.</p>
+</section>
+
+{# ---------- During: one step at a time ---------- #}
+<section class="card p-5 g-player" id="g-player" hidden>
+  <div class="flex items-center justify-between gap-2 text-xs" style="color: var(--muted);">
+    <span id="g-where"></span>
+    <span class="num" id="g-count"></span>
+  </div>
+  <div class="meter-track mt-2"><div class="meter-fill" id="g-bar" style="width: 0%; background: linear-gradient(90deg, var(--accent), var(--violet)); animation: none;"></div></div>
+
+  <div class="g-stage">
+    <div class="g-art" id="g-art"></div>
+    <p class="g-kind" id="g-kind"></p>
+    <h2 class="g-name" id="g-name"></h2>
+    <div class="ring g-ring" id="g-ring" style="--size: 168px; --pct: 100; --ring-color: var(--accent); --ring-hole: var(--surface-1); animation: none;">
+      <div class="ring-inner"><span class="ring-value num" id="g-big" style="font-size: 2.6rem;"></span><span class="ring-label" id="g-unit"></span></div>
+    </div>
+    <p class="g-next" id="g-next"></p>
+    <button type="button" class="text-xs link mt-2" id="g-swap" hidden>{{ icon('refresh', 12) }} Autre exercice</button>
+    <details class="g-cue" id="g-cue-box"><summary class="text-xs link cursor-pointer">Comment le faire</summary><p class="text-sm mt-1" id="g-cue" style="color: var(--text-secondary);"></p></details>
+  </div>
+
+  <div class="g-controls">
+    <button type="button" class="btn" id="g-prev" aria-label="Étape précédente">←</button>
+    <button type="button" class="btn" id="g-pause">Pause</button>
+    <button type="button" class="btn btn-primary" id="g-done">Fait</button>
+    <button type="button" class="btn" id="g-skip" aria-label="Étape suivante">→</button>
+  </div>
+</section>
+
+{# ---------- After ---------- #}
+<section class="card p-6 text-center" id="g-end" hidden>
+  <p class="text-4xl">🎉</p>
+  <h2 class="welcome-title mt-2">Séance terminée</h2>
+  <p class="text-sm mt-1 num" style="color: var(--text-secondary);" id="g-total"></p>
+  {% if session_type and not already_done %}
+  <form method="post" action="/seance/done" class="mt-4">
+    <input type="hidden" name="session_type" value="{{ session_type }}">
+    <button class="btn btn-primary">{{ icon('check', 14) }} La noter faite</button>
+  </form>
+  <p class="text-xs mt-2" style="color: var(--muted);">Elle compte alors pour ton niveau, tes muscles, tes défis et ta série. Si la montre l'a aussi enregistrée, rien ne compte deux fois.</p>
+  {% else %}
+  <a href="/" class="btn btn-primary mt-4">Retour à l'accueil</a>
+  {% endif %}
+</section>
+
+<div hidden>{% for key, art in arts.items() %}<template data-art="{{ key }}">{{ art }}</template>{% endfor %}</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if steps %}
+<script>
+  // The guided session: each step shown in turn, timed steps counting
+  // down by themselves, a repetitions step waiting for "Fait". The time
+  // is read from the clock, not counted in ticks, so a pause or a
+  // backgrounded tab never drifts it.
+  (() => {
+    const steps = {{ steps | tojson }};
+    const $ = (id) => document.getElementById(id);
+    const moves = steps.filter((s) => s.kind === 'move').length;
+    let i = 0, left = 0, endsAt = 0, paused = false, timer = null, wake = null, started = 0;
+
+    let audio = null;
+    const beep = (freq = 880, ms = 140) => {
+      try {
+        audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = freq; o.connect(g); g.connect(audio.destination);
+        g.gain.setValueAtTime(0.18, audio.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + ms / 1000);
+        o.start(); o.stop(audio.currentTime + ms / 1000);
+      } catch (e) {}
+    };
+    const keepAwake = async () => {
+      try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && started && !$('g-player').hidden) keepAwake();
+    });
+    const fmt = (sec) => sec >= 60 ? Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0') : String(sec);
+
+    // "Autre exercice": the same slot, the next move of its family, for
+    // the rest of the session (a sore knee, no chair at hand...).
+    const choice = {};
+    const shown = (s) => {
+      if (!s.slot || !choice[s.slot]) return s;
+      const alt = s.alts[choice[s.slot] - 1];
+      return { ...s, name: alt.name, cue: alt.cue, art: alt.art };
+    };
+    $('g-swap').addEventListener('click', () => {
+      const s = steps[i];
+      choice[s.slot] = ((choice[s.slot] || 0) + 1) % (s.alts.length + 1);
+      const c = shown(s);
+      $('g-name').textContent = c.name;
+      $('g-cue').textContent = c.cue || '';
+      const art = c.art && document.querySelector(`template[data-art="${CSS.escape(c.art)}"]`);
+      $('g-art').innerHTML = art ? art.innerHTML : '';
+    });
+    const nextMove = (from) => {
+      const s = steps.slice(from + 1).find((x) => x.kind === 'move');
+      return s && shown(s);
+    };
+    const show = () => {
+      clearInterval(timer);
+      const s = shown(steps[i]);
+      $('g-swap').hidden = !(s.alts && s.alts.length);
+      const done = steps.slice(0, i).filter((x) => x.kind === 'move').length;
+      $('g-bar').style.width = (100 * i / steps.length) + '%';
+      $('g-count').textContent = `${Math.min(done + (s.kind === 'move' ? 1 : 0), moves)} / ${moves}`;
+      $('g-where').textContent = s.finisher ? 'À la fin' : s.round ? `Tour ${s.round} sur ${s.rounds}` : '';
+      $('g-player').classList.toggle('is-rest', s.kind === 'rest');
+      $('g-kind').textContent = s.kind === 'rest' ? 'Repos' : '';
+      $('g-name').textContent = s.kind === 'rest' ? s.name : s.name;
+      const art = s.art && document.querySelector(`template[data-art="${CSS.escape(s.art)}"]`);
+      $('g-art').innerHTML = art ? art.innerHTML : '';
+      $('g-cue').textContent = s.cue || '';
+      $('g-cue-box').hidden = !s.cue;
+      $('g-cue-box').open = false;
+      const upcoming = nextMove(i);
+      $('g-next').textContent = upcoming ? 'Ensuite : ' + upcoming.name : 'Dernière étape';
+      $('g-done').textContent = s.kind === 'rest' ? 'Passer' : (s.seconds ? 'Fini' : 'Fait');
+      if (s.seconds) {
+        left = s.seconds; endsAt = Date.now() + left * 1000;
+        $('g-unit').textContent = s.kind === 'rest' ? 'repos' : (s.seconds >= 60 ? 'min' : 'secondes');
+        tick();
+        if (!paused) timer = setInterval(tick, 200);
+      } else {
+        $('g-big').textContent = s.amount;
+        $('g-unit').textContent = 'répétitions';
+        $('g-ring').style.setProperty('--pct', 100);
+      }
+    };
+    const tick = () => {
+      const s = steps[i];
+      const remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      if (remaining !== left && remaining <= 3 && remaining > 0) beep(660);
+      left = remaining;
+      $('g-big').textContent = fmt(left);
+      $('g-ring').style.setProperty('--pct', 100 * left / s.seconds);
+      if (left <= 0) { beep(990, 300); if (navigator.vibrate) navigator.vibrate(200); next(); }
+    };
+    const next = () => {
+      if (i >= steps.length - 1) return finish();
+      i += 1; show();
+    };
+    const finish = () => {
+      clearInterval(timer);
+      try { wake && wake.release(); } catch (e) {}
+      $('g-player').hidden = true; $('g-end').hidden = false;
+      const minutes = Math.round((Date.now() - started) / 60000);
+      $('g-total').textContent = `${moves} exercices en ${minutes} min`;
+      window.scConfetti && window.scConfetti();
+    };
+    $('g-go').addEventListener('click', () => {
+      started = Date.now(); keepAwake(); beep(880, 80);
+      $('g-start').hidden = true; $('g-player').hidden = false;
+      show();
+    });
+    $('g-done').addEventListener('click', next);
+    $('g-skip').addEventListener('click', next);
+    $('g-prev').addEventListener('click', () => { if (i > 0) { i -= 1; show(); } });
+    $('g-pause').addEventListener('click', () => {
+      paused = !paused;
+      $('g-pause').textContent = paused ? 'Reprendre' : 'Pause';
+      const s = steps[i];
+      if (!s.seconds) return;
+      if (paused) { clearInterval(timer); left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)); }
+      else { endsAt = Date.now() + left * 1000; timer = setInterval(tick, 200); }
+    });
+  })();
+</script>
+{% endif %}
+{% endblock %}

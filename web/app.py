@@ -87,23 +87,52 @@ app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 ACCENTS = ("teal", "blue")
 
 
+# Every page in the menu: (path, icon, label). Settings > Modules hides
+# any but the first and the last (setting "hidden_pages"): out of the
+# menu, nothing deleted, the address still opens the page.
+NAV = (
+    ("/", "sun", "Aujourd'hui"),
+    ("/progress", "trending-up", "Progrès"),
+    ("/trends", "activity", "Tendances"),
+    ("/sommeil", "moon", "Sommeil"),
+    ("/messages", "message", "Messages"),
+    ("/sessions", "dumbbell", "Séances"),
+    ("/programme", "kettlebell", "Programme"),
+    ("/repas", "flame", "Repas"),
+    ("/medicaments", "pill", "Médicaments"),
+    ("/data", "database", "Données"),
+    ("/achievements", "trophy", "Trophées"),
+    ("/body", "lock", "Corps"),
+    ("/settings", "sliders", "Réglages"),
+)
+ALWAYS_SHOWN = ("/", "/settings")
+
+
+def hidden_pages(conn, user_id: int) -> set:
+    raw = db.get_setting(conn, user_id, "hidden_pages") or ""
+    return {p for p in raw.split(",") if p and p not in ALWAYS_SHOWN}
+
+
 def _ui_context(request: Request) -> dict:
     """Per-viewer look, given to every template: the accent colour picked
     in Settings (``<html data-accent>``, see static/theme.css). Pages
     rendered before login get the default; the login page itself reuses
     the last accent the browser saw (base.html caches it locally).
     """
-    accent, language = ACCENTS[0], "fr"
+    accent, language, hidden = ACCENTS[0], "fr", set()
     user_id = request.session.get("user_id") if "session" in request.scope else None
     if user_id:
         conn = db.connect()
         try:
             accent = db.get_setting(conn, user_id, "accent") or accent
             language = db.get_setting(conn, user_id, "language") or language
+            hidden = hidden_pages(conn, user_id)
         finally:
             conn.close()
     return {
         "accent": accent if accent in ACCENTS else ACCENTS[0],
+        "nav": [item for item in NAV if item[0] not in hidden],
+        "all_nav": NAV, "always_shown": ALWAYS_SHOWN, "hidden_pages": hidden,
         # The chat panel (base.html -> _assistant.html): its language,
         # whether a local model is configured, and whose conversation
         # the browser keeps.
@@ -724,6 +753,113 @@ def _freshness(ran_at: Optional[str], tz) -> dict:
     }
 
 
+ROUND_REST_SEC = 60   # between two tours, in the guided session
+
+
+def session_steps(values: dict, title: str, equipment: Optional[dict] = None) -> list[dict]:
+    """The guided session's steps, in order: ``{kind: move|rest, name,
+    cue, art, amount, unit (s|reps), seconds}``. A walk or the
+    treadmill is one timed step; a circuit is every move of every tour,
+    with the rest between moves and between tours, then the moves done
+    once at the end."""
+    if not values:
+        return []
+    if "speed_kmh" in values or not values.get("variants"):
+        minutes = values.get("duration_min") or 30
+        detail = ", ".join(x for x in (
+            f"{values['speed_kmh']:g} km/h".replace(".", ",") if values.get("speed_kmh") else "",
+            f"inclinaison {values['incline_pct']} %" if values.get("incline_pct") else "") if x)
+        return [{"kind": "move", "name": title, "cue": detail, "art": None,
+                 "amount": minutes * 60, "unit": "s", "seconds": minutes * 60}]
+    variants = values["variants"]
+    slots = [k for k in values if k in variants]
+    rounds = values.get("rounds") or 1
+    rest = values.get("rest_sec") or 0
+    steps = []
+    for r in range(rounds):
+        for i, slot in enumerate(slots):
+            v = variants[slot]
+            timed = slot.endswith("_sec")
+            alts = ([{"name": a["name"], "cue": a["cue"], "art": a["key"]}
+                     for a in exercise_library.alternatives(slot, equipment)
+                     if a["key"] != v.get("key")]
+                    if slot in exercise_library.LADDERS else [])
+            steps.append({"kind": "move", "name": v.get("name", slot), "cue": v.get("cue", ""),
+                          "art": v.get("key"), "amount": values[slot],
+                          "unit": "s" if timed else "reps",
+                          "seconds": values[slot] if timed else None,
+                          "round": r + 1, "rounds": rounds, "slot": slot, "alts": alts})
+            if rest and i < len(slots) - 1:
+                steps.append({"kind": "rest", "name": "Repos", "seconds": rest})
+        if r < rounds - 1:
+            steps.append({"kind": "rest", "name": f"Fin du tour {r + 1} : repos",
+                          "seconds": ROUND_REST_SEC})
+    for f in values.get("finisher") or []:
+        timed = f.get("unit") == "sec"
+        steps.append({"kind": "move", "name": f["name"], "cue": f.get("cue", ""),
+                      "art": f.get("key"), "amount": f["amount"],
+                      "unit": "s" if timed else "reps",
+                      "seconds": f["amount"] if timed else None, "finisher": True})
+    return steps
+
+
+@app.get("/seance", response_class=HTMLResponse)
+def guided_session(request: Request) -> HTMLResponse:
+    """Today's session, step by step in the browser: for a day without
+    the watch. The "anyway" session when one was asked for."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    date = today_str(conn, user_id)
+    entry = latest_coach_entry(conn, user_id, date)
+    anyway = day_actions.anyway_for(conn, user_id, date)
+    session_type, title, values, level = None, "Séance du jour", None, None
+    if anyway:
+        session_type, level = anyway["session_type"], anyway["level"]
+        values = training.user_session_values(conn, user_id, session_type, level, date)
+    elif entry and (entry["session_type"] or entry["tier"]):
+        plan = training.plan_from_log(
+            conn, user_id, date, missed_sessions.day_template(conn, user_id, date), entry)
+        values = plan["values"]
+        if plan["tier"] == training.TIER_TRAIN:
+            session_type, level = entry["session_type"], entry["level"]
+        elif plan["tier"] == "recovery":
+            title = "Marche de récupération"
+    if session_type:
+        title = training.SESSION_LABEL_FR.get(session_type, title)
+    steps = session_steps(values or {}, title, exercise_library.equipment_for(conn, user_id))
+    known = done_sessions.done_on(conn, user_id, date)
+    return templates.TemplateResponse(
+        request, "seance.html", {
+            "title": title, "level": level, "session_type": session_type,
+            "steps": steps, "date": date,
+            "minutes": (values or {}).get("duration_min"),
+            "already_done": bool(known and known["session_type"] in training.SESSION_LABEL_FR),
+            "arts": {art: move_art(art, 150, name) for art, name in
+                     [(s["art"], s["name"]) for s in steps if s.get("art")]
+                     + [(a["art"], a["name"]) for s in steps for a in s.get("alts", [])]},
+        },
+    )
+
+
+@app.post("/seance/done")
+async def guided_session_done(request: Request):
+    """The end of the guided session: today counts as done (declared),
+    like "faite sans la montre"."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    date = today_str(conn, user_id)
+    session_type = str(form.get("session_type", ""))
+    note = "Bravo, séance terminée !"
+    if session_type in training.SESSION_LABEL_FR:
+        try:
+            done_sessions.declare(conn, user_id, date, session_type, today=date)
+            note = f"Bravo : {training.SESSION_LABEL_FR[session_type]} notée faite."
+        except ValueError as error:
+            note = str(error)
+    return RedirectResponse("/?" + urlencode({"note": note}), status_code=303)
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
     """Today: readiness chip, tonight's session, the coaching message."""
@@ -835,9 +971,13 @@ def home(request: Request) -> HTMLResponse:
     fatigue = muscles.muscle_fatigue(
         conn, user_id, date, at=dt.datetime.now(dt.timezone.utc),
     )
-    recovery_fig = bodymap.recovery_figure(
-        fatigue, bodymap.gender_for(db.get_setting(conn, user_id, "sex")),
-    )
+    gender = bodymap.gender_for(db.get_setting(conn, user_id, "sex"))
+    recovery_fig = bodymap.recovery_figure(fatigue, gender)
+    # The map's two other views: the week's volume, what has gone untrained.
+    last_worked = muscles.last_worked(conn, user_id, date)
+    volume_fig = bodymap.volume_figure(fatigue, gender)
+    neglect_fig = bodymap.neglect_figure(last_worked, date, gender)
+    top_volume = max((i["week_volume"] for i in fatigue["muscles"].values()), default=0) or 1
     tired = [
         {"label": muscles.MUSCLES[m], "state": info["state"],
          "fatigue": info["fatigue"],
@@ -866,6 +1006,11 @@ def home(request: Request) -> HTMLResponse:
             "ready_in": (None if not hours else
                          f"{round(hours)} h" if hours < 36 else f"{round(hours / 24)} jours"),
             "worked": info["week_volume"] > 0,
+            "volume_pct": round(100 * info["week_volume"] / top_volume),
+            "last": _day_word(last_worked.get(m), date),
+            "gap": ((dt.date.fromisoformat(date)
+                     - dt.date.fromisoformat(last_worked[m])).days
+                    if last_worked.get(m) else None),
         }
     # Yesterday's movement against the goals, and the silent desk break
     # picked from it -- the same two the morning message is given.
@@ -924,6 +1069,7 @@ def home(request: Request) -> HTMLResponse:
             "yesterday_session": yesterday_session,
             "recovery_fig": recovery_fig, "tired": tired,
             "muscle_info": muscle_info,
+            "volume_fig": volume_fig, "neglect_fig": neglect_fig,
             "level_reason": (
                 entry["level_reason"] if entry and "level_reason" in entry.keys()
                 else None
@@ -1812,6 +1958,59 @@ def _session_weeks(items: list) -> list:
     return list(weeks.values())
 
 
+_MONTHS_SHORT_FR = ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.",
+                    "août", "sept.", "oct.", "nov.", "déc.")
+
+
+def year_heatmap(conn, user_id: int, today: str) -> dict:
+    """53 weeks of activity, Monday to Sunday, today in the last column:
+    ``weeks`` (7 cells each: date, minutes, sessions, level 0-4, future),
+    ``months`` (label per column where a month starts), and the totals:
+    active days, the longest and the current run of active days."""
+    end = dt.date.fromisoformat(today)
+    start = end - dt.timedelta(days=end.weekday() + 52 * 7)
+    per_day: dict = {}
+    for row in conn.execute(
+        "SELECT local_date, start_utc, end_utc FROM exercise_sessions WHERE "
+        "user_id = ? AND local_date BETWEEN ? AND ?",
+        (user_id, start.isoformat(), today),
+    ):
+        minutes = (dt.datetime.fromisoformat(row["end_utc"])
+                   - dt.datetime.fromisoformat(row["start_utc"])).total_seconds() / 60
+        day = per_day.setdefault(row["local_date"], [0.0, 0])
+        day[0] += max(0.0, minutes)
+        day[1] += 1
+    weeks, months, last_month = [], [], None
+    for w in range(53):
+        monday = start + dt.timedelta(weeks=w)
+        cells = []
+        for k in range(7):
+            day = monday + dt.timedelta(days=k)
+            minutes, count = per_day.get(day.isoformat(), (0.0, 0))
+            cells.append({
+                "date": day.isoformat(), "minutes": round(minutes), "sessions": count,
+                "future": day > end,
+                "level": (0 if not count else 1 if minutes < 20 else 2 if minutes < 40
+                          else 3 if minutes < 70 else 4),
+            })
+        weeks.append(cells)
+        months.append(_MONTHS_SHORT_FR[monday.month - 1] if monday.month != last_month else "")
+        last_month = monday.month
+    active = sorted(per_day)
+    longest = current = run = 0
+    previous = None
+    for day in active:
+        d = dt.date.fromisoformat(day)
+        run = run + 1 if previous and (d - previous).days == 1 else 1
+        longest = max(longest, run)
+        previous = d
+    if previous and (end - previous).days <= 1:
+        current = run
+    return {"weeks": weeks, "months": months, "active_days": len(active),
+            "longest": longest, "current": current,
+            "minutes": round(sum(v[0] for v in per_day.values()))}
+
+
 def _session_summary(items: list, today: str) -> dict:
     """The last 30 days in four numbers, and 8 weeks of each as a line."""
     since = (dt.date.fromisoformat(today) - dt.timedelta(days=29)).isoformat()
@@ -1948,6 +2147,7 @@ def sessions(request: Request) -> HTMLResponse:
         request, "sessions.html", {
             "sessions": items, "route_features": route_features,
             "weeks": _session_weeks(items),
+            "heatmap": year_heatmap(conn, user_id, today_str(conn, user_id)),
             "day_label": date_label_fr,
             "summary": _session_summary(items, today_str(conn, user_id)),
             "rateable": training.rateable_sessions(
@@ -2005,6 +2205,32 @@ def _sum_by_date(
             (user_id, start),
         )
     }
+
+
+@app.get("/data/export.json")
+def data_export_json(request: Request) -> Response:
+    """Everything this account has, as one JSON file (export_data)."""
+    import export_data
+
+    conn = get_conn()
+    user_id = current_user_id(request)
+    name = f"smart-coach-{today_str(conn, user_id)}.json"
+    return Response(export_data.as_json(conn, user_id), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"',
+                             "Cache-Control": "no-store"})
+
+
+@app.get("/data/export.zip")
+def data_export_zip(request: Request) -> Response:
+    """The same, one CSV per table in a zip, for a spreadsheet."""
+    import export_data
+
+    conn = get_conn()
+    user_id = current_user_id(request)
+    name = f"smart-coach-{today_str(conn, user_id)}.zip"
+    return Response(export_data.as_zip(conn, user_id), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"',
+                             "Cache-Control": "no-store"})
 
 
 @app.get("/data", response_class=HTMLResponse)
@@ -2242,11 +2468,21 @@ def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
             )
             removed = custom_moves.removed_for(conn, user_id, session_type, circuit)
             fixed = custom_moves.overrides_for(conn, user_id, session_type, circuit)
-            variants = base.get("variants") or {}
+            swaps = custom_moves.swaps_for(conn, user_id, session_type, circuit)
+            variants = dict(base.get("variants") or {})
+            planned = {slot: v.get("name") for slot, v in variants.items()}
+            for slot, key in swaps.items():
+                swapped = exercise_library.variant_by_key(slot, key, equipment)
+                if swapped and slot in variants:
+                    variants[slot] = swapped
             library = [
                 {"slot": slot, "name": variants.get(slot, {}).get("name", slot),
                  "cue": variants.get(slot, {}).get("cue", ""),
                  "key": variants.get(slot, {}).get("key"),
+                 "swapped": slot in swaps, "planned_name": planned.get(slot),
+                 "alts": [{"key": a["key"], "name": a["name"], "rung": a["rung"]}
+                          for a in exercise_library.alternatives(slot, equipment)
+                          if a["key"] != variants.get(slot, {}).get("key")],
                  "amount": f"{fixed.get(slot, value)}{' s' if slot.endswith('_sec') else ''}",
                  "fixed": slot in fixed,
                  "removed": slot in removed}
@@ -2266,12 +2502,31 @@ def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
                 "label": training.SESSION_LABEL_FR[session_type]
                 + (f" - circuit {circuit}" if circuit else ""),
                 "level": level, "library": library, "own": own,
+                "next_step": training.next_step_fr(conn, user_id, session_type, level, day),
                 "fixed_rounds": fixed.get("rounds"),
                 "summary": training.format_description_fr(
                     session_type, level, final, "yellow",
                 ).split(": ", 1)[1].split(" (statut")[0],
             })
     return blocks
+
+
+@app.post("/programme/swap")
+async def programme_swap(request: Request):
+    """Replace a programme move by another of its family, or put it back
+    (empty ``variant_key``); the slot keeps its amount."""
+    conn = get_conn()
+    user_id = current_user_id(request)
+    form = await request.form()
+    session_type = str(form.get("session_type", ""))
+    if session_type not in custom_moves.EDITABLE_TYPES:
+        return RedirectResponse("/programme", status_code=303)
+    ok = custom_moves.set_swap(
+        conn, user_id, session_type, str(form.get("circuit", "")),
+        str(form.get("slot", "")), str(form.get("variant_key", "")) or None)
+    return RedirectResponse(
+        "/programme?" + ("saved=1" if ok else urlencode({"error": "Ce mouvement ne peut pas remplacer celui-là."})),
+        status_code=303)
 
 
 @app.get("/programme", response_class=HTMLResponse)
@@ -2468,6 +2723,12 @@ async def save_settings(request: Request, background: BackgroundTasks):
     for key in db.DEFAULT_SETTINGS:
         if key in form:
             db.set_setting(conn, user_id, key, str(form[key]).strip())
+    # Modules: a box per page, ticked = shown. Only on the form that
+    # carries the boxes (others leave the menu as it is).
+    if "modules_form" in form:
+        db.set_setting(conn, user_id, "hidden_pages", ",".join(
+            path for path, _, _ in NAV
+            if path not in ALWAYS_SHOWN and f"show:{path}" not in form))
     if form.get("accent") not in (None, *ACCENTS):
         db.set_setting(conn, user_id, "accent", ACCENTS[0])
     if form.get("message_style") not in (None, "fiche", "texte"):

@@ -21,6 +21,7 @@ does not move them.
 
 import datetime as dt
 import sqlite3
+from typing import Optional
 
 import exercise_library
 
@@ -219,6 +220,38 @@ def clear_override(
     conn.commit()
 
 
+def set_swap(
+    conn: sqlite3.Connection, user_id: int, session_type: str, circuit: str,
+    slot: str, variant_key: Optional[str],
+) -> bool:
+    """Replace a programme move by another of its family, or put it
+    back (``variant_key`` None or ""). False for a move not of that
+    family."""
+    if variant_key:
+        if exercise_library.variant_by_key(
+                slot, variant_key, exercise_library.equipment_for(conn, user_id)) is None:
+            return False
+        conn.execute(
+            "INSERT INTO slot_swaps (user_id, session_type, circuit, slot, "
+            "variant_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id, "
+            "session_type, circuit, slot) DO UPDATE SET variant_key = "
+            "excluded.variant_key", (user_id, session_type, circuit, slot, variant_key))
+    else:
+        conn.execute("DELETE FROM slot_swaps WHERE user_id = ? AND session_type = ? "
+                     "AND circuit = ? AND slot = ?", (user_id, session_type, circuit, slot))
+    conn.commit()
+    return True
+
+
+def swaps_for(
+    conn: sqlite3.Connection, user_id: int, session_type: str, circuit: str = "",
+) -> dict:
+    """``{slot: variant_key}`` replaced in this type and circuit."""
+    return {row["slot"]: row["variant_key"] for row in conn.execute(
+        "SELECT slot, variant_key FROM slot_swaps WHERE user_id = ? AND "
+        "session_type = ? AND circuit IN ('', ?)", (user_id, session_type, circuit))}
+
+
 def overrides_for(
     conn: sqlite3.Connection, user_id: int, session_type: str,
     circuit: str = "",
@@ -283,11 +316,20 @@ def apply(
     removed = removed_for(conn, user_id, session_type, circuit)
     own = moves_for(conn, user_id, session_type, circuit)
     overrides = overrides_for(conn, user_id, session_type, circuit)
-    if not removed and not own and not overrides:
+    swaps = swaps_for(conn, user_id, session_type, circuit)
+    if not removed and not own and not overrides and not swaps:
         return values
     out = {k: v for k, v in values.items() if k not in removed}
     variants = {k: v for k, v in (values.get("variants") or {}).items()
                 if k not in removed}
+    # Replaced moves: same slot, same amount, another move of the family.
+    equipment = exercise_library.equipment_for(conn, user_id) if swaps else {}
+    for slot, key in swaps.items():
+        if slot in variants:
+            swapped = exercise_library.variant_by_key(slot, key, equipment)
+            if swapped:
+                variants[slot] = {**{k: v for k, v in variants[slot].items()
+                                     if k in ("per", "range")}, **swapped}
     rounds = values.get("rounds") or 1
     rest = values.get("rest_sec") or 0
     seconds = 0
@@ -472,4 +514,19 @@ if __name__ == "__main__":
     db.init_db(conn)
     assert placement() == "round"
     delete_move(conn, uid, mine)
+
+    # A move replaced by another of its family: same slot, same amount,
+    # the other move's name and watch exercise; put back, it returns.
+    base = training.session_values("lower_body", 3, date="2026-11-16")
+    swap_to = next(v["key"] for v in exercise_library.alternatives("squats")
+                   if v["key"] != base["variants"]["squats"]["key"])
+    assert not set_swap(conn, uid, "lower_body", "", "squats", "plank")  # not its family
+    assert set_swap(conn, uid, "lower_body", "", "squats", swap_to)
+    swapped = apply(conn, uid, "lower_body", base)
+    assert swapped["variants"]["squats"]["key"] == swap_to, swapped["variants"]["squats"]
+    assert swapped["squats"] == base["squats"] and swapped["rounds"] == base["rounds"]
+    assert apply(conn, other, "lower_body", base)["variants"]["squats"]["key"] != swap_to
+    set_swap(conn, uid, "lower_body", "", "squats", None)
+    assert apply(conn, uid, "lower_body", base)["variants"]["squats"]["key"] == \
+        base["variants"]["squats"]["key"]
     print("custom_moves.py: all checks passed")

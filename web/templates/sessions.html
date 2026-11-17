@@ -25,6 +25,35 @@
 </div>
 
 
+{% set hm = heatmap %}
+<section class="card p-4">
+  <div class="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+    <h2 class="card-title">{{ icon('calendar', 16) }} Ton année</h2>
+    <p class="text-xs num" style="color: var(--muted);">
+      <strong style="color: var(--text-primary);">{{ hm.active_days }}</strong> jours actifs ·
+      record <strong style="color: var(--text-primary);">{{ hm.longest }}</strong> j d'affilée
+      {% if hm.current > 1 %}· en cours <strong style="color: var(--orange);">{{ hm.current }}</strong> j{% endif %}
+    </p>
+  </div>
+  <div class="heatmap-scroll">
+    <div class="heatmap" role="img" aria-label="Activité sur un an : {{ hm.active_days }} jours actifs">
+      <div class="hm-days" aria-hidden="true"><span>L</span><span></span><span>M</span><span></span><span>V</span><span></span><span></span></div>
+      {% for week in hm.weeks %}
+      <div class="hm-week">
+        <span class="hm-month" aria-hidden="true">{{ hm.months[loop.index0] }}</span>
+        {% for c in week %}
+        <span class="hm-cell l{{ c.level }}{{ ' is-future' if c.future }}"
+          {% if not c.future %}data-tip="{{ c.date[8:10] }}/{{ c.date[5:7] }}/{{ c.date[:4] }} · {% if c.sessions %}{{ c.sessions }} séance{{ 's' if c.sessions > 1 }}, {{ c.minutes }} min{% else %}repos{% endif %}"{% endif %}></span>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="flex items-center justify-end gap-1 mt-2 text-[10px]" style="color: var(--muted);">
+    moins <span class="hm-cell l0"></span><span class="hm-cell l1"></span><span class="hm-cell l2"></span><span class="hm-cell l3"></span><span class="hm-cell l4"></span> plus
+  </div>
+</section>
+
 <div id="notes" class="card p-4" style="scroll-margin-top: 4.5rem;">
   <h2 class="card-title mb-1">{{ icon('target', 16) }} Noter mes séances</h2>
   <p class="text-xs mb-3" style="color: var(--muted);">
@@ -170,6 +199,26 @@
 
 {% block scripts %}
 <div id="hr-tip" class="float-tip" role="tooltip" hidden></div>
+<script>
+  // The year: a day's cell says its date and what was done, under the
+  // pointer or a tap. The latest weeks are scrolled into view on a phone.
+  (() => {
+    const tip = document.getElementById('hr-tip');
+    const scroller = document.querySelector('.heatmap-scroll');
+    if (scroller) scroller.scrollLeft = scroller.scrollWidth;
+    const show = (cell) => {
+      const r = cell.getBoundingClientRect();
+      tip.textContent = cell.dataset.tip; tip.hidden = false;
+      tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, r.left + r.width / 2 - tip.offsetWidth / 2)) + 'px';
+      tip.style.top = (r.top - tip.offsetHeight - 6) + 'px';
+    };
+    document.querySelectorAll('.hm-cell[data-tip]').forEach((cell) => {
+      cell.addEventListener('pointerenter', () => show(cell));
+      cell.addEventListener('click', () => show(cell));
+      cell.addEventListener('pointerleave', () => { tip.hidden = true; });
+    });
+  })();
+</script>
 <script>
   // A session's heart-rate line: the minute and the pulse under the pointer.
   (() => {

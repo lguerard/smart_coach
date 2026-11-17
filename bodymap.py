@@ -91,6 +91,37 @@ def recovery_figure(fatigue: dict, gender: str) -> dict:
     return figure(gender, classes, titles)
 
 
+def volume_figure(fatigue: dict, gender: str) -> dict:
+    """The week's volume per muscle, in three shades against the most
+    worked one (``muscle_fatigue``'s ``week_volume``)."""
+    volumes = {m: info["week_volume"] for m, info in fatigue["muscles"].items()}
+    top = max(volumes.values(), default=0) or 1
+    classes, titles = {}, {}
+    for muscle, volume in volumes.items():
+        share = volume / top
+        classes[muscle] = ("bm-idle" if volume <= 0 else "bm-v3" if share >= 0.66
+                           else "bm-v2" if share >= 0.33 else "bm-v1")
+        titles[muscle] = f"{muscles.MUSCLES[muscle]} : {round(100 * share)} % du plus travaille"
+    return figure(gender, classes, titles)
+
+
+def neglect_figure(last: dict, date: str, gender: str) -> dict:
+    """How long since each muscle worked (``muscles.last_worked``):
+    nothing within a week, deeper shades the longer it has been."""
+    import datetime as dt
+
+    classes, titles = {}, {}
+    for muscle, day in last.items():
+        gap = (dt.date.fromisoformat(date) - dt.date.fromisoformat(day)).days if day else None
+        classes[muscle] = ("bm-base" if gap is not None and gap <= 7
+                           else "bm-n1" if gap is not None and gap <= 14
+                           else "bm-n2" if gap is not None and gap <= 30 else "bm-n3")
+        titles[muscle] = (f"{muscles.MUSCLES[muscle]} : "
+                          + (f"travaille il y a {gap} j" if gap is not None
+                             else "pas travaille depuis 2 mois"))
+    return figure(gender, classes, titles)
+
+
 def focus_figure(focus: list[str], gender: str) -> dict:
     """The figure highlighting muscles to develop (Corps tab)."""
     return figure(

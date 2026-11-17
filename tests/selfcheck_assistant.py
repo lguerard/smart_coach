@@ -616,7 +616,8 @@ conn.execute("DELETE FROM nutrition WHERE user_id = ? AND local_date = ?",
              (A, (dt.date.fromisoformat(TODAY) - dt.timedelta(days=2)).isoformat()))
 conn.commit()
 for path in ("/", "/repas", "/sommeil", "/progress", "/trends", "/sessions",
-             "/programme", "/messages", "/medicaments", "/body"):
+             "/programme", "/messages", "/medicaments", "/body", "/seance",
+             "/data", "/data/export.json", "/data/export.zip", "/settings"):
     assert web.get(path).status_code == 200, path
 
 # Signed out: the next page clears the browser's conversations.
