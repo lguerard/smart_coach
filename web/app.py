@@ -2483,6 +2483,7 @@ def _programme_blocks(conn: sqlite3.Connection, user_id: int) -> list[dict]:
                  "alts": [{"key": a["key"], "name": a["name"], "rung": a["rung"]}
                           for a in exercise_library.alternatives(slot, equipment)
                           if a["key"] != variants.get(slot, {}).get("key")],
+                 "unit": exercise_library.ladder(slot, equipment)["unit"],
                  "amount": f"{fixed.get(slot, value)}{' s' if slot.endswith('_sec') else ''}",
                  "fixed": slot in fixed,
                  "removed": slot in removed}
@@ -2554,8 +2555,15 @@ def programme_page(request: Request) -> HTMLResponse:
             "level": training.get_level(conn, user_id, kind) if kind else None,
             "icon": icon_name, "colour": colour, "rest": not kind,
         })
+    equipment = exercise_library.equipment_for(conn, user_id)
+    catalogue = [
+        {"key": v["key"], "name": v["name"], "unit": v["unit"],
+         "muscles": [muscles.MUSCLES[m] for m, w in sorted(
+             (v["muscles"] or {}).items(), key=lambda kv: -kv[1]) if m in muscles.MUSCLES][:3]}
+        for v in exercise_library.catalogue(equipment)]
     return templates.TemplateResponse(
         request, "programme.html", {
+            "catalogue": catalogue,
             "week": week, "level_max": training.LEVEL_MAX,
             "blocks": _programme_blocks(conn, user_id),
             "picker": custom_moves.GARMIN_PICKER,

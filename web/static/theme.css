@@ -908,3 +908,14 @@ input[type="range"]#compare-range { accent-color: var(--accent); }
 .g-cue { margin-top: 0.5rem; max-width: 34rem; }
 .g-controls { display: grid; grid-template-columns: auto 1fr 1.4fr auto; gap: 0.5rem; margin-top: 1rem; }
 .g-controls .btn { padding: 0.75rem 1rem; font-size: 0.95rem; }
+
+/* Programme: "Remplacer", a search over every exercise. */
+.swap-box[open] { width: 100%; }
+.swap-form { min-width: min(22rem, 80vw); }
+.swap-results { display: grid; gap: 2px; max-height: 15rem; overflow-y: auto; }
+.swap-pick {
+  width: 100%; text-align: left; padding: 0.35rem 0.55rem; border-radius: 8px; font-size: 0.8rem;
+  color: var(--text-primary); transition: background 0.12s;
+}
+.swap-pick:hover, .swap-pick:focus-visible { background: var(--accent-soft); }
+.swap-tag { font-size: 0.68rem; color: var(--muted); margin-left: 0.25rem; }

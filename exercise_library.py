@@ -868,9 +868,70 @@ def alternatives(slot: str, equipment: Optional[dict] = None) -> list[dict]:
     return out
 
 
+def catalogue(equipment: Optional[dict] = None) -> list[dict]:
+    """Every exercise the library knows, once each, for "Remplacer"'s
+    search: ``{key, name, cue, garmin, muscles, unit, needs_bell}``.
+    Without a kettlebell the kettlebell moves are left out; under a low
+    ceiling the overhead ones are, and their low replacements are in.
+
+    ``unit`` is the move's own (``reps`` or ``sec``): a timed place in a
+    circuit takes any move, a place counted in repetitions takes the
+    moves counted that way (``fits``).
+    """
+    bell = equipment.get("kettlebell_kg") if equipment else None
+    low = bool(equipment and equipment.get("low_ceiling"))
+    timed_circuits = set(KETTLEBELL_SESSION) | set(KETTLEBELL_SESSION_B)
+    out: dict = {}
+
+    def add(variant, unit, slot_muscles, needs_bell):
+        key = variant["key"]
+        if key in out or (low and key in LOW_CEILING) or (needs_bell and not bell):
+            return
+        name = variant["name"] + (f" ({bell:g} kg)" if needs_bell and bell else "")
+        cue = (LOW_CEILING_CUES.get(key) if low else None) or variant["cue"]
+        out[key] = {"key": key, "name": name, "cue": cue,
+                    "garmin": list(variant["garmin"]),
+                    "muscles": variant["muscles"] or slot_muscles,
+                    "unit": unit, "needs_bell": needs_bell}
+
+    for source in (LADDERS, KETTLEBELL_LADDERS):
+        for slot, lad in source.items():
+            for rung in lad["rungs"]:
+                for variant in rung:
+                    needs = (not variant.get("bodyweight")) and (
+                        source is KETTLEBELL_LADDERS or slot in timed_circuits
+                        or bool(variant.get("loaded")))
+                    # The timed circuits' moves are counted in time there,
+                    # but most are repetitions moves done for a time.
+                    unit = "reps" if slot in timed_circuits else lad["unit"]
+                    add(variant, unit, lad["muscles"], needs)
+    for slot, extras in EXTRA_ALTERNATIVES.items():
+        for variant in extras:
+            add(variant, "reps", LADDERS[slot]["muscles"], bool(variant.get("loaded")))
+    if low:
+        for variant in LOW_CEILING.values():
+            add(variant, "reps", {}, not variant.get("bodyweight"))
+    return sorted(out.values(), key=lambda v: v["name"])
+
+
+def fits(slot: str, entry: dict, equipment: Optional[dict] = None) -> bool:
+    """Whether a catalogue move can take this place: a timed place takes
+    any move, one counted in repetitions only the moves counted so."""
+    return ladder(slot, equipment)["unit"] == "sec" or entry["unit"] == "reps"
+
+
 def variant_by_key(slot: str, key: str, equipment: Optional[dict] = None) -> Optional[dict]:
-    """One move of the slot's family, in ``session_variants``' shape."""
+    """A move for this place, in ``session_variants``' shape: one of the
+    slot's family first, else any move of the catalogue that fits."""
     lad = ladder(slot, equipment)
+    found = next((v for v in alternatives(slot, equipment) if v["key"] == key), None)
+    if found is None:
+        entry = next((v for v in catalogue(equipment) if v["key"] == key), None)
+        if entry is None or not fits(slot, entry, equipment):
+            return None
+        return {"key": entry["key"], "name": entry["name"], "cue": entry["cue"],
+                "garmin": entry["garmin"], "muscles": entry["muscles"] or lad["muscles"],
+                "swapped": True}
     for variant in alternatives(slot, equipment):
         if variant["key"] == key:
             name = variant["name"]
@@ -1100,4 +1161,15 @@ if __name__ == "__main__":
     assert _side["name"] == "swing lateral (8 kg)" and _side["muscles"]["abs"] == 1.0
     assert alternatives("kb_woodchop_sec")[1]["key"] == "kb_side_swing"
     assert variant_by_key("kb_around_world_rev_sec", "kb_swing") is not None
+    # Any move of the catalogue can take a place, when it fits: a plank in
+    # a timed kettlebell place, never in one counted in repetitions.
+    _kb = {"kettlebell_kg": 8}
+    _cat = {v["key"]: v for v in catalogue(_kb)}
+    assert "goblet_squat" in _cat and _cat["goblet_squat"]["name"] == "goblet squat (8 kg)"
+    assert "goblet_squat" not in {v["key"] for v in catalogue()}  # no bell, no bell moves
+    assert "standing_press" not in {v["key"] for v in catalogue({**_kb, "low_ceiling": True})}
+    assert variant_by_key("kb_upright_row_sec", "pike_pushup", {**_kb, "low_ceiling": True})
+    assert variant_by_key("kb_row_sec", "plank", _kb)  # timed place: a hold fits
+    assert variant_by_key("squats", "plank", _kb) is None  # counted place: it does not
+    assert variant_by_key("squats", "wall_sit", _kb) is None
     print("exercise_library.py: all checks passed")

@@ -133,21 +133,21 @@
           <p class="mt-1 leading-relaxed" style="color: var(--text-secondary);">{{ m.cue }}</p>
         </details>
         {% endif %}
-        {% if m.alts %}
-        <details class="text-xs mt-0.5">
+        <details class="text-xs mt-0.5 swap-box">
           <summary class="cursor-pointer link">Remplacer</summary>
-          <form method="post" action="/programme/swap" class="flex flex-wrap items-center gap-1.5 mt-1">
+          <form method="post" action="/programme/swap" class="swap-form mt-1.5" data-unit="{{ m.unit }}" data-current="{{ m.key }}">
             <input type="hidden" name="session_type" value="{{ b.type }}">
             <input type="hidden" name="circuit" value="{{ b.circuit }}">
             <input type="hidden" name="slot" value="{{ m.slot }}">
-            <select name="variant_key" class="rounded-lg border px-2 py-1 text-xs" style="border-color: var(--border); max-width: 14rem;">
-              {% for a in m.alts %}<option value="{{ a.key }}">{{ a.name }}</option>{% endfor %}
-            </select>
-            <button class="btn btn-sm">OK</button>
+            <input type="hidden" name="variant_key" value="">
+            <input type="search" class="swap-search w-full rounded-lg border px-2.5 py-1.5 text-sm" style="border-color: var(--border);"
+              placeholder="Chercher un exercice ou un muscle (dos, fessiers…)" autocomplete="off" aria-label="Chercher un exercice">
+            <ul class="swap-results mt-1.5">
+              {% for a in m.alts %}<li><button type="button" class="swap-pick" data-key="{{ a.key }}">{{ a.name }} <span class="swap-tag">même famille</span></button></li>{% endfor %}
+            </ul>
+            <p class="mt-1" style="color: var(--muted);">Même quantité, même place dans le circuit, et sur la montre aussi.{% if m.unit == 'reps' %} Ici on compte des répétitions : les exercices tenus (planche, chaise…) ne sont pas proposés.{% endif %}</p>
           </form>
-          <p class="mt-1" style="color: var(--muted);">Même quantité, même place dans le circuit, et sur la montre aussi.</p>
         </details>
-        {% endif %}
         {% if m.swapped %}
         <form method="post" action="/programme/swap" class="mt-0.5">
           <input type="hidden" name="session_type" value="{{ b.type }}">
@@ -262,4 +262,49 @@
 </section>
 {% endfor %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // "Remplacer": the move's own family first, then a search through
+  // every exercise the coach knows (name or muscle, accents ignored).
+  // A place counted in repetitions only offers moves counted that way.
+  (() => {
+    const all = {{ catalogue | tojson }};
+    const plain = (t) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const index = all.map((e) => ({ ...e, text: plain(e.name + ' ' + e.muscles.join(' ')) }));
+    document.querySelectorAll('.swap-form').forEach((form) => {
+      const input = form.querySelector('.swap-search');
+      const list = form.querySelector('.swap-results');
+      const family = list.innerHTML;
+      const pick = (key) => { form.querySelector('[name="variant_key"]').value = key; form.submit(); };
+      list.addEventListener('click', (e) => {
+        const b = e.target.closest('.swap-pick');
+        if (b) pick(b.dataset.key);
+      });
+      input.addEventListener('input', () => {
+        const q = plain(input.value.trim());
+        if (!q) { list.innerHTML = family; return; }
+        const words = q.split(/\s+/);
+        const found = index.filter((e) => e.key !== form.dataset.current
+          && (form.dataset.unit === 'sec' || e.unit === 'reps')
+          && words.every((w) => e.text.includes(w))).slice(0, 12);
+        list.replaceChildren(...found.map((e) => {
+          const li = document.createElement('li');
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'swap-pick'; b.dataset.key = e.key;
+          b.textContent = e.name + ' ';
+          const tag = document.createElement('span');
+          tag.className = 'swap-tag'; tag.textContent = e.muscles.join(', ');
+          b.append(tag); li.append(b); return li;
+        }));
+        if (!found.length) {
+          const li = document.createElement('li');
+          li.textContent = 'Aucun exercice ne correspond.'; li.style.color = 'var(--muted)';
+          list.append(li);
+        }
+      });
+    });
+  })();
+</script>
 {% endblock %}
