@@ -830,6 +830,10 @@ EXTRA_ALTERNATIVES = {
            "Les épaules restent de face, ne te laisse pas tourner.",
            ("HIP_SWING", "SINGLE_ARM_KETTLEBELL_SWING"), _SWING_MUSCLES, loaded=True),
     ],
+    # One "around the world" is enough as a warm-up; the woodchop, a
+    # real trunk rotation, is worth more in the other place.
+    "kb_around_world_rev_sec": [LADDERS["kb_woodchop_sec"]["rungs"][0][0]],
+    "kb_around_world_sec": [LADDERS["kb_woodchop_sec"]["rungs"][0][0]],
 }
 
 
@@ -845,10 +849,12 @@ def alternatives(slot: str, equipment: Optional[dict] = None) -> list[dict]:
             if variant["key"] not in seen:
                 seen.add(variant["key"])
                 out.append({**variant, "rung": index})
+    low = bool(equipment and equipment.get("low_ceiling"))
     for variant in EXTRA_ALTERNATIVES.get(slot, []):
         if variant["key"] not in seen:
             seen.add(variant["key"])
-            out.append({**variant, "rung": len(rungs) - 1})
+            cue = LOW_CEILING_CUES.get(variant["key"]) if low else None
+            out.append({**variant, "rung": len(rungs) - 1, **({"cue": cue} if cue else {})})
     return out
 
 
@@ -1075,4 +1081,8 @@ if __name__ == "__main__":
     assert _swing and _swing["name"] == "swing kettlebell (8 kg)", _swing
     assert _swing["muscles"]["glutes"] == 1.0 and _swing["garmin"] == ["HIP_RAISE", "KETTLEBELL_SWING"]
     assert variant_by_key("kb_row_sec", "kb_swing") is None  # only where listed
+    # The woodchop can take a "tour de taille" place, low ceiling cue too.
+    _chop = variant_by_key("kb_around_world_rev_sec", "kb_woodchop",
+                           {"kettlebell_kg": 8, "low_ceiling": True})
+    assert _chop["name"] == "rotation diagonale (woodchop) (8 kg)" and "yeux" in _chop["cue"], _chop
     print("exercise_library.py: all checks passed")
