@@ -30,6 +30,7 @@ Names, cues and ladders here are this project's own.
 
 import datetime as dt
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -628,11 +629,14 @@ def equipment_for(conn, user_id: int) -> dict:
     Returns:
         dict: ``kettlebell_kg`` (float) when a kettlebell weight is set;
         ``kettlebell_circuits`` (``"A"`` or ``"B"``) when only one
-        circuit is done.
+        circuit is done; ``low_ceiling`` when nothing may go above the
+        head (``LOW_CEILING``).
     """
     import db
 
     out = {}
+    if db.get_setting(conn, user_id, "low_ceiling") == "1":
+        out["low_ceiling"] = True
     only = (db.get_setting(conn, user_id, "kettlebell_circuits")
             or db.DEFAULT_SETTINGS["kettlebell_circuits"])
     if only in ("A", "B"):
@@ -647,13 +651,66 @@ def equipment_for(conn, user_id: int) -> dict:
     return out
 
 
+# A low ceiling (Settings): nothing goes up above the head. The moves
+# that would are replaced by one working the same muscles low, or keep
+# their key with a lower end point.
+_LOW_TRICEPS_CUE = (
+    "Allongé sur le dos, genoux pliés, kettlebell tenue par les cornes, bras "
+    "tendus au-dessus de la poitrine. Plie seulement les coudes pour descendre "
+    "la kettlebell derrière la tête jusqu'à frôler le sol, puis tends les bras. "
+    "Coudes serrés, pointés vers le plafond ; les épaules ne bougent pas.")
+LOW_CEILING = {
+    "kneeling_press": _v(
+        "pike_pushup", "pompes piquees",
+        "Mains au sol, fesses hautes (le corps en V à l'envers). Plie les coudes "
+        "pour amener le haut du crâne vers le sol entre les mains, puis repousse. "
+        "Les épaules poussent à la verticale, sans rien lever au-dessus de la tête.",
+        ("PUSH_UP", "PIKE_PUSH_UP"),
+        {"shoulders": 1.0, "triceps": 0.6, "chest": 0.3}) | {"bodyweight": True},
+    "standing_press": _v(
+        "pike_pushup_elevated", "pompes piquees pieds sureleves",
+        "Les pompes piquées, pieds sur une chaise : le buste est plus vertical, "
+        "les épaules portent plus. Descends lentement, repousse fort.",
+        ("PUSH_UP", "PIKE_PUSH_UP"),
+        {"shoulders": 1.0, "triceps": 0.6, "chest": 0.2}) | {"bodyweight": True},
+    "kb_overhead_ext": _v(
+        "kb_lying_ext", "extension triceps allonge", _LOW_TRICEPS_CUE,
+        ("TRICEPS_EXTENSION", "DUMBBELL_LYING_TRICEPS_EXTENSION"),
+        {"triceps": 1.0, "shoulders": 0.2}, loaded=True),
+}
+# Same move, a lower end point.
+LOW_CEILING_CUES = {
+    "kb_woodchop": (
+        "Debout, kettlebell à deux mains par la poignée. Pars près de la hanche "
+        "gauche, genoux fléchis, puis monte en diagonale jusqu'à hauteur des "
+        "yeux seulement, bras tendus, en pivotant sur le pied arrière ; "
+        "redescends en contrôlant. Change de côté à mi-temps."),
+    "jumping_jack": "Saute en écartant les jambes, bras écartés à l'horizontale "
+                    "(pas au-dessus de la tête), réception souple.",
+    "step_jack": "Écarte une jambe à la fois, bras écartés à l'horizontale.",
+}
+
+
+@lru_cache(maxsize=None)
+def _low_ceiling_ladder(slot: str, loaded: bool) -> dict:
+    base = KETTLEBELL_LADDERS[slot] if loaded else LADDERS[slot]
+    rungs = []
+    for rung in base["rungs"]:
+        rungs.append([
+            LOW_CEILING.get(v["key"]) or (
+                {**v, "cue": LOW_CEILING_CUES[v["key"]]} if v["key"] in LOW_CEILING_CUES
+                else v)
+            for v in rung])
+    return {**base, "rungs": rungs}
+
+
 def ladder(slot: str, equipment: Optional[dict] = None) -> dict:
-    """The ladder a slot follows with this equipment."""
-    if equipment and equipment.get("kettlebell_kg") and (
-        slot in KETTLEBELL_LADDERS
-    ):
-        return KETTLEBELL_LADDERS[slot]
-    return LADDERS[slot]
+    """The ladder a slot follows with this equipment (and ceiling)."""
+    loaded = bool(equipment and equipment.get("kettlebell_kg")
+                  and slot in KETTLEBELL_LADDERS)
+    if equipment and equipment.get("low_ceiling"):
+        return _low_ceiling_ladder(slot, loaded)
+    return KETTLEBELL_LADDERS[slot] if loaded else LADDERS[slot]
 
 
 def _subset() -> dict:
@@ -738,8 +795,10 @@ def variant_for(
     variant["muscles"] = variant["muscles"] or lad["muscles"]
     variant["rung"], variant["rungs"] = index, len(lad["rungs"])
     variant["per"] = lad.get("per", "")
+    loaded_ladder = bool(equipment and equipment.get("kettlebell_kg")
+                         and slot in KETTLEBELL_LADDERS)
     if equipment and equipment.get("kettlebell_kg") and (
-        lad is not LADDERS.get(slot) or variant.get("loaded")
+        (loaded_ladder and not variant.get("bodyweight")) or variant.get("loaded")
     ):
         # A loaded variant names its weight: "goblet squat (12 kg)".
         variant["name"] = (
@@ -961,4 +1020,21 @@ if __name__ == "__main__":
     assert variant_for("kb_curl_sec", 3)["name"] == "curl kettlebell"
     assert variant_for("kb_curl_sec", 3, equipment=kb)["name"] == (
         "curl kettlebell (12 kg)")
+    # A low ceiling: no variant left goes above the head, the rest of
+    # the session is the same, and the replacements carry no bell when
+    # they are bodyweight.
+    import training as _training
+
+    low = {"kettlebell_kg": 8, "kettlebell_circuits": "A", "low_ceiling": True}
+    for _type, _level in (("upper_body", 6), ("upper_body", 9), ("kettlebell", 5)):
+        _values = _training.session_values(_type, _level, 30, "2026-11-18", low)
+        _keys = {v["key"] for v in _values["variants"].values()}
+        assert not _keys & set(LOW_CEILING), (_type, _level, _keys)
+    _upper = _training.session_values("upper_body", 9, 30, "2026-11-18", low)
+    assert _upper["variants"]["dips"]["name"] == "pompes piquees pieds sureleves", _upper
+    _kb = _training.session_values("kettlebell", 5, 30, "2026-11-18", low)
+    assert _kb["variants"]["kb_triceps_ext_sec"]["name"] == "extension triceps allonge (8 kg)"
+    assert "yeux" in variant_for("kb_woodchop_sec", 5, None, low)["cue"]
+    # Without the setting, nothing changes.
+    assert variant_for("dips", 9, None, {"kettlebell_kg": 8})["key"] == "standing_press"
     print("exercise_library.py: all checks passed")

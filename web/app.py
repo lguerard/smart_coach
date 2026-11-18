@@ -2748,6 +2748,10 @@ async def save_settings(request: Request, background: BackgroundTasks):
     db.set_setting(
         conn, user_id, "ask_sleep", "1" if "ask_sleep" in form else "0",
     )
+    # Only on the form that has the box (the one with the kettlebell).
+    if "kettlebell_kg" in form:
+        db.set_setting(conn, user_id, "low_ceiling",
+                       "1" if "low_ceiling" in form else "0")
     db.set_setting(
         conn, user_id, "remind_mfp_sync",
         "1" if "remind_mfp_sync" in form else "0",

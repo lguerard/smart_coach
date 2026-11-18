@@ -151,6 +151,7 @@ def exercise_names_used() -> list[tuple[str, str]]:
         for slot in ladders.values() for rung in slot["rungs"]
         for variant in rung
     }
+    pairs |= {tuple(v["garmin"]) for v in exercise_library.LOW_CEILING.values()}
     pairs |= set(_EXERCISE_CATALOG.values())
     import bonus
     import custom_moves

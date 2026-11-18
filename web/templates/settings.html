@@ -86,6 +86,13 @@
         {% endfor %}
       </select>
     </label>
+    <label class="flex items-start gap-2 text-sm">
+      <input type="checkbox" name="low_ceiling" value="1" class="mt-1" {{ 'checked' if settings.low_ceiling == '1' }}>
+      <span>Plafond bas : rien au-dessus de la tête
+        <span class="block text-xs" style="color: var(--muted);">Le développé debout ou à genou devient des pompes piquées, l'extension
+        triceps se fait allongé, le woodchop s'arrête à hauteur des yeux et les jumping jacks
+        se font bras à l'horizontale. Sur la montre aussi, dès le prochain envoi.</span></span>
+    </label>
     <label class="block text-sm">
       Message du matin
       <select name="message_style"

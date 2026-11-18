@@ -911,6 +911,8 @@ DEFAULT_SETTINGS = {
     # Kettlebell weight in kg ("" = bodyweight only). With one set, the
     # circuits swap to loaded ladders (exercise_library.py).
     "kettlebell_kg": "",
+    # "1": nothing above the head (exercise_library.LOW_CEILING).
+    "low_ceiling": "0",
     # Which kettlebell circuits the person does: only "A" (the default:
     # it covers what B did, plus the back and the legs), only "B", or
     # "AB" alternating day by day (training.kettlebell_circuit).
