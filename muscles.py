@@ -156,20 +156,25 @@ def muscles_from_zone(text: str) -> list[str]:
 
 def session_muscle_weights(
     session_type: Optional[str], level: int, date: Optional[str] = None,
-    equipment: Optional[dict] = None,
+    equipment: Optional[dict] = None, conn: Optional[sqlite3.Connection] = None,
+    user_id: Optional[int] = None,
 ) -> dict:
-    """Muscle weights of one coach session type at a level."""
+    """Muscle weights of one coach session type at a level. With an
+    account (``conn`` and ``user_id``), the session as that person does
+    it: a move replaced, taken out or added counts as such (a swing in
+    place of the woodchop loads the hips, not the abs)."""
     import training  # local: training imports this module
 
     if session_type is None:
         return {}
     if session_type == "treadmill":
         return dict(TREADMILL_MUSCLES)
-    return exercise_library.session_muscles(
-        training.session_values(
-            session_type, level, date=date, equipment=equipment,
-        ),
-    )
+    if conn is not None and user_id is not None:
+        values = training.user_session_values(conn, user_id, session_type, level, date)
+    else:
+        values = training.session_values(
+            session_type, level, date=date, equipment=equipment)
+    return exercise_library.session_muscles(values)
 
 
 def _coach_day(conn: sqlite3.Connection, user_id: int, day: str):
@@ -214,8 +219,7 @@ def _stimulus(conn, user_id, row, coach) -> tuple[float, dict, str]:
             key == "running_treadmill" or (key == "walking" and confirmed))
         if circuit or treadmill:
             return 1.0, session_muscle_weights(
-                session_type, level, row["local_date"],
-                exercise_library.equipment_for(conn, user_id),
+                session_type, level, row["local_date"], conn=conn, user_id=user_id,
             ), session_type
     if key in ACTIVITY_MUSCLES:
         intensity, weights = ACTIVITY_MUSCLES[key]
@@ -510,4 +514,16 @@ if __name__ == "__main__":
     session = muscle_fatigue(conn, uid, "2026-10-12", at=at)["muscles"]
     assert session["calves"]["cause"] == "treadmill", session["calves"]
 
+    # The session as done: with a swing in place of the woodchop, the
+    # abs are no longer loaded as hard (the woodchop was their move).
+    import custom_moves
+
+    swinger = db.create_user(conn, "swinger", "password1234")
+    db.set_setting(conn, swinger, "kettlebell_kg", "8")
+    db.set_setting(conn, swinger, "kettlebell_circuits", "A")
+    plain = session_muscle_weights("kettlebell", 5, "2026-11-18", conn=conn, user_id=swinger)
+    custom_moves.set_swap(conn, swinger, "kettlebell", "A", "kb_woodchop_sec", "kb_swing")
+    swung = session_muscle_weights("kettlebell", 5, "2026-11-18", conn=conn, user_id=swinger)
+    assert swung["abs"] < plain["abs"], (plain, swung)  # the woodchop is gone
+    assert swung["glutes"] == swung["hamstrings"] == 1.0
     print("muscles.py: all checks passed")

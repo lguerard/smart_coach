@@ -1944,7 +1944,7 @@ def muscle_votes(
         return []
     weights = muscles.session_muscle_weights(
         session_type, get_level(conn, user_id, session_type), date,
-        exercise_library.equipment_for(conn, user_id),
+        conn=conn, user_id=user_id,
     )
     vote = muscles.session_vote(
         muscles.muscle_fatigue(conn, user_id, date), weights,

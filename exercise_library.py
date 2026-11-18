@@ -811,16 +811,44 @@ def variant_for(
     return variant
 
 
+# Moves outside a slot's own family that can still take its place in
+# the circuit, same time on, same spot (Programme "Remplacer"): the
+# swing in place of the woodchop, as many do it.
+_SWING_MUSCLES = {"glutes": 1.0, "hamstrings": 1.0, "lower_back": 0.6,
+                  "abs": 0.4, "shoulders": 0.2}
+EXTRA_ALTERNATIVES = {
+    "kb_woodchop_sec": [
+        _v("kb_swing", "swing kettlebell",
+           "Pieds un peu plus larges que les hanches, kettlebell à deux mains. "
+           "Pousse les fesses en arrière, la kettlebell passe entre les cuisses, "
+           "puis donne un coup de hanches sec : c'est lui qui la fait monter, à "
+           "hauteur de poitrine, pas plus haut. Bras détendus, dos plat, fessiers "
+           "serrés en haut ; souffle à chaque montée.",
+           ("HIP_RAISE", "KETTLEBELL_SWING"), _SWING_MUSCLES, loaded=True),
+        _v("single_arm_swing", "swing a une main",
+           "Le même swing, une main à la fois ; change de main à mi-temps. "
+           "Les épaules restent de face, ne te laisse pas tourner.",
+           ("HIP_SWING", "SINGLE_ARM_KETTLEBELL_SWING"), _SWING_MUSCLES, loaded=True),
+    ],
+}
+
+
 def alternatives(slot: str, equipment: Optional[dict] = None) -> list[dict]:
-    """Every move of this slot's family, easiest first, once each:
-    what a move can be replaced by (``custom_moves`` swaps, the guided
+    """Every move of this slot's family, easiest first, once each, then
+    the moves that may take its place (``EXTRA_ALTERNATIVES``): what a
+    move can be replaced by (``custom_moves`` swaps, the guided
     session's "autre exercice")."""
     seen, out = set(), []
-    for index, rung in enumerate(ladder(slot, equipment)["rungs"]):
+    rungs = ladder(slot, equipment)["rungs"]
+    for index, rung in enumerate(rungs):
         for variant in rung:
             if variant["key"] not in seen:
                 seen.add(variant["key"])
                 out.append({**variant, "rung": index})
+    for variant in EXTRA_ALTERNATIVES.get(slot, []):
+        if variant["key"] not in seen:
+            seen.add(variant["key"])
+            out.append({**variant, "rung": len(rungs) - 1})
     return out
 
 
@@ -829,7 +857,12 @@ def variant_by_key(slot: str, key: str, equipment: Optional[dict] = None) -> Opt
     lad = ladder(slot, equipment)
     for variant in alternatives(slot, equipment):
         if variant["key"] == key:
-            return {"key": variant["key"], "name": variant["name"], "cue": variant["cue"],
+            name = variant["name"]
+            bell = equipment.get("kettlebell_kg") if equipment else None
+            if bell and ((slot in KETTLEBELL_LADDERS and not variant.get("bodyweight"))
+                         or variant.get("loaded")):
+                name = f"{name} ({bell:g} kg)"
+            return {"key": variant["key"], "name": name, "cue": variant["cue"],
                     "garmin": list(variant["garmin"]),
                     "muscles": variant["muscles"] or lad["muscles"], "swapped": True}
     return None
@@ -1037,4 +1070,9 @@ if __name__ == "__main__":
     assert "yeux" in variant_for("kb_woodchop_sec", 5, None, low)["cue"]
     # Without the setting, nothing changes.
     assert variant_for("dips", 9, None, {"kettlebell_kg": 8})["key"] == "standing_press"
+    # The swing can take the woodchop's place, with its own muscles.
+    _swing = variant_by_key("kb_woodchop_sec", "kb_swing", {"kettlebell_kg": 8})
+    assert _swing and _swing["name"] == "swing kettlebell (8 kg)", _swing
+    assert _swing["muscles"]["glutes"] == 1.0 and _swing["garmin"] == ["HIP_RAISE", "KETTLEBELL_SWING"]
+    assert variant_by_key("kb_row_sec", "kb_swing") is None  # only where listed
     print("exercise_library.py: all checks passed")
