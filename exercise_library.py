@@ -818,6 +818,14 @@ _SWING_MUSCLES = {"glutes": 1.0, "hamstrings": 1.0, "lower_back": 0.6,
                   "abs": 0.4, "shoulders": 0.2}
 EXTRA_ALTERNATIVES = {
     "kb_woodchop_sec": [
+        _v("kb_side_swing", "swing lateral",
+           "Pieds écartés, genoux souples, kettlebell à deux mains par la poignée. "
+           "Lance-la d'un côté à l'autre en arc de cercle, de l'extérieur d'une "
+           "hanche jusqu'à hauteur d'épaule de l'autre côté : ce sont les hanches "
+           "et le buste qui tournent, en pivotant sur le pied arrière, les bras "
+           "suivent. Freine la cloche à chaque bout, ventre serré, dos droit.",
+           ("SLEDGE_HAMMER", "LATERAL_SWING"),
+           {"abs": 1.0, "shoulders": 0.6, "glutes": 0.5, "back": 0.3}, loaded=True),
         _v("kb_swing", "swing kettlebell",
            "Pieds un peu plus larges que les hanches, kettlebell à deux mains. "
            "Pousse les fesses en arrière, la kettlebell passe entre les cuisses, "
@@ -830,11 +838,13 @@ EXTRA_ALTERNATIVES = {
            "Les épaules restent de face, ne te laisse pas tourner.",
            ("HIP_SWING", "SINGLE_ARM_KETTLEBELL_SWING"), _SWING_MUSCLES, loaded=True),
     ],
-    # One "around the world" is enough as a warm-up; the woodchop, a
-    # real trunk rotation, is worth more in the other place.
-    "kb_around_world_rev_sec": [LADDERS["kb_woodchop_sec"]["rungs"][0][0]],
-    "kb_around_world_sec": [LADDERS["kb_woodchop_sec"]["rungs"][0][0]],
 }
+# One "around the world" is enough as a warm-up. In the other place,
+# the woodchop (a real trunk rotation) or the classic swing, front to
+# back (the hips and the back of the thighs, a little cardio).
+for _slot in ("kb_around_world_sec", "kb_around_world_rev_sec"):
+    EXTRA_ALTERNATIVES[_slot] = [LADDERS["kb_woodchop_sec"]["rungs"][0][0],
+                                 EXTRA_ALTERNATIVES["kb_woodchop_sec"][1]]
 
 
 def alternatives(slot: str, equipment: Optional[dict] = None) -> list[dict]:
@@ -1085,4 +1095,9 @@ if __name__ == "__main__":
     _chop = variant_by_key("kb_around_world_rev_sec", "kb_woodchop",
                            {"kettlebell_kg": 8, "low_ceiling": True})
     assert _chop["name"] == "rotation diagonale (woodchop) (8 kg)" and "yeux" in _chop["cue"], _chop
+    # The lateral swing first in the woodchop's place, a rotation.
+    _side = variant_by_key("kb_woodchop_sec", "kb_side_swing", {"kettlebell_kg": 8})
+    assert _side["name"] == "swing lateral (8 kg)" and _side["muscles"]["abs"] == 1.0
+    assert alternatives("kb_woodchop_sec")[1]["key"] == "kb_side_swing"
+    assert variant_by_key("kb_around_world_rev_sec", "kb_swing") is not None
     print("exercise_library.py: all checks passed")
